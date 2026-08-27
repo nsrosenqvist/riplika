@@ -52,6 +52,9 @@ enum Cmd {
         min_agreement: f32,
         #[arg(long)]
         name: Option<String>,
+        /// Subtitle stream index, as ffmpeg counts subtitle streams.
+        #[arg(long)]
+        stream: Option<usize>,
     },
     /// Write an HTML page for reviewing and correcting labels.
     Sheet {
@@ -82,6 +85,13 @@ enum Cmd {
         /// Wordlist used to resolve ambiguous glyphs (I vs l).
         #[arg(long)]
         words: Option<PathBuf>,
+        /// Subtitle language. Only affects ambiguity resolution; anything other
+        /// than "en" disables the English-only rules.
+        #[arg(long, default_value = "en")]
+        lang: String,
+        /// Subtitle stream index, as ffmpeg counts subtitle streams.
+        #[arg(long)]
+        stream: Option<usize>,
     },
     /// Print the segmentation of one subtitle, for diagnosing bad output.
     Inspect {
@@ -91,6 +101,9 @@ enum Cmd {
         at: u64,
         #[arg(long, default_value = "glyphs.json")]
         table: PathBuf,
+        /// Subtitle stream index, as ffmpeg counts subtitle streams.
+        #[arg(long)]
+        stream: Option<usize>,
     },
     /// Compare a produced SRT against a reference one.
     Verify {
@@ -114,7 +127,8 @@ fn run() -> Result<(), String> {
             reference,
             min_agreement,
             name,
-        } => build(&inputs, &table, reference.as_deref(), min_agreement, name),
+            stream,
+        } => build(&inputs, &table, reference.as_deref(), min_agreement, name, stream),
         Cmd::Sheet { table, out, zoom } => {
             let t = Table::load(&table)?;
             let html = sheet::render(&t, zoom);
@@ -156,10 +170,12 @@ fn run() -> Result<(), String> {
             out,
             placeholder,
             words,
+            lang,
+            stream,
         } => {
             let t = Table::load(&table)?;
-            let r = resolve::Resolver::load(words.as_deref());
-            let (text, stats) = ocr_one(&input, &t, &r, placeholder)?;
+            let r = resolve::Resolver::load_lang(words.as_deref(), &lang);
+            let (text, stats) = ocr_one(&input, &t, &r, placeholder, stream)?;
             let dest = out.unwrap_or_else(|| input.with_extension("srt"));
             std::fs::write(&dest, text).map_err(|e| format!("{}: {e}", dest.display()))?;
             println!(
@@ -172,9 +188,9 @@ fn run() -> Result<(), String> {
             );
             Ok(())
         }
-        Cmd::Inspect { input, at, table } => {
+        Cmd::Inspect { input, at, table, stream } => {
             let t = Table::load(&table).unwrap_or_default();
-            let src = source::load(&input, None)?;
+            let src = source::load(&input, stream)?;
             let events = vobsub::decode_all(&src.idx, &src.sub);
             let opts = SegOpts::default();
             let Some(ev) = events
@@ -233,8 +249,9 @@ fn ocr_one(
     t: &Table,
     resolver: &resolve::Resolver,
     placeholder: char,
+    stream: Option<usize>,
 ) -> Result<(String, OcrStats), String> {
-    let src = source::load(input, None)?;
+    let src = source::load(input, stream)?;
     let events = vobsub::decode_all(&src.idx, &src.sub);
     let opts = SegOpts::default();
 
@@ -284,6 +301,7 @@ fn build(
     reference: Option<&Path>,
     min_agreement: f32,
     name: Option<String>,
+    stream: Option<usize>,
 ) -> Result<(), String> {
     let mut t = if table_path.exists() {
         Table::load(table_path)?
@@ -303,7 +321,7 @@ fn build(
     let mut gapobs: BTreeMap<usize, (Vec<i32>, Vec<i32>)> = BTreeMap::new();
 
     for input in inputs {
-        let src = match source::load(input, None) {
+        let src = match source::load(input, stream) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("  skip {}: {e}", input.display());

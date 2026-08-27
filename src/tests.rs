@@ -134,3 +134,14 @@ fn gaps_are_measured_between_bounding_boxes() {
     assert_eq!(crate::segment::gaps(&line), vec![4, 0]);
 }
 
+
+#[test]
+fn english_rules_do_not_apply_to_other_languages() {
+    let en = Resolver::load_lang(None, "en");
+    let sv = Resolver::load_lang(None, "sv");
+    // English: the lone bar is the pronoun "I"
+    assert_eq!(word(&en, &[amb()]), "I");
+    // Elsewhere that rule must not fire - Swedish's lone "i" is lowercase, so
+    // capitalising every bar would be wrong
+    assert_eq!(word(&sv, &[amb()]), "l");
+}

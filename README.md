@@ -116,6 +116,39 @@ acronyms, and position within the word. Where the geometry shows a gap that only
 just missed the space threshold, a word may also be split (`Ijust` → `I just`) —
 but only there, so `Pawnee` never becomes `Paw nee`.
 
+## Other languages
+
+The method is script-agnostic: it matches bitmaps, so it does not care what
+language the subtitles are in. The parts that *are* language-specific are the
+wordlist and the rules used to resolve genuinely ambiguous glyphs.
+
+Tested on the Spanish track of the same discs. All 18 Spanish-only glyphs —
+`¿ ¡ á é í ó ú ñ Á É Í Ó Ú Ñ` — segment as **single, correctly composed
+glyphs**; the diacritic stays attached to its base letter. Only one orphaned
+accent appeared, out of 189 instances. After labelling those 18 by eye, the
+Spanish track decodes cleanly:
+
+```
+Tengo importantes noticias sobre
+nuestro caballo favorito, Li'l Sebastian.
+
+Murió anoche.
+```
+
+This matters for Nordic languages too: `ñ` is structurally the same problem as
+`ä`/`ö` (a mark spanning the base letter) and `å` (a mark above it).
+
+Two things to change for a non-English language:
+
+- **Pass `--lang`.** English-only rules — that a lone ambiguous bar is the
+  pronoun `I`, that `I'm`/`I'll` are likely — are wrong elsewhere. Swedish `i`
+  is a lowercase preposition, so applying the English rule would capitalise
+  every one. Any `--lang` other than `en` turns those rules off.
+- **Pass `--words` with a wordlist for that language.** The default is an
+  English password dictionary. Without a matching wordlist, ambiguous glyphs
+  fall back to structural rules only. On Arch, `aspell-sv` provides a Swedish
+  one; dump it with `aspell -d sv dump master | aspell -l sv expand`.
+
 ## Status
 
 Prototype, and deliberately scoped to the recognition stage. Ripping,

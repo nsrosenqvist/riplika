@@ -21,30 +21,44 @@ pub enum Slot {
 
 pub struct Resolver {
     words: HashSet<String>,
+    /// Whether the English-specific rules apply.
+    ///
+    /// They are worth a lot for English and actively wrong elsewhere: the
+    /// standalone pronoun "I" is capitalised in English, whereas the Swedish
+    /// preposition "i" is not, so the same rule would capitalise every one.
+    english: bool,
 }
 
 impl Resolver {
     pub fn load(path: Option<&Path>) -> Resolver {
+        Resolver::load_lang(path, "en")
+    }
+
+    pub fn load_lang(path: Option<&Path>, lang: &str) -> Resolver {
+        let english = lang.is_empty() || lang.to_lowercase().starts_with("en");
         let p = path.map(Path::to_path_buf).unwrap_or_else(|| DEFAULT_WORDLIST.into());
         let mut words = HashSet::new();
         if let Ok(s) = std::fs::read_to_string(&p) {
             for line in s.lines() {
                 let w = line.trim().to_lowercase();
-                if w.len() > 1 && w.chars().all(|c| c.is_ascii_alphabetic()) {
+                // keep accented forms - they matter for every language but English
+                if w.chars().count() > 1 && w.chars().all(|c| c.is_alphabetic()) {
                     words.insert(w);
                 }
             }
         }
-        // High-frequency words that a password list may lack, and the forms
-        // that matter most for the I/l pair.
-        for w in [
-            "i", "a", "is", "it", "if", "in", "ill", "island", "all", "will",
-            "well", "tell", "look", "like", "little", "last", "left", "life",
-            "line", "list", "live", "long", "love", "let", "less", "later",
-        ] {
-            words.insert(w.to_string());
+        if english {
+            // High-frequency words a password list may lack, and the forms that
+            // matter most for the I/l pair.
+            for w in [
+                "i", "a", "is", "it", "if", "in", "ill", "island", "all", "will",
+                "well", "tell", "look", "like", "little", "last", "left", "life",
+                "line", "list", "live", "long", "love", "let", "less", "later",
+            ] {
+                words.insert(w.to_string());
+            }
         }
-        Resolver { words }
+        Resolver { words, english }
     }
 
     pub fn is_word(&self, w: &str) -> bool {
@@ -133,7 +147,7 @@ impl Resolver {
             if core.is_empty() {
                 continue;
             }
-            if core == "I" || matches!(core, "I'm" | "I'll" | "I've" | "I'd") {
+            if self.english && (core == "I" || matches!(core, "I'm" | "I'll" | "I've" | "I'd")) {
                 sc += 140;
                 continue;
             }
@@ -194,8 +208,10 @@ impl Resolver {
                     let lower: Option<&String> = v.iter().find(|x| {
                         x.chars().next().map_or(false, |c| c.is_lowercase())
                     });
-                    // word-initial and short -> "I"/"It"/"If"; otherwise "l"
-                    let want_upper = i == 0 && n_alpha <= 2;
+                    // In English a short word starting with the bar is almost
+                    // always "I"/"It"/"If". Other languages have no such rule,
+                    // so prefer the lowercase reading there.
+                    let want_upper = self.english && i == 0 && n_alpha <= 2;
                     let pick = if want_upper { upper.or(lower) } else { lower.or(upper) };
                     out.push_str(pick.unwrap_or(&v[0]));
                 }
