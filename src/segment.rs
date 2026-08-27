@@ -272,6 +272,49 @@ fn merge_marks(line: &mut Line, opts: &SegOpts) {
     }
 }
 
+/// Attach a diacritic that was left behind when its twin merged.
+///
+/// An umlaut is two dots. Once the first has joined its letter, the second no
+/// longer sits *above* anything - it overlaps the merged glyph - so the
+/// stacking test in `merge_marks` rejects it and it survives as a stray period.
+/// A ring (a-ring) is a single mark and never hits this.
+fn merge_diacritics(line: &mut Line) {
+    let lh = line.height() as f32;
+    loop {
+        let mut found = None;
+        'outer: for i in 0..line.glyphs.len() {
+            for j in 0..line.glyphs.len() {
+                if i == j {
+                    continue;
+                }
+                let (s, b) = (&line.glyphs[i], &line.glyphs[j]);
+                // one must be a mark, the other a letter-sized body
+                if s.h as f32 > lh * 0.30 || (b.h as f32) < lh * 0.5 {
+                    continue;
+                }
+                // the mark must sit within the body's horizontal extent
+                let ol = ((s.x + s.w).min(b.x + b.w) - s.x.max(b.x)).max(0);
+                if ol * 100 / s.w.max(1) < 70 {
+                    continue;
+                }
+                // ... and in its upper reaches, where a diacritic belongs
+                if s.y + s.h > b.y + (b.h as f32 * 0.4) as i32 {
+                    continue;
+                }
+                found = Some((i, j));
+                break 'outer;
+            }
+        }
+        let Some((i, j)) = found else { break };
+        let m = merge(&line.glyphs[i], &line.glyphs[j]);
+        let (lo, hi) = (i.min(j), i.max(j));
+        line.glyphs.remove(hi);
+        line.glyphs.remove(lo);
+        line.glyphs.push(m);
+        line.glyphs.sort_by_key(|g| g.x);
+    }
+}
+
 /// Pair up the two marks of a double quote.
 ///
 /// The font draws `"` as two separate strokes, so component analysis sees two
@@ -361,6 +404,7 @@ pub fn segment(spu: &Spu, palette: &[[u8; 3]], opts: &SegOpts) -> Vec<Line> {
     coalesce_mark_lines(&mut lines);
     for l in lines.iter_mut() {
         merge_marks(l, opts);
+        merge_diacritics(l);
         merge_quotes(l);
     }
     lines.retain(|l| !l.glyphs.is_empty());

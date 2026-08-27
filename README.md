@@ -118,36 +118,49 @@ but only there, so `Pawnee` never becomes `Paw nee`.
 
 ## Other languages
 
-The method is script-agnostic: it matches bitmaps, so it does not care what
-language the subtitles are in. The parts that *are* language-specific are the
-wordlist and the rules used to resolve genuinely ambiguous glyphs.
+The method is script-agnostic — it matches bitmaps — but two things are not: the
+wordlist, and the rules for resolving genuinely ambiguous glyphs.
 
-Tested on the Spanish track of the same discs. All 18 Spanish-only glyphs —
-`¿ ¡ á é í ó ú ñ Á É Í Ó Ú Ñ` — segment as **single, correctly composed
-glyphs**; the diacritic stays attached to its base letter. Only one orphaned
-accent appeared, out of 189 instances. After labelling those 18 by eye, the
-Spanish track decodes cleanly:
+Verified on Swedish (*Frozen*, Region 2 DVD) and Spanish (the Spanish track of
+the Parks and Recreation discs). Both compose their diacritics into single
+glyphs, so `å ä ö é` and `á é í ó ú ñ ¿ ¡` are ordinary table entries:
 
 ```
-Tengo importantes noticias sobre
-nuestro caballo favorito, Li'l Sebastian.
-
-Murió anoche.
+Född ur kall midvinters köld, ur karga bergens dimma
+En kraft båd' hård och skön har skapt denna frusna härskarinna
+Frukta hennes själ — Hon älskar dig ihjäl
 ```
 
-This matters for Nordic languages too: `ñ` is structurally the same problem as
-`ä`/`ö` (a mark spanning the base letter) and `å` (a mark above it).
+Scored against the aspell Swedish wordlist, **97.2% of the 6,471 output words
+are dictionary-valid**. Almost all of the remainder are legitimate: place names
+(*Arendal*, *Vessleby*), colloquial forms (*Va*, *sånt*, *sommarn*) and Swedish
+compounds (*handelspartner*, *sommarrea*) that no wordlist carries.
 
-Two things to change for a non-English language:
+Two things to set for a non-English language:
 
-- **Pass `--lang`.** English-only rules — that a lone ambiguous bar is the
-  pronoun `I`, that `I'm`/`I'll` are likely — are wrong elsewhere. Swedish `i`
-  is a lowercase preposition, so applying the English rule would capitalise
-  every one. Any `--lang` other than `en` turns those rules off.
-- **Pass `--words` with a wordlist for that language.** The default is an
-  English password dictionary. Without a matching wordlist, ambiguous glyphs
-  fall back to structural rules only. On Arch, `aspell-sv` provides a Swedish
-  one; dump it with `aspell -d sv dump master | aspell -l sv expand`.
+- **`--lang`.** English-only rules — a lone ambiguous bar being the pronoun `I`,
+  `I'm`/`I'll` being likely — are wrong elsewhere. Swedish `i` is a lowercase
+  preposition, so the English rule would capitalise every one. Any `--lang`
+  other than `en` turns those rules off.
+- **`--words`.** The default is an English password dictionary. On Arch:
+  `pacman -S aspell-sv`, then
+  `aspell -d sv dump master | aspell -l sv expand | tr ' ' '\n' | sort -u > sv.txt`.
+
+### Umlauts need both dots
+
+An umlaut is *two* marks. Once the first joins its letter, the second no longer
+sits above anything — it overlaps the merged glyph — so a naive stacking test
+drops it and `Född` comes out as `Fö.dd`. A ring (`å`) is a single mark and never
+hits this, which is what made the bug easy to miss. `merge_diacritics` handles
+it; the same pass covers Spanish `ñ` and any other stacked mark.
+
+### Tables do not transfer between releases
+
+Measured: of Frozen's 110 glyphs, **1** matches the Parks and Recreation table;
+of Cloudy with a Chance of Meatballs' 139, **2** match Frozen's. Different
+studios use different subtitle faces (21px cap height vs 22px here), so a table
+is per-release. Labelling a fresh one from the review sheet takes a few minutes
+and needs no knowledge of the language — only of the alphabet.
 
 ## Status
 
