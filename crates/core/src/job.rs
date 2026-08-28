@@ -327,6 +327,7 @@ impl<'a> Pipeline<'a> {
                     media,
                     item,
                     self.settings.container,
+                    self.settings.episode_template.as_deref(),
                 ));
             }
         }
@@ -409,6 +410,7 @@ impl<'a> Pipeline<'a> {
                     media,
                     item,
                     self.settings.container,
+                    self.settings.episode_template.as_deref(),
                 ));
             }
         }
@@ -1298,5 +1300,171 @@ mod selection_tests {
         );
         let s = scan();
         assert_eq!(p.titles_to_rip(&s, None).len(), s.titles.len());
+    }
+}
+
+/// Turns a stream of progress fractions into a time remaining.
+///
+/// From elapsed time and how far along we are, which needs no knowledge of what
+/// is being done - and is why the rip reports its progress weighted by running
+/// time rather than by title count. Weighted by count, the fraction jumps and
+/// stalls and any estimate from it is nonsense.
+#[derive(Debug, Clone)]
+pub struct Eta {
+    started: std::time::Instant,
+    /// Smoothed seconds-per-unit-of-progress.
+    rate: Option<f64>,
+    last: Option<(std::time::Instant, f32)>,
+}
+
+impl Default for Eta {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Eta {
+    pub fn new() -> Eta {
+        Eta {
+            started: std::time::Instant::now(),
+            rate: None,
+            last: None,
+        }
+    }
+
+    /// How long the whole job has been going.
+    pub fn elapsed(&self) -> std::time::Duration {
+        self.started.elapsed()
+    }
+
+    /// Note where we have got to, and say how much longer it looks like.
+    ///
+    /// Returns `None` until there is enough to say anything honest: a guess
+    /// made from the first two per cent of an hour-long rip is worse than no
+    /// guess, because it will be wrong by an order of magnitude and it will be
+    /// believed.
+    pub fn update(&mut self, fraction: f32) -> Option<std::time::Duration> {
+        let now = std::time::Instant::now();
+        let fraction = fraction.clamp(0.0, 1.0);
+
+        if let Some((then, before)) = self.last {
+            let moved = (fraction - before) as f64;
+            let seconds = now.duration_since(then).as_secs_f64();
+            if moved > 0.0 && seconds > 0.0 {
+                let instant = seconds / moved;
+                // Smoothed, because an optical drive's rate is not steady: it
+                // slows over a layer change and stalls on a retry, and an
+                // estimate that lurched with it would be unreadable.
+                self.rate = Some(match self.rate {
+                    Some(r) => r * 0.8 + instant * 0.2,
+                    None => instant,
+                });
+            }
+        }
+        self.last = Some((now, fraction));
+
+        let rate = self.rate?;
+        if fraction < 0.02 || fraction >= 1.0 {
+            return None;
+        }
+        let remaining = rate * (1.0 - fraction as f64);
+        (remaining.is_finite() && remaining >= 0.0)
+            .then(|| std::time::Duration::from_secs_f64(remaining.min(24.0 * 3600.0)))
+    }
+}
+
+/// "about 4 minutes left", or a coarser phrase when that is all that is honest.
+pub fn describe_remaining(d: std::time::Duration) -> String {
+    let s = d.as_secs();
+    match s {
+        0..=45 => "less than a minute left".into(),
+        46..=90 => "about a minute left".into(),
+        // To the nearest minute below ten, then to five: claiming "37 minutes"
+        // on an estimate this soft is a precision the number does not have.
+        91..=600 => format!("about {} minutes left", (s + 30) / 60),
+        _ => {
+            let minutes = (s + 150) / 300 * 5;
+            if minutes >= 120 {
+                // "about 3 hours" for two and a half is a fifth too long, and
+                // long jobs are exactly where a wrong number is noticed.
+                match (minutes / 60, minutes % 60) {
+                    (h, 0) => format!("about {h} hours left"),
+                    (h, m) => format!("about {h} hours {m} minutes left"),
+                }
+            } else {
+                format!("about {minutes} minutes left")
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod eta_tests {
+    use super::*;
+
+    #[test]
+    fn nothing_is_claimed_before_there_is_anything_to_claim() {
+        // a guess from the first two per cent of an hour-long rip is worse than
+        // no guess: wrong by an order of magnitude, and believed
+        let mut eta = Eta::new();
+        assert_eq!(eta.update(0.0), None);
+        assert_eq!(eta.update(0.01), None);
+    }
+
+    #[test]
+    fn a_steady_rate_gives_a_sensible_estimate() {
+        let mut eta = Eta::new();
+        eta.update(0.0);
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        // half done in ~60ms, so ~60ms to go
+        let left = eta.update(0.5).expect("half way is enough to estimate from");
+        assert!(left.as_millis() < 1000, "{left:?}");
+    }
+
+    #[test]
+    fn a_drive_that_slows_is_followed_rather_than_jumped_after() {
+        // an optical drive is not steady - it slows over a layer change and
+        // stalls on a retry - so the estimate is smoothed
+        let mut eta = Eta::new();
+        eta.update(0.0);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let fast = eta.update(0.5).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        let after_a_stall = eta.update(0.51).unwrap();
+        // it rose, but not to the full six seconds per point the stall implies
+        assert!(after_a_stall > fast);
+        assert!(after_a_stall.as_secs_f64() < 3.0, "{after_a_stall:?}");
+    }
+
+    #[test]
+    fn a_finished_job_claims_nothing() {
+        let mut eta = Eta::new();
+        eta.update(0.2);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert_eq!(eta.update(1.0), None);
+    }
+
+    #[test]
+    fn phrases_are_no_more_precise_than_the_estimate_deserves() {
+        use std::time::Duration as D;
+        assert_eq!(describe_remaining(D::from_secs(20)), "less than a minute left");
+        assert_eq!(describe_remaining(D::from_secs(70)), "about a minute left");
+        assert_eq!(describe_remaining(D::from_secs(240)), "about 4 minutes left");
+        // beyond ten minutes, to the nearest five
+        assert_eq!(describe_remaining(D::from_secs(2220)), "about 35 minutes left");
+        assert_eq!(describe_remaining(D::from_secs(9000)), "about 2 hours 30 minutes left");
+        assert_eq!(describe_remaining(D::from_secs(10800)), "about 3 hours left");
+    }
+
+    #[test]
+    fn a_stalled_drive_does_not_produce_an_absurd_number() {
+        let mut eta = Eta::new();
+        eta.update(0.1);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let left = eta.update(0.1000001);
+        // capped at a day rather than reported as centuries
+        if let Some(d) = left {
+            assert!(d.as_secs() <= 24 * 3600);
+        }
     }
 }

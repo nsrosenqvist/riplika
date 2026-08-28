@@ -372,6 +372,8 @@ pub struct JobSettings {
     pub words_dir: Option<PathBuf>,
     /// Glyph table for subtitle recognition; built on the fly when absent.
     pub glyph_table: Option<PathBuf>,
+    /// How episode filenames are built. `None` uses the default.
+    pub episode_template: Option<String>,
 }
 
 impl Default for JobSettings {
@@ -389,6 +391,7 @@ impl Default for JobSettings {
             drop_commentary: true,
             words_dir: None,
             glyph_table: None,
+            episode_template: None,
         }
     }
 }

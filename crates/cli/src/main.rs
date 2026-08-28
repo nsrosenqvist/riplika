@@ -71,6 +71,12 @@ struct Output {
     /// Directory of <code>.txt wordlists.
     #[arg(long)]
     words: Option<PathBuf>,
+    /// How to name episodes, e.g. "{show} - S{season}E{episode} - {title}".
+    ///
+    /// Tokens: {show} {season} {episode} {title} {year} {date}. Numbers are two
+    /// digits; {season:3} asks for more.
+    #[arg(long)]
+    template: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -247,6 +253,7 @@ impl Output {
             drop_commentary: !self.keep_commentary,
             words_dir: self.words.clone(),
             glyph_table: self.table.clone(),
+            episode_template: self.template.clone(),
         })
     }
 }

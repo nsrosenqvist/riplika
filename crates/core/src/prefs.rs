@@ -43,6 +43,8 @@ pub struct Preferences {
     pub rip_dir: Option<PathBuf>,
     pub glyph_table: Option<PathBuf>,
     pub words_dir: Option<PathBuf>,
+    /// How episode filenames are built.
+    pub episode_template: String,
 }
 
 impl Default for Preferences {
@@ -68,6 +70,7 @@ impl Default for Preferences {
             rip_dir: None,
             glyph_table: None,
             words_dir: None,
+            episode_template: crate::naming::DEFAULT_EPISODE_TEMPLATE.to_string(),
         }
     }
 }
@@ -126,6 +129,8 @@ impl Preferences {
             drop_commentary: self.drop_commentary,
             words_dir: self.words_dir.clone(),
             glyph_table: self.glyph_table.clone(),
+            episode_template: Some(self.episode_template.clone())
+                .filter(|t| !t.trim().is_empty()),
         }
     }
 

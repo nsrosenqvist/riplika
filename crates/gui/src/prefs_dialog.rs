@@ -9,7 +9,9 @@
 use adw::prelude::*;
 use riplika_core::host;
 use riplika_core::lang;
+use riplika_core::naming;
 use riplika_core::prefs::{Preferences, MAKEMKV};
+use riplika_core::secret;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -146,6 +148,43 @@ where
     languages.add(&expander);
     page.add(&languages);
 
+    // --- naming -----------------------------------------------------------
+    let naming_group = adw::PreferencesGroup::builder()
+        .title("Episode filenames")
+        .description(&format!(
+            "Tokens: {}",
+            naming::TOKENS.iter().map(|(t, _)| *t).collect::<Vec<_>>().join("  ")
+        ))
+        .build();
+    let template_row = adw::EntryRow::builder().title("Pattern").build();
+    template_row.set_text(&store.prefs.borrow().episode_template);
+    // What it will actually produce, updated as it is typed - the only way to
+    // know a pattern does what you meant without ripping a disc to find out.
+    let preview_row = adw::ActionRow::builder().title("Preview").build();
+    preview_row.add_css_class("property");
+    let container = store.prefs.borrow().container;
+    preview_row.set_subtitle(&naming::preview(&template_row.text(), container));
+    naming_group.add(&template_row);
+    naming_group.add(&preview_row);
+    page.add(&naming_group);
+
+    // --- catalogues -------------------------------------------------------
+    let catalogue_group = adw::PreferencesGroup::builder()
+        .title("Catalogues")
+        .description(
+            "TVmaze answers for television and Wikidata for film, neither needing a key. \
+             A TMDB key is used in preference to both: it is better data, and it is what a \
+             media server consults about the same files.",
+        )
+        .build();
+    let tmdb_row = adw::PasswordEntryRow::builder().title("TMDB API key").build();
+    if let Some(k) = secret::tmdb_key() {
+        tmdb_row.set_text(&k);
+    }
+    tmdb_row.set_show_apply_button(true);
+    catalogue_group.add(&tmdb_row);
+    page.add(&catalogue_group);
+
     // --- track policy -----------------------------------------------------
     let tracks = adw::PreferencesGroup::builder().title("Tracks").build();
     let dual = adw::SwitchRow::builder()
@@ -223,6 +262,31 @@ where
             store.prefs.borrow_mut().drop_commentary = !r.is_active();
             store.save();
             on_change();
+        });
+    }
+
+    {
+        let store = Rc::clone(&store);
+        let preview = preview_row.clone();
+        let on_change = on_change.clone();
+        template_row.connect_changed(move |e| {
+            let pattern = e.text().to_string();
+            let container = store.prefs.borrow().container;
+            preview.set_subtitle(&naming::preview(&pattern, container));
+            store.prefs.borrow_mut().episode_template = pattern;
+            store.save();
+            on_change();
+        });
+    }
+    {
+        // Into the login keyring, not the config file. Encrypting it ourselves
+        // would need the key to decrypt stored somewhere this process can reach
+        // unasked - which is somewhere anyone reading the config can reach too.
+        let toasts = dialog.clone();
+        tmdb_row.connect_apply(move |e| {
+            if let Err(err) = secret::store("tmdb", &e.text()) {
+                toasts.set_title(&format!("Could not save the key: {err}"));
+            }
         });
     }
 

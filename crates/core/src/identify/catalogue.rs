@@ -234,11 +234,11 @@ pub struct Tmdb<'a> {
 
 impl<'a> Tmdb<'a> {
     /// None when no key is configured, so the caller can fall back quietly.
-    pub fn from_env(http: &'a dyn Http) -> Option<Self> {
-        std::env::var("TMDB_API_KEY")
-            .ok()
-            .filter(|k| !k.trim().is_empty())
-            .map(|key| Tmdb { http, key })
+    ///
+    /// From the login keyring first, then the environment - a script or a
+    /// container has no keyring and should not need one.
+    pub fn configured(http: &'a dyn Http) -> Option<Self> {
+        crate::secret::tmdb_key().map(|key| Tmdb { http, key })
     }
 }
 

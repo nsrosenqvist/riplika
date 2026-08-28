@@ -125,10 +125,15 @@ impl Ripper for MakeMkv<'_> {
         // disc seeking but means a failure names the title it happened on, and
         // a run can be resumed by skipping what is already there.
         let mut outcome = RipOutcome::default();
-        for (n, title) in titles.iter().enumerate() {
+        // Weighted by running time: a disc holds a three-hour play-all beside a
+        // fifteen-second stub, so counting titles makes the bar leap and stall.
+        let total: f64 = titles.iter().map(|t| t.duration.max(1) as f64).sum();
+        let mut done: f64 = 0.0;
+        for title in titles {
             let out_path = dest.join(&title.output_name);
-            let base = n as f32 / titles.len() as f32;
-            let span = 1.0 / titles.len() as f32;
+            let base = (done / total) as f32;
+            let span = (title.duration.max(1) as f64 / total) as f32;
+            done += title.duration.max(1) as f64;
 
             if self.runner.cancelled() {
                 return Err(Error("cancelled".into()));

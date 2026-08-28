@@ -74,6 +74,8 @@ struct State {
     cancel: riplika_core::host::Cancel,
     /// What was last searched for, so reopening the picker resumes it.
     query: String,
+    /// Turns progress into a time remaining.
+    eta: riplika_core::job::Eta,
     /// A catalogue search is in flight, so its result should be announced.
     searching: bool,
     /// What is running, if anything.
@@ -97,6 +99,7 @@ impl Default for State {
             cancel: riplika_core::host::Cancel::new(),
             busy: None,
             query: String::new(),
+            eta: riplika_core::job::Eta::new(),
             searching: false,
         }
     }
@@ -993,12 +996,23 @@ impl App {
             Event::Stage(s) => {
                 self.ui.stage_label.set_label(s.label());
                 self.ui.progress.set_fraction(0.0);
+                // Each stage reads at its own rate, so an estimate carried over
+                // from the last one would be wrong in a way that looks precise.
+                self.state.borrow_mut().eta = riplika_core::job::Eta::new();
             }
             Event::Progress { fraction, message, .. } => {
                 self.ui.progress.set_fraction(fraction as f64);
-                if let Some(m) = message {
-                    self.ui.progress.set_text(Some(&m));
+                // What is happening, how far along, and how much longer - the
+                // last of which is the only one that answers "should I wait?".
+                let remaining = self.state.borrow_mut().eta.update(fraction);
+                let mut parts = vec![format!("{:.0}%", fraction * 100.0)];
+                if let Some(m) = message.filter(|m| !m.is_empty()) {
+                    parts.push(m);
                 }
+                if let Some(left) = remaining {
+                    parts.push(riplika_core::job::describe_remaining(left));
+                }
+                self.ui.progress.set_text(Some(&parts.join("  \u{b7}  ")));
             }
             Event::ItemStarted { index, total, name } => {
                 self.ui.progress.set_fraction(index as f64 / total.max(1) as f64);
@@ -1389,7 +1403,7 @@ mod tests {
             destination: None,
         };
         assert_eq!(
-            naming::file_name(&media, &item, Container::Mp4),
+            naming::file_name(&media, &item, Container::Mp4, None),
             "Parks and Recreation - S07E02 - Ron & Jammy.mp4"
         );
     }

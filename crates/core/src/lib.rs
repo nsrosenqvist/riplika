@@ -28,6 +28,7 @@ pub mod naming;
 pub mod prefs;
 pub mod rescue;
 pub mod rip;
+pub mod secret;
 pub mod subs;
 pub mod transcode;
 

@@ -613,10 +613,17 @@ impl super::Ripper for DvdVideo<'_> {
         let device = PathBuf::from(&drive.device);
         let mut outcome = super::RipOutcome::default();
 
-        for (n, title) in titles.iter().enumerate() {
+        // Weighted by running time, not by title count. A disc holds a
+        // three-hour play-all beside a fifteen-second stub, so counting titles
+        // makes the bar leap and stall and any estimate from it useless.
+        let total: f64 = titles.iter().map(|t| t.duration.max(1) as f64).sum();
+        let mut done: f64 = 0.0;
+
+        for title in titles {
             let out_path = dest.join(&title.output_name);
-            let base = n as f32 / titles.len() as f32;
-            let span = 1.0 / titles.len() as f32;
+            let base = (done / total) as f32;
+            let span = (title.duration.max(1) as f64 / total) as f32;
+            done += title.duration.max(1) as f64;
 
             // Stopping is not damage. Without this, cancelling a rip records
             // every remaining title as unreadable and keeps going through them.

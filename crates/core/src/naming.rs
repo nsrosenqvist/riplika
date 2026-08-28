@@ -9,6 +9,85 @@
 use crate::model::{Container, Item, Media, Role, Tags};
 use std::path::{Path, PathBuf};
 
+/// How episode filenames are built, when nothing else is said.
+pub const DEFAULT_EPISODE_TEMPLATE: &str = "{show} - S{season}E{episode} - {title}";
+
+/// The fields a template can use.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Fields {
+    pub show: String,
+    pub season: Option<u32>,
+    pub episode: Option<u32>,
+    pub title: String,
+    pub year: Option<u32>,
+    pub date: Option<String>,
+}
+
+/// Every token, with a line about it, for showing beside the field.
+pub const TOKENS: &[(&str, &str)] = &[
+    ("{show}", "the programme's name"),
+    ("{season}", "season number, two digits"),
+    ("{episode}", "episode number, two digits"),
+    ("{title}", "this episode's title"),
+    ("{year}", "the year it first aired"),
+    ("{date}", "the date it first aired"),
+];
+
+/// Fill a template.
+///
+/// Numbers are padded to two digits, which is what every media server expects
+/// and what the whole library already uses; `{season:3}` asks for more. An
+/// unknown token is left alone rather than silently dropped, so a typo shows up
+/// in the preview as itself instead of as a gap.
+pub fn render(template: &str, f: &Fields) -> String {
+    let mut out = String::with_capacity(template.len() + 32);
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let Some(close) = rest[open..].find('}') else {
+            // an unclosed brace is a typo, not an instruction
+            out.push_str(&rest[open..]);
+            return out;
+        };
+        let token = &rest[open + 1..open + close];
+        rest = &rest[open + close + 1..];
+
+        let (name, width) = match token.split_once(':') {
+            Some((n, w)) => (n, w.parse::<usize>().unwrap_or(2)),
+            None => (token, 2),
+        };
+        let number = |v: Option<u32>| v.map(|n| format!("{n:0width$}")).unwrap_or_default();
+        match name {
+            "show" => out.push_str(&f.show),
+            "title" => out.push_str(&f.title),
+            "season" => out.push_str(&number(f.season)),
+            "episode" => out.push_str(&number(f.episode)),
+            "year" => out.push_str(&f.year.map(|y| y.to_string()).unwrap_or_default()),
+            "date" => out.push_str(f.date.as_deref().unwrap_or("")),
+            _ => {
+                out.push('{');
+                out.push_str(token);
+                out.push('}');
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// What a template produces for a made-up episode, for showing as you type.
+pub fn preview(template: &str, container: Container) -> String {
+    let f = Fields {
+        show: "Parks and Recreation".into(),
+        season: Some(6),
+        episode: Some(4),
+        title: "Doppelgangers".into(),
+        year: Some(2013),
+        date: Some("2013-10-17".into()),
+    };
+    format!("{}.{}", sanitize(&render(template, &f)), container.extension())
+}
+
 /// Characters Windows and SMB reject outright.
 const ILLEGAL: &[char] = &['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
 
@@ -65,16 +144,32 @@ pub fn episode_code(season: u32, number: u32) -> String {
 }
 
 /// The filename for an item, without a directory.
-pub fn file_name(media: &Media, item: &Item, container: Container) -> String {
+pub fn file_name(
+    media: &Media,
+    item: &Item,
+    container: Container,
+    template: Option<&str>,
+) -> String {
     let ext = container.extension();
+    let episode_fields = |season: &u32, number: &u32, show: &str, year: &Option<u32>| Fields {
+        show: show.to_string(),
+        season: Some(*season),
+        episode: Some(*number),
+        title: item.title.clone(),
+        year: *year,
+        date: item.air_date.clone(),
+    };
     let stem = match (&item.role, media) {
-        (Role::Episode { season, number }, Media::Series { title, .. }) => {
-            format!("{title} - {} - {}", episode_code(*season, *number), item.title)
-        }
-        (Role::ExtendedCut { season, number }, Media::Series { title, .. }) => format!(
-            "{title} - {} - {} - Extended Cut",
-            episode_code(*season, *number),
-            item.title
+        (Role::Episode { season, number }, Media::Series { title, year, .. }) => render(
+            template.unwrap_or(DEFAULT_EPISODE_TEMPLATE),
+            &episode_fields(season, number, title, year),
+        ),
+        (Role::ExtendedCut { season, number }, Media::Series { title, year, .. }) => format!(
+            "{} - Extended Cut",
+            render(
+                template.unwrap_or(DEFAULT_EPISODE_TEMPLATE),
+                &episode_fields(season, number, title, year)
+            )
         ),
         (Role::Feature, Media::Movie { title, year, .. }) => match year {
             Some(y) => format!("{title} ({y})"),
@@ -95,7 +190,13 @@ pub fn file_name(media: &Media, item: &Item, container: Container) -> String {
 ///
 /// Series get a `Season NN` directory because that is what Jellyfin, Plex and
 /// Emby all expect; getting it wrong makes a season show up as loose files.
-pub fn destination(root: &Path, media: &Media, item: &Item, container: Container) -> PathBuf {
+pub fn destination(
+    root: &Path,
+    media: &Media,
+    item: &Item,
+    container: Container,
+    template: Option<&str>,
+) -> PathBuf {
     let mut p = root.to_path_buf();
     if let Media::Series { season, .. } = media {
         let season = match &item.role {
@@ -107,7 +208,7 @@ pub fn destination(root: &Path, media: &Media, item: &Item, container: Container
     if let Some(sub) = item.role.subdirectory() {
         p.push(sub);
     }
-    p.push(file_name(media, item, container));
+    p.push(file_name(media, item, container, template));
     p
 }
 
@@ -176,7 +277,7 @@ mod tests {
         // this exact episode is why: it was unopenable from Windows on the NAS
         let i = item(Role::Episode { season: 3, number: 4 }, "Ron & Tammy: Part Two");
         assert_eq!(
-            file_name(&series(), &i, Container::Mp4),
+            file_name(&series(), &i, Container::Mp4, None),
             "Parks and Recreation - S03E04 - Ron & Tammy - Part Two.mp4"
         );
     }
@@ -214,7 +315,7 @@ mod tests {
     fn episodes_land_in_a_season_directory() {
         let i = item(Role::Episode { season: 3, number: 4 }, "Ron and Tammy");
         assert_eq!(
-            destination(Path::new("/media"), &series(), &i, Container::Mp4),
+            destination(Path::new("/media"), &series(), &i, Container::Mp4, None),
             PathBuf::from(
                 "/media/Season 03/Parks and Recreation - S03E04 - Ron and Tammy.mp4"
             )
@@ -225,7 +326,7 @@ mod tests {
     fn extended_cuts_land_in_extras_beside_the_season() {
         let i = item(Role::ExtendedCut { season: 3, number: 4 }, "Ron and Tammy");
         assert_eq!(
-            destination(Path::new("/media"), &series(), &i, Container::Mkv),
+            destination(Path::new("/media"), &series(), &i, Container::Mkv, None),
             PathBuf::from(
                 "/media/Season 03/extras/Parks and Recreation - S03E04 - Ron and Tammy - Extended Cut.mkv"
             )
@@ -237,7 +338,7 @@ mod tests {
         // a media server parses "Show - S03E04" out of a filename; an extra
         // that looked like one would be filed as a duplicate episode
         let i = item(Role::Extra, "Deleted Scenes");
-        let name = file_name(&series(), &i, Container::Mp4);
+        let name = file_name(&series(), &i, Container::Mp4, None);
         assert_eq!(name, "Deleted Scenes.mp4");
         assert!(!name.contains("S03"));
     }
@@ -251,7 +352,7 @@ mod tests {
         };
         let i = item(Role::Feature, "The Big Lebowski");
         assert_eq!(
-            destination(Path::new("/media"), &m, &i, Container::Mp4),
+            destination(Path::new("/media"), &m, &i, Container::Mp4, None),
             PathBuf::from("/media/The Big Lebowski (1998).mp4")
         );
     }
@@ -270,5 +371,117 @@ mod tests {
     fn an_extended_cut_says_so_in_its_title_tag() {
         let t = tags(&series(), &item(Role::ExtendedCut { season: 3, number: 4 }, "Ron"));
         assert_eq!(t.title.as_deref(), Some("Ron (Extended Cut)"));
+    }
+}
+
+#[cfg(test)]
+mod template_tests {
+    use super::*;
+
+    fn fields() -> Fields {
+        Fields {
+            show: "Parks and Recreation".into(),
+            season: Some(6),
+            episode: Some(4),
+            title: "Doppelgangers".into(),
+            year: Some(2013),
+            date: Some("2013-10-17".into()),
+        }
+    }
+
+    #[test]
+    fn the_default_produces_what_the_library_already_uses() {
+        assert_eq!(
+            render(DEFAULT_EPISODE_TEMPLATE, &fields()),
+            "Parks and Recreation - S06E04 - Doppelgangers"
+        );
+    }
+
+    #[test]
+    fn numbers_are_padded_to_two_digits() {
+        // every media server expects it, and the existing library uses it
+        assert_eq!(render("S{season}E{episode}", &fields()), "S06E04");
+    }
+
+    #[test]
+    fn a_wider_field_can_be_asked_for() {
+        assert_eq!(render("{episode:3}", &fields()), "004");
+    }
+
+    #[test]
+    fn every_token_resolves() {
+        for (token, _) in TOKENS {
+            let out = render(token, &fields());
+            assert_ne!(out, *token, "{token} was not recognised");
+            assert!(!out.is_empty(), "{token} produced nothing");
+        }
+    }
+
+    #[test]
+    fn an_unknown_token_is_left_alone_rather_than_dropped() {
+        // a typo should be visible in the preview as itself, not as a gap the
+        // user has to work out the cause of
+        assert_eq!(render("{shwo} - {title}", &fields()), "{shwo} - Doppelgangers");
+    }
+
+    #[test]
+    fn an_unclosed_brace_is_a_typo_not_an_instruction() {
+        assert_eq!(render("{show} - {tit", &fields()), "Parks and Recreation - {tit");
+    }
+
+    #[test]
+    fn a_missing_value_leaves_a_gap_rather_than_the_word_none() {
+        let sparse = Fields { show: "Thing".into(), ..Fields::default() };
+        assert_eq!(render("{show} {year}", &sparse), "Thing ");
+    }
+
+    #[test]
+    fn the_preview_is_sanitised_like_a_real_name() {
+        // what it shows must be what would actually be written
+        let p = preview("{show}: {title}", Container::Mp4);
+        assert!(!p.contains(':'), "{p}");
+        assert!(p.ends_with(".mp4"));
+    }
+
+    #[test]
+    fn a_custom_template_reaches_the_filename() {
+        let media = Media::Series {
+            title: "Parks and Recreation".into(),
+            year: Some(2009),
+            season: 6,
+            provider_id: None,
+        };
+        let item = Item {
+            source: PathBuf::from("/rip/a.mkv"),
+            role: Role::Episode { season: 6, number: 4 },
+            title: "Doppelgangers".into(),
+            air_date: Some("2013-10-17".into()),
+            duration: 0,
+            destination: None,
+        };
+        assert_eq!(
+            file_name(&media, &item, Container::Mkv, Some("{season}x{episode} {title}")),
+            "06x04 Doppelgangers.mkv"
+        );
+    }
+
+    #[test]
+    fn an_extended_cut_still_says_so_whatever_the_template() {
+        let media = Media::Series {
+            title: "Parks and Recreation".into(),
+            year: Some(2009),
+            season: 6,
+            provider_id: None,
+        };
+        let item = Item {
+            source: PathBuf::from("/rip/a.mkv"),
+            role: Role::ExtendedCut { season: 6, number: 4 },
+            title: "Doppelgangers".into(),
+            air_date: None,
+            duration: 0,
+            destination: None,
+        };
+        let name = file_name(&media, &item, Container::Mp4, Some("{title}"));
+        assert_eq!(name, "Doppelgangers - Extended Cut.mp4");
     }
 }

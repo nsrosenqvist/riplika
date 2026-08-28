@@ -71,7 +71,7 @@ impl Real {
     /// anything.
     fn catalogues(&self) -> Catalogues<'_> {
         let mut v: Vec<Box<dyn Catalogue + '_>> = Vec::new();
-        if let Some(t) = Tmdb::from_env(&self.http) {
+        if let Some(t) = Tmdb::configured(&self.http) {
             v.push(Box::new(t));
         }
         v.push(Box::new(TvMaze { http: &self.http }));
