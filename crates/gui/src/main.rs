@@ -81,6 +81,8 @@ struct Ui {
     toasts: adw::ToastOverlay,
     drive_list: gtk::ListBox,
     drive_next: gtk::Button,
+    drive_stack: gtk::Stack,
+    empty_page: adw::StatusPage,
     candidate_list: gtk::ListBox,
     identify_next: gtk::Button,
     search_entry: adw::EntryRow,
@@ -220,7 +222,34 @@ fn build_ui() -> Ui {
     drive_body.append(&drive_group);
     drive_body.append(&buttons);
     refresh.set_widget_name("refresh");
-    nav.add(&page(Step::Drive.tag(), "Riplika", &drive_body));
+
+    // An empty list is not an empty state - it says nothing about why it is
+    // empty or what to do about it. A status page carries the reason and the
+    // one action worth taking, which is the pattern the platform uses
+    // everywhere else.
+    let empty = adw::StatusPage::builder()
+        .icon_name("media-optical-symbolic")
+        .title("No disc")
+        .vexpand(true)
+        .build();
+    let empty_action = gtk::Button::builder()
+        .label("Look again")
+        .name("refresh")
+        .halign(gtk::Align::Center)
+        .css_classes(vec!["pill".to_string(), "suggested-action".to_string()])
+        .build();
+    empty.set_child(Some(&empty_action));
+
+    // One or the other, never both: a list with nothing in it beside a status
+    // page explaining there is nothing would be its own kind of confusing.
+    let drive_stack = gtk::Stack::builder()
+        .transition_type(gtk::StackTransitionType::Crossfade)
+        .vexpand(true)
+        .build();
+    drive_stack.add_named(&empty, Some("empty"));
+    drive_stack.add_named(&drive_body, Some("drives"));
+    drive_stack.set_visible_child_name("empty");
+    nav.add(&page(Step::Drive.tag(), "Riplika", &drive_stack));
 
     // --- step two: what is it? -------------------------------------------
     let id_body = body();
@@ -349,6 +378,8 @@ fn build_ui() -> Ui {
         toasts,
         drive_list,
         drive_next,
+        drive_stack,
+        empty_page: empty,
         candidate_list,
         identify_next,
         search_entry,
@@ -505,6 +536,27 @@ impl App {
         });
     }
 
+    /// What the empty state should say, given what the machine has.
+    ///
+    /// "Nothing here" is not worth a screen. Which of the three situations you
+    /// are in decides what you do next, so the page says which one it is.
+    fn empty_state(drives: &[Drive]) -> Option<(&'static str, String)> {
+        if drives.is_empty() {
+            return Some((
+                "No disc drive",
+                "No optical drive was found. Connect one and look again.".into(),
+            ));
+        }
+        if !drives.iter().any(Drive::has_disc) {
+            let names: Vec<&str> = drives.iter().map(|d| d.device.as_str()).collect();
+            return Some((
+                "No disc",
+                format!("Insert a DVD into {}, then look again.", names.join(" or ")),
+            ));
+        }
+        None
+    }
+
     fn show_drives(&self, drives: &[Drive]) {
         while let Some(r) = self.ui.drive_list.row_at_index(0) {
             self.ui.drive_list.remove(&r);
@@ -522,6 +574,16 @@ impl App {
             self.ui.drive_list.append(&row);
         }
         self.state.borrow_mut().drives = drives.to_vec();
+
+        match Self::empty_state(drives) {
+            Some((title, description)) => {
+                self.ui.empty_page.set_title(title);
+                self.ui.empty_page.set_description(Some(&description));
+                self.ui.drive_stack.set_visible_child_name("empty");
+            }
+            None => self.ui.drive_stack.set_visible_child_name("drives"),
+        }
+
         // Select the only usable drive rather than making the user click it.
         let loaded: Vec<usize> = drives
             .iter()
@@ -743,7 +805,10 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             app.state.borrow_mut().drive = d;
         });
     }
-    if let Some(refresh) = find_button(&app.ui.drive_next, "refresh") {
+    // Two buttons carry this name now - the one beside the list and the one in
+    // the empty state - and wiring only the first found would leave the other
+    // looking live and doing nothing.
+    for refresh in find_buttons(&app.ui.drive_next, "refresh") {
         let tx = tx.clone();
         refresh.connect_clicked(move |_| worker::list_drives(true, tx.clone()));
     }
@@ -1097,5 +1162,54 @@ mod busy_tests {
         let second = riplika_core::host::Cancel::new();
         assert!(first.is_cancelled());
         assert!(!second.is_cancelled(), "a new job must start uncancelled");
+    }
+}
+
+#[cfg(test)]
+mod empty_state_tests {
+    use super::*;
+
+    fn drive(device: &str, label: Option<&str>) -> Drive {
+        Drive {
+            id: device.into(),
+            device: device.into(),
+            name: "drive".into(),
+            disc_label: label.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn no_drive_at_all_says_so() {
+        let (title, description) = App::empty_state(&[]).unwrap();
+        assert_eq!(title, "No disc drive");
+        assert!(description.contains("Connect one"), "{description}");
+    }
+
+    #[test]
+    fn a_drive_with_no_disc_asks_for_one_and_names_it() {
+        // "nothing here" is not worth a screen; which situation you are in
+        // decides what you do next
+        let (title, description) = App::empty_state(&[drive("/dev/sr0", None)]).unwrap();
+        assert_eq!(title, "No disc");
+        assert!(description.contains("/dev/sr0"), "{description}");
+    }
+
+    #[test]
+    fn several_empty_drives_are_all_named() {
+        let d = [drive("/dev/sr0", None), drive("/dev/sr1", None)];
+        let (_, description) = App::empty_state(&d).unwrap();
+        assert!(description.contains("/dev/sr0") && description.contains("/dev/sr1"), "{description}");
+    }
+
+    #[test]
+    fn a_loaded_drive_means_there_is_no_empty_state() {
+        let d = [drive("/dev/sr0", Some("PARKS_AND_RECREATION"))];
+        assert!(App::empty_state(&d).is_none());
+    }
+
+    #[test]
+    fn one_loaded_drive_among_empty_ones_still_counts() {
+        let d = [drive("/dev/sr0", None), drive("/dev/sr1", Some("DISC"))];
+        assert!(App::empty_state(&d).is_none());
     }
 }
