@@ -8,7 +8,7 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
-ripper-core = { path = "crates/core" }
+riplika-core = { path = "crates/core" }
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"

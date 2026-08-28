@@ -8,12 +8,12 @@
 //! able to intervene between them - to correct a wrong identification, or to
 //! change the quality after seeing how many episodes there are.
 
-use ripper_core::host::{Cancel, RealFs, RealRunner};
-use ripper_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, UreqHttp};
-use ripper_core::job::{Event, Pipeline, Ports, Report};
-use ripper_core::media::FfProbe;
-use ripper_core::model::{Candidate, DiscScan, Drive, Item, JobSettings, Media};
-use ripper_core::rip::MakeMkv;
+use riplika_core::host::{Cancel, RealFs, RealRunner};
+use riplika_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, UreqHttp};
+use riplika_core::job::{Event, Pipeline, Ports, Report};
+use riplika_core::media::FfProbe;
+use riplika_core::model::{Candidate, DiscScan, Drive, Item, JobSettings, Media};
+use riplika_core::rip::MakeMkv;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
@@ -71,7 +71,7 @@ impl Real {
     }
 }
 
-fn report(tx: &Sender<Msg>, r: ripper_core::Result<()>) {
+fn report(tx: &Sender<Msg>, r: riplika_core::Result<()>) {
     if let Err(e) = r {
         let _ = tx.send(Msg::Failed(e.to_string()));
     }
@@ -82,7 +82,7 @@ pub fn list_drives(tx: Sender<Msg>) {
     std::thread::spawn(move || {
         let real = Real::new(Cancel::new());
         let mk = MakeMkv::new(&real.runner);
-        match ripper_core::rip::Ripper::drives(&mk) {
+        match riplika_core::rip::Ripper::drives(&mk) {
             Ok(d) => {
                 let _ = tx.send(Msg::Drives(d));
             }
@@ -133,7 +133,7 @@ pub fn search(query: String, season: Option<u32>, tx: Sender<Msg>) {
     std::thread::spawn(move || {
         let real = Real::new(Cancel::new());
         let cat = real.catalogues();
-        match ripper_core::identify::search(&cat, &query, season) {
+        match riplika_core::identify::search(&cat, &query, season) {
             Ok(c) => {
                 let _ = tx.send(Msg::Candidates(c));
             }

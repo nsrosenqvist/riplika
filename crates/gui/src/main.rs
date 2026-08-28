@@ -1,4 +1,4 @@
-//! ripper - a window over the disc pipeline.
+//! riplika - a window over the disc pipeline.
 //!
 //! Four steps, in the order the work happens: pick a drive, confirm what the
 //! disc is, choose how to encode it, watch it run. The middle step is the one
@@ -9,16 +9,16 @@ mod worker;
 
 use adw::prelude::*;
 use gtk::glib;
-use ripper_core::job::{Event, Report};
-use ripper_core::lang::LanguageSet;
-use ripper_core::model::*;
+use riplika_core::job::{Event, Report};
+use riplika_core::lang::LanguageSet;
+use riplika_core::model::*;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 use worker::Msg;
 
-const APP_ID: &str = "se.rosenqvist.Ripper";
+const APP_ID: &str = "com.nsrosenqvist.Riplika";
 
 /// Which step we are on. The navigation view mirrors this.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -49,7 +49,7 @@ struct State {
     candidates: Vec<Candidate>,
     chosen: Option<Media>,
     items: Vec<Item>,
-    cancel: ripper_core::host::Cancel,
+    cancel: riplika_core::host::Cancel,
 }
 
 impl Default for State {
@@ -61,7 +61,7 @@ impl Default for State {
             candidates: Vec::new(),
             chosen: None,
             items: Vec::new(),
-            cancel: ripper_core::host::Cancel::new(),
+            cancel: riplika_core::host::Cancel::new(),
         }
     }
 }
@@ -116,7 +116,7 @@ impl Default for Paths {
         let home = glib::home_dir();
         Paths {
             output: home.join("Videos"),
-            rip: std::env::temp_dir().join("ripper-rip"),
+            rip: std::env::temp_dir().join("riplika-rip"),
             table: None,
             words: None,
         }
@@ -179,7 +179,7 @@ fn build(app: &adw::Application) {
     let ui = build_ui();
     let window = adw::ApplicationWindow::builder()
         .application(app)
-        .title("Ripper")
+        .title("Riplika")
         .default_width(720)
         .default_height(720)
         .content(&ui.toasts)
@@ -227,7 +227,7 @@ fn build_ui() -> Ui {
     drive_body.append(&drive_group);
     drive_body.append(&buttons);
     refresh.set_widget_name("refresh");
-    nav.add(&page(Step::Drive.tag(), "Ripper", &drive_body));
+    nav.add(&page(Step::Drive.tag(), "Riplika", &drive_body));
 
     // --- step two: what is it? -------------------------------------------
     let id_body = body();
@@ -588,12 +588,12 @@ impl App {
         match msg {
             Msg::Drives(d) => self.show_drives(&d),
             Msg::Scanned(scan) => {
-                let disc = ripper_core::identify::label::parse(&scan.label).disc;
+                let disc = riplika_core::identify::label::parse(&scan.label).disc;
                 if let Some(d) = disc {
                     self.ui.disc_entry.set_text(&d.to_string());
                 }
                 self.ui.search_entry.set_text(
-                    &ripper_core::identify::label::parse(&scan.label).title,
+                    &riplika_core::identify::label::parse(&scan.label).title,
                 );
                 self.state.borrow_mut().scan = Some(*scan);
             }
@@ -823,7 +823,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 app.toast("No glyph table: subtitles will stay as bitmaps");
             }
             // A fresh token, so a cancelled run does not poison the next one.
-            app.state.borrow_mut().cancel = ripper_core::host::Cancel::new();
+            app.state.borrow_mut().cancel = riplika_core::host::Cancel::new();
             let cancel = app.state.borrow().cancel.clone();
             app.ui.cancel_button.set_label("Cancel");
             app.go(Step::Progress);
@@ -913,7 +913,7 @@ mod tests {
         assert_ne!(p.output, p.rip);
     }
 
-    use ripper_core::naming;
+    use riplika_core::naming;
 
     #[test]
     fn naming_matches_what_the_results_page_will_show() {

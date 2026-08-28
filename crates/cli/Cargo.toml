@@ -1,15 +1,15 @@
 [package]
-name = "ripper-cli"
+name = "riplika-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "ripper"
+name = "riplika"
 path = "src/main.rs"
 
 [dependencies]
-ripper-core.workspace = true
+riplika-core.workspace = true
 clap.workspace = true
 libc.workspace = true
 serde_json.workspace = true

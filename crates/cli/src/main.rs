@@ -1,16 +1,16 @@
-//! ripper - turn a disc into a tagged, subtitled library.
+//! riplika - turn a disc into a tagged, subtitled library.
 
 mod glyphs;
 mod run;
 
 use clap::{Parser, Subcommand};
-use ripper_core::model::{Container, Quality};
-use ripper_core::subs::table::Table;
+use riplika_core::model::{Container, Quality};
+use riplika_core::subs::table::Table;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "ripper", about = "Rip, identify, transcode and subtitle discs", version)]
+#[command(name = "riplika", about = "Rip, identify, transcode and subtitle discs", version)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -72,7 +72,7 @@ enum Cmd {
     Rip {
         drive: Option<String>,
         /// Where the raw rip goes. Kept afterwards so it can be re-run.
-        #[arg(long, default_value = "/tmp/ripper-rip")]
+        #[arg(long, default_value = "/tmp/riplika-rip")]
         rip_dir: PathBuf,
         /// Skip identification and use this title.
         #[arg(long)]
@@ -179,8 +179,8 @@ enum Cmd {
 }
 
 impl Output {
-    fn settings(&self) -> Result<ripper_core::model::JobSettings, String> {
-        Ok(ripper_core::model::JobSettings {
+    fn settings(&self) -> Result<riplika_core::model::JobSettings, String> {
+        Ok(riplika_core::model::JobSettings {
             output_dir: self.out.clone(),
             video: Quality::parse(&self.video)
                 .ok_or("video quality must be high, medium or low")?,
@@ -191,7 +191,7 @@ impl Output {
                 "mkv" | "matroska" => Container::Mkv,
                 _ => return Err("container must be mp4 or mkv".into()),
             },
-            languages: ripper_core::lang::LanguageSet::parse(&self.languages),
+            languages: riplika_core::lang::LanguageSet::parse(&self.languages),
             dual_audio: self.dual_audio,
             keep_bitmap_subs: self.keep_bitmap_subs,
             drop_commentary: !self.keep_commentary,
@@ -203,7 +203,7 @@ impl Output {
 
 fn main() {
     // Restore the default SIGPIPE handling that Rust disables at startup.
-    // Without this, `ripper check | head` kills the pipe and the next println!
+    // Without this, `riplika check | head` kills the pipe and the next println!
     // panics with "failed printing to stdout: Broken pipe".
     #[cfg(unix)]
     unsafe {
@@ -244,7 +244,7 @@ fn dispatch() -> Result<(), String> {
         }
         Cmd::Sheet { table, out, zoom } => {
             let t = Table::load(&table).map_err(|e| e.to_string())?;
-            let html = ripper_core::subs::sheet::render(&t, zoom);
+            let html = riplika_core::subs::sheet::render(&t, zoom);
             std::fs::write(&out, html).map_err(|e| format!("{}: {e}", out.display()))?;
             println!(
                 "{} glyphs ({} labelled, {} to review) -> {}",

@@ -988,17 +988,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "ripper-cli"
+name = "riplika-cli"
 version = "0.2.0"
 dependencies = [
  "clap",
  "libc",
- "ripper-core",
+ "riplika-core",
  "serde_json",
 ]
 
 [[package]]
-name = "ripper-core"
+name = "riplika-core"
 version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
@@ -1009,12 +1009,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "ripper-gui"
+name = "riplika-gui"
 version = "0.2.0"
 dependencies = [
  "gtk4",
  "libadwaita",
- "ripper-core",
+ "riplika-core",
 ]
 
 [[package]]

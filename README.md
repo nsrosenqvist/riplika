@@ -1,4 +1,4 @@
-# ripper
+# Riplika
 
 Turn a disc into a tagged, subtitled library. Four stages:
 
@@ -16,11 +16,11 @@ one library, so they cannot disagree about what anything means.
 
 | crate | what it is |
 |---|---|
-| `ripper-core` | the whole pipeline as a library |
-| `ripper-cli` | `ripper`, the terminal front end |
-| `ripper-gui` | `ripper-gui`, the window |
+| `riplika-core` | the whole pipeline as a library |
+| `riplika-cli` | `riplika`, the terminal front end |
+| `riplika-gui` | `riplika-gui`, the window |
 
-Two rules shape `ripper-core`, and both come from bugs that shipped in the shell
+Two rules shape `riplika-core`, and both come from bugs that shipped in the shell
 scripts this replaces.
 
 **Deciding is separate from doing.** Nothing that talks to ffmpeg or MakeMKV
@@ -67,17 +67,17 @@ cargo build --release
 ## Use
 
 ```sh
-ripper drives                     # what is connected, and what is loaded
-ripper scan                       # titles on the disc, without ripping it
-ripper identify                   # what the disc appears to be, and why
+riplika drives                     # what is connected, and what is loaded
+riplika scan                       # titles on the disc, without ripping it
+riplika identify                   # what the disc appears to be, and why
 
 # the whole pipeline
-ripper rip --languages english,swedish --video medium --audio high \
-           --table glyphs.json --words ./words -o ~/Videos
+riplika rip --languages english,swedish --video medium --audio high \
+            --table glyphs.json --words ./words -o ~/Videos
 
 # an already-ripped folder, skipping the disc
-ripper process ~/rips/parks-s7d1 --title "Parks and Recreation" --season 7 \
-               --disc 1 --dry-run
+riplika process ~/rips/parks-s7d1 --title "Parks and Recreation" --season 7 \
+                --disc 1 --dry-run
 ```
 
 `--dry-run` prints the plan - which title becomes which episode, and what each
@@ -173,7 +173,7 @@ Each of these produced a file that looked correct:
 Deterministic recognition, not OCR.
 
 DVD subtitles are not photographed text - they are a rendered bitmap font, so
-every `e` on a disc is the *same pixels*. `ripper` exploits that: it segments the
+every `e` on a disc is the *same pixels*. `riplika` exploits that: it segments the
 subtitle bitmaps into individual glyphs, labels the few hundred distinct shapes
 once, and then decodes everything else by exact lookup. No statistical OCR, no
 per-image tuning, and the same input always produces the same output.
@@ -210,7 +210,7 @@ Tesseract-derived reference that had already been hand-corrected:
 | glyphs it could not recognise | 0 |
 | runtime, all 122 episodes | ~50 s |
 
-Of the cues that disagree, **16.5% are ones where ripper produces valid English
+Of the cues that disagree, **16.5% are ones where riplika produces valid English
 and the reference does not** (`he fell in` vs `he tell in`, `Go on` vs `Goon`,
 `a lot of` vs `a fot of`), 82.9% differ only in punctuation or spacing, and
 0.6% — 20 cues in 62,590 — are cases where the reference looks better.
@@ -224,21 +224,21 @@ the review page.
 
 ```sh
 # 1. observe glyphs, and (optionally) vote labels from known-good SRTs
-ripper build /media/*.mp4 --table glyphs.json --reference ./known-good/
+riplika build /media/*.mp4 --table glyphs.json --reference ./known-good/
 
 # 2. review whatever is unlabelled or uncertain
-ripper sheet --table glyphs.json --out glyphs.html
+riplika sheet --table glyphs.json --out glyphs.html
 #    ... open it, fix any wrong labels, press "Copy corrections", save as JSON
-ripper label --table glyphs.json corrections.json
+riplika label --table glyphs.json corrections.json
 
 # 3. decode
-ripper ocr episode.mp4 --table glyphs.json -o episode.srt
+riplika ocr episode.mp4 --table glyphs.json -o episode.srt
 
 # 4. check against a reference, if you have one
-ripper verify episode.srt reference.srt
+riplika verify episode.srt reference.srt
 
 # diagnosing a bad cue
-ripper inspect episode.mp4 --at 673473 --table glyphs.json
+riplika inspect episode.mp4 --at 673473 --table glyphs.json
 ```
 
 `build` is incremental: point it at more files and it extends the existing
@@ -370,12 +370,12 @@ it; the same pass covers Spanish `ñ` and any other stacked mark.
 
 Labelling by eye is the one manual step, and the mistake it invites is case:
 `o` and `O` are the same shape at different sizes, and a contact sheet that
-scales every glyph into one cell hides exactly that. `ripper check` compares
+scales every glyph into one cell hides exactly that. `riplika check` compares
 each label against the table's own x-height and cap-height and flags the
 mismatches - it caught an `o` labelled `O` that had corrupted 789 instances.
 
 ```sh
-ripper check --table glyphs.json
+riplika check --table glyphs.json
 ```
 
 ### Tables do not transfer between releases

@@ -6,8 +6,8 @@
 //! episode decodes by exact lookup. The reviewing commands matter as much as
 //! the building ones: the one manual step is where the mistakes come from.
 
-use ripper_core::host::RealRunner;
-use ripper_core::subs::{segment, source, srt, table, vobsub};
+use riplika_core::host::RealRunner;
+use riplika_core::subs::{segment, source, srt, table, vobsub};
 use segment::SegOpts;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

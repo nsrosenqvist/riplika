@@ -29,7 +29,7 @@ pub fn temp_dir(tag: &str) -> Result<TempDir> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
-    p.push(format!("ripper-{}-{}-{}", tag, std::process::id(), n));
+    p.push(format!("riplika-{}-{}-{}", tag, std::process::id(), n));
     std::fs::create_dir_all(&p).map_err(|e| Error(format!("{}: {e}", p.display())))?;
     Ok(TempDir(p))
 }

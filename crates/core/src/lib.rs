@@ -1,4 +1,4 @@
-//! ripper - turn a disc into a tagged, subtitled library.
+//! riplika - turn a disc into a tagged, subtitled library.
 //!
 //! The pipeline is four stages: **rip** the disc, **identify** what is on it,
 //! **transcode** the titles, and recognise their **subtitles**. Each stage is a

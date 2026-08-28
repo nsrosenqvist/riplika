@@ -5,13 +5,13 @@
 //! the library's job - which is what lets the GUI be a sibling of this file
 //! rather than a rewrite of it.
 
-use ripper_core::host::{Cancel, Fs, RealFs, RealRunner};
-use ripper_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, UreqHttp};
-use ripper_core::job::{Event, Pipeline, Ports, Report, Stage};
-use ripper_core::media::FfProbe;
-use ripper_core::model::{Candidate, Drive, JobSettings, Item, Media, Role};
-use ripper_core::rip::{MakeMkv, Ripper};
-use ripper_core::subs;
+use riplika_core::host::{Cancel, Fs, RealFs, RealRunner};
+use riplika_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, UreqHttp};
+use riplika_core::job::{Event, Pipeline, Ports, Report, Stage};
+use riplika_core::media::FfProbe;
+use riplika_core::model::{Candidate, Drive, JobSettings, Item, Media, Role};
+use riplika_core::rip::{MakeMkv, Ripper};
+use riplika_core::subs;
 use std::path::{Path, PathBuf};
 
 fn hms(ms: u64) -> String {
@@ -105,8 +105,8 @@ pub fn scan(drive: Option<&str>) -> Result<(), String> {
     let scan = mk.scan(&d).map_err(|e| e.to_string())?;
     println!("{}  ({} titles)\n", scan.label, scan.titles.len());
     for t in &scan.titles {
-        let audio = t.tracks.iter().filter(|x| x.kind == ripper_core::model::TrackKind::Audio).count();
-        let subs = t.tracks.iter().filter(|x| x.kind == ripper_core::model::TrackKind::Subtitle).count();
+        let audio = t.tracks.iter().filter(|x| x.kind == riplika_core::model::TrackKind::Audio).count();
+        let subs = t.tracks.iter().filter(|x| x.kind == riplika_core::model::TrackKind::Subtitle).count();
         println!(
             "  {:>3}  {:>9}  {:>2} chapters  {:>2} audio  {:>2} subs  {}",
             t.id,
@@ -144,7 +144,7 @@ pub fn identify(drive: Option<&str>) -> Result<(), String> {
     let d = pick_drive(&mk, drive)?;
     let scan = mk.scan(&d).map_err(|e| e.to_string())?;
     let cat = real.catalogues();
-    let cands = ripper_core::identify::identify(&scan, &cat).map_err(|e| e.to_string())?;
+    let cands = riplika_core::identify::identify(&scan, &cat).map_err(|e| e.to_string())?;
     println!("{}\n", scan.label);
     print_candidates(&cands);
     Ok(())
@@ -153,7 +153,7 @@ pub fn identify(drive: Option<&str>) -> Result<(), String> {
 pub fn search(query: &str, season: Option<u32>) -> Result<(), String> {
     let real = Real::new();
     let cat = real.catalogues();
-    let cands = ripper_core::identify::search(&cat, query, season).map_err(|e| e.to_string())?;
+    let cands = riplika_core::identify::search(&cat, query, season).map_err(|e| e.to_string())?;
     print_candidates(&cands);
     Ok(())
 }
@@ -263,10 +263,10 @@ fn decide_media(
     given_title: Option<&str>,
     season: Option<u32>,
     cat: &dyn Catalogue,
-    scan: Option<&ripper_core::model::DiscScan>,
+    scan: Option<&riplika_core::model::DiscScan>,
 ) -> Result<Media, String> {
     if let Some(t) = given_title {
-        let cands = ripper_core::identify::search(cat, t, season).map_err(|e| e.to_string())?;
+        let cands = riplika_core::identify::search(cat, t, season).map_err(|e| e.to_string())?;
         return cands
             .into_iter()
             .next()
@@ -274,7 +274,7 @@ fn decide_media(
             .ok_or_else(|| format!("nothing found for {t:?}"));
     }
     let scan = scan.ok_or("nothing to identify from; pass --title")?;
-    let cands = ripper_core::identify::identify(scan, cat).map_err(|e| e.to_string())?;
+    let cands = riplika_core::identify::identify(scan, cat).map_err(|e| e.to_string())?;
     println!("{}\n", scan.label);
     print_candidates(&cands);
     println!();
@@ -316,7 +316,7 @@ pub fn rip(
     let mut events = reporter();
     let scan = pipeline.scan(&d, &mut events).map_err(|e| e.to_string())?;
     let media = decide_media(title, season, &cat, Some(&scan))?;
-    let disc = disc.or_else(|| ripper_core::identify::label::parse(&scan.label).disc);
+    let disc = disc.or_else(|| riplika_core::identify::label::parse(&scan.label).disc);
 
     let files = pipeline.rip(&scan, rip_dir, &mut events).map_err(|e| e.to_string())?;
     let items = pipeline
@@ -432,7 +432,7 @@ pub fn ocr(
 }
 
 pub fn inspect(input: &Path, at: u64, table: &Path, stream: usize) -> Result<(), String> {
-    use ripper_core::subs::{segment, source, vobsub};
+    use riplika_core::subs::{segment, source, vobsub};
     let runner = RealRunner::default();
     let t = subs::table::Table::load(table).unwrap_or_default();
     let src = source::load(&runner, input, stream).map_err(|e| e.to_string())?;
@@ -472,9 +472,9 @@ pub fn inspect(input: &Path, at: u64, table: &Path, stream: usize) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ripper_core::model::Drive;
-    use ripper_core::rip::FakeRipper;
-    use ripper_core::model::DiscScan;
+    use riplika_core::model::Drive;
+    use riplika_core::rip::FakeRipper;
+    use riplika_core::model::DiscScan;
 
     fn drive(id: &str, label: Option<&str>) -> Drive {
         Drive {
@@ -487,19 +487,19 @@ mod tests {
 
     struct Drives(Vec<Drive>);
     impl Ripper for Drives {
-        fn drives(&self) -> ripper_core::Result<Vec<Drive>> {
+        fn drives(&self) -> riplika_core::Result<Vec<Drive>> {
             Ok(self.0.clone())
         }
-        fn scan(&self, _: &Drive) -> ripper_core::Result<DiscScan> {
+        fn scan(&self, _: &Drive) -> riplika_core::Result<DiscScan> {
             Err("not used".into())
         }
         fn rip(
             &self,
             _: &Drive,
-            _: &[ripper_core::model::DiscTitle],
+            _: &[riplika_core::model::DiscTitle],
             _: &Path,
             _: &mut dyn FnMut(f32, Option<&str>),
-        ) -> ripper_core::Result<Vec<PathBuf>> {
+        ) -> riplika_core::Result<Vec<PathBuf>> {
             Err("not used".into())
         }
     }

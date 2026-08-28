@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Riplika
+GenericName=Disc Ripper
+Comment=Turn a disc into a tagged, subtitled library
+Exec=riplika-gui
+Icon=com.nsrosenqvist.Riplika
+Terminal=false
+Categories=AudioVideo;Video;
+Keywords=DVD;Blu-ray;disc;rip;subtitles;transcode;
+StartupNotify=true

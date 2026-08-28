@@ -119,7 +119,7 @@ pub fn render(table: &Table, zoom: usize) -> String {
 <h1>Glyph table review &mdash; {source}</h1>
 <div class="sub">{total} glyphs &middot; {labelled} labelled &middot; {unlabelled} need a label.
 Red = unlabelled, amber = votes disagreed. Fix any that are wrong, then press
-<b>Copy corrections</b> and save them as a JSON file for <code>ripper label</code>.</div>
+<b>Copy corrections</b> and save them as a JSON file for <code>riplika label</code>.</div>
 <div class="grid">
 {rows}</div>
 <button onclick="dump()">Copy corrections</button>
