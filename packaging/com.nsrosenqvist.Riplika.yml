@@ -104,19 +104,6 @@ modules:
         url: https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz
         sha256: de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
 
-  # mkvextract, used to pull a VobSub track out as an .idx/.sub pair; ffmpeg
-  # cannot write that pair.
-  - name: mkvtoolnix
-    buildsystem: simple
-    build-commands:
-      - ./configure --prefix=/app --disable-gui --disable-qt
-      - rake -j$FLATPAK_BUILDER_N_JOBS
-      - rake install
-    sources:
-      - type: archive
-        url: https://mkvtoolnix.download/sources/mkvtoolnix-75.0.0.tar.xz
-        sha256: e7ad116f374cdf8370fa566ed7fe23ecdcf413dbe6dd90ab3f82904d0cf7516f
-
   # --- the application ----------------------------------------------------
   - name: riplika
     buildsystem: simple

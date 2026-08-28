@@ -2,3 +2,4 @@ target
 work/
 .flatpak-builder/
 build/
+repo/

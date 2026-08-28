@@ -186,7 +186,23 @@ Two things about it are worth knowing before you rely on it.
 
 **`--device=all` is required.** Flatpak has no narrower permission for an optical drive: `--device=dri` is the GPU and there is nothing for `/dev/sr0` alone. Reading a disc means granting access to devices generally.
 
-I have not built it. `flatpak-builder` is not installed here, so the manifest is structurally right and its checksums are real and verified against upstream's published sums, but it has never been through a build. Expect the ffmpeg and mkvtoolnix modules to need adjusting.
+It builds, and building it found four things wrong with it that reading it never would have:
+
+- VideoLAN moved libdvdcss, libdvdread and libdvdnav to **meson**; the manifest assumed autotools and died on the first module.
+- libdvdread's option is `libdvdcss`, not `dvdcss`. Worth setting rather than leaving to the default, too: libdvdread otherwise loads libdvdcss by name at runtime, which inside a sandbox depends on it being on the loader path.
+- **The GNOME SDK carries no x264**, and it is not optional here - every quality tier is an x264 CRF, so an ffmpeg without it cannot encode anything.
+- `flatpak-builder` is itself a flatpak, so `--repo=/tmp/...` writes into its own sandbox and the host never sees it.
+
+Verified in the sandbox afterwards: the `dvdvideo` demuxer is present, `libx264` is present, and `libdvdcss.so.2` is where libdvdread expects it. Those three are what decide whether it can read a disc and encode it at all.
+
+**Subtitle recognition is missing from the Flatpak.** It needs `mkvextract` to split a VobSub track into its `.idx`/`.sub` pair - ffmpeg can read that format but has no muxer to write it - and MKVToolNix requires Qt for every one of its tools, not only its window. Bundling Qt to obtain one binary is a poor trade, so the honest fix is to read the subtitle track out of Matroska directly, which would drop the dependency from the native build as well.
+
+```sh
+flatpak run org.flatpak.Builder --user --force-clean --repo=repo build packaging/com.nsrosenqvist.Riplika.yml
+flatpak build-update-repo repo
+flatpak remote-add --user --no-gpg-verify riplika-local "file://$PWD/repo"
+flatpak install --user riplika-local com.nsrosenqvist.Riplika
+```
 
 ```sh
 flatpak install org.gnome.Platform//50 org.gnome.Sdk//50 \
