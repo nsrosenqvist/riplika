@@ -136,15 +136,36 @@ are dictionary-valid**. Almost all of the remainder are legitimate: place names
 (*Arendal*, *Vessleby*), colloquial forms (*Va*, *sånt*, *sommarn*) and Swedish
 compounds (*handelspartner*, *sommarrea*) that no wordlist carries.
 
+Confirmed across two films and four languages — English, Swedish, Finnish and
+Icelandic, eight subtitle tracks in all. Icelandic exercises the widest
+character set and comes through intact: `ð þ æ ý á é í ó ú ö` and their
+capitals, all composed as single glyphs.
+
+```
+Það frosna afl í erg og gríð          (is)
+og ég vil hlýtt knús.                 (is)
+Varokaa / Iskekää                     (fi)
+Han vill vara smart, men det är töntigt.   (sv)
+```
+
+**All the language tracks on one disc share a font.** Frozen's Swedish table
+covered 86-99% of the glyph instances on its English, Finnish and Icelandic
+tracks, so one table per *disc* serves every language on it - only the
+language-specific letters need adding.
+
 Two things to set for a non-English language:
 
 - **`--lang`.** English-only rules — a lone ambiguous bar being the pronoun `I`,
   `I'm`/`I'll` being likely — are wrong elsewhere. Swedish `i` is a lowercase
   preposition, so the English rule would capitalise every one. Any `--lang`
   other than `en` turns those rules off.
-- **`--words`.** The default is an English password dictionary. On Arch:
-  `pacman -S aspell-sv`, then
+- **`--words`.** On Arch: `pacman -S aspell-sv`, then
   `aspell -d sv dump master | aspell -l sv expand | tr ' ' '\n' | sort -u > sv.txt`.
+  Without one, ambiguous glyphs fall back to structural rules, which is fine -
+  but a *mismatched* wordlist is worse than none, so the English default is only
+  loaded for `--lang en`. (`vii` and `alia` are English words while `vil` and
+  `alla` are not, which turned Icelandic `ég vil` into `ég viI` until the
+  fallback was removed.)
 
 ### Umlauts need both dots
 
@@ -153,6 +174,18 @@ sits above anything — it overlaps the merged glyph — so a naive stacking tes
 drops it and `Född` comes out as `Fö.dd`. A ring (`å`) is a single mark and never
 hits this, which is what made the bug easy to miss. `merge_diacritics` handles
 it; the same pass covers Spanish `ñ` and any other stacked mark.
+
+### Check your labels
+
+Labelling by eye is the one manual step, and the mistake it invites is case:
+`o` and `O` are the same shape at different sizes, and a contact sheet that
+scales every glyph into one cell hides exactly that. `ripper check` compares
+each label against the table's own x-height and cap-height and flags the
+mismatches - it caught an `o` labelled `O` that had corrupted 789 instances.
+
+```sh
+ripper check --table glyphs.json
+```
 
 ### Tables do not transfer between releases
 

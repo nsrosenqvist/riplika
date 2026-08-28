@@ -105,6 +105,11 @@ enum Cmd {
         #[arg(long)]
         stream: Option<usize>,
     },
+    /// Look for labels that are probably wrong.
+    Check {
+        #[arg(long, default_value = "glyphs.json")]
+        table: PathBuf,
+    },
     /// Compare a produced SRT against a reference one.
     Verify {
         produced: PathBuf,
@@ -175,6 +180,12 @@ fn run() -> Result<(), String> {
         } => {
             let t = Table::load(&table)?;
             let r = resolve::Resolver::load_lang(words.as_deref(), &lang);
+            if !r.has_wordlist() {
+                eprintln!(
+                    "note: no wordlist for '{lang}' - ambiguous glyphs will use \
+                     structural rules only. Pass --words for better results."
+                );
+            }
             let (text, stats) = ocr_one(&input, &t, &r, placeholder, stream)?;
             let dest = out.unwrap_or_else(|| input.with_extension("srt"));
             std::fs::write(&dest, text).map_err(|e| format!("{}: {e}", dest.display()))?;
@@ -229,6 +240,7 @@ fn run() -> Result<(), String> {
             }
             Ok(())
         }
+        Cmd::Check { table } => check(&Table::load(&table)?),
         Cmd::Verify {
             produced,
             reference,
@@ -440,6 +452,89 @@ fn build(
     println!("per-glyph spacing  : {learned} glyphs");
     println!("unlabelled         : {}", t.unlabelled());
     println!("table              : {}", table_path.display());
+    Ok(())
+}
+
+/// Flag labels that look wrong.
+///
+/// Reviewing glyphs by eye is the one manual step, and the mistake it invites
+/// is case: `o` and `O` are the same shape at different sizes, and a contact
+/// sheet that scales every glyph to one cell hides exactly that. Height tells
+/// them apart, so check it.
+fn check(t: &Table) -> Result<(), String> {
+    const XH: &str = "acemnorsuvwxz";
+    const CAP: &str = "ACEMNORSUVWXZ";
+
+    let mut xs: Vec<i32> = Vec::new();
+    let mut cs: Vec<i32> = Vec::new();
+    for g in &t.glyphs {
+        let Some(l) = g.text.as_deref() else { continue };
+        if l.chars().count() != 1 {
+            continue;
+        }
+        let c = l.chars().next().unwrap();
+        if XH.contains(c) {
+            xs.push(g.h);
+        } else if CAP.contains(c) {
+            cs.push(g.h);
+        }
+    }
+    let median = |v: &mut Vec<i32>| {
+        v.sort_unstable();
+        v.get(v.len() / 2).copied().unwrap_or(0)
+    };
+    let (xh, cap) = (median(&mut xs), median(&mut cs));
+
+    let mut issues = 0;
+    if xh > 0 && cap > xh {
+        println!("x-height {xh}px, cap-height {cap}px");
+        for g in &t.glyphs {
+            let Some(l) = g.text.as_deref() else { continue };
+            if l.chars().count() != 1 {
+                continue;
+            }
+            let c = l.chars().next().unwrap();
+            // rare entries are usually a letter that merged with a mark, which
+            // legitimately changes its height; only flag glyphs seen often
+            if g.count < 10 {
+                continue;
+            }
+            if CAP.contains(c) && g.h <= xh + 1 {
+                println!("  {l:?} is {}px tall - that is x-height, so probably {:?}  (n={})",
+                         g.h, c.to_lowercase().to_string(), g.count);
+                issues += 1;
+            }
+            if XH.contains(c) && g.h >= cap - 1 {
+                println!("  {l:?} is {}px tall - that is cap-height, so probably {:?}  (n={})",
+                         g.h, c.to_uppercase().to_string(), g.count);
+                issues += 1;
+            }
+        }
+    }
+
+    let unl = t.unlabelled();
+    if unl > 0 {
+        println!("{unl} glyphs still unlabelled");
+        issues += unl;
+    }
+    let multi: Vec<&crate::table::Entry> = t
+        .glyphs
+        .iter()
+        .filter(|g| g.text.as_deref().map_or(false, |l| l.chars().count() > 1 && !l.contains('|')))
+        .collect();
+    if !multi.is_empty() {
+        println!("{} glyphs carry multi-character labels (letters that merged):", multi.len());
+        for g in multi {
+            println!("  {:?}  (n={})", g.text.as_deref().unwrap_or(""), g.count);
+        }
+    }
+    let amb = t.glyphs.iter().filter(|g| g.text.as_deref().map_or(false, |l| l.contains('|'))).count();
+    if amb > 0 {
+        println!("{amb} ambiguity classes - resolved from context at decode time");
+    }
+    if issues == 0 {
+        println!("no problems found");
+    }
     Ok(())
 }
 

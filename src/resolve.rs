@@ -36,9 +36,17 @@ impl Resolver {
 
     pub fn load_lang(path: Option<&Path>, lang: &str) -> Resolver {
         let english = lang.is_empty() || lang.to_lowercase().starts_with("en");
-        let p = path.map(Path::to_path_buf).unwrap_or_else(|| DEFAULT_WORDLIST.into());
+        // Fall back to the built-in list only for English. A mismatched wordlist
+        // is worse than none: "vii" and "alia" are English words while "vil" and
+        // "alla" are not, so scoring Icelandic against English turns "ég vil"
+        // into "ég viI".
+        let p = match (path, english) {
+            (Some(p), _) => Some(p.to_path_buf()),
+            (None, true) => Some(DEFAULT_WORDLIST.into()),
+            (None, false) => None,
+        };
         let mut words = HashSet::new();
-        if let Ok(s) = std::fs::read_to_string(&p) {
+        if let Some(s) = p.and_then(|p| std::fs::read_to_string(&p).ok()) {
             for line in s.lines() {
                 let w = line.trim().to_lowercase();
                 // keep accented forms - they matter for every language but English
@@ -61,12 +69,26 @@ impl Resolver {
         Resolver { words, english }
     }
 
+    pub fn has_wordlist(&self) -> bool {
+        !self.words.is_empty()
+    }
+
     pub fn is_word(&self, w: &str) -> bool {
         self.words.contains(&w.to_lowercase())
     }
 
     /// Resolve one whitespace-delimited word.
     pub fn resolve_word(&self, slots: &[Slot]) -> String {
+        self.resolve_word_at(slots, false)
+    }
+
+    /// `sentence_start` says this word opens a line or follows `.`, `!` or `?`.
+    ///
+    /// That is strong evidence for an ambiguous first letter: the word must be
+    /// capitalised, and a capital L is a different glyph, so the bar can only be
+    /// a capital I. Without it, and without a wordlist, Finnish "Iskekää" comes
+    /// out as "lskekää".
+    pub fn resolve_word_at(&self, slots: &[Slot], sentence_start: bool) -> String {
         let amb: Vec<usize> = slots
             .iter()
             .enumerate()
@@ -94,7 +116,7 @@ impl Resolver {
             })
             .product();
         if combos > 64 {
-            return self.fallback(slots);
+            return self.fallback(slots, sentence_start);
         }
 
         let mut best: Option<(i32, String)> = None;
@@ -117,12 +139,19 @@ impl Resolver {
                     }
                 }
             }
-            let sc = self.score(&out, &fixed);
+            let mut sc = self.score(&out, &fixed);
+            if sentence_start {
+                match out.chars().next() {
+                    Some(c) if c.is_uppercase() => sc += 45,
+                    Some(c) if c.is_lowercase() => sc -= 45,
+                    _ => {}
+                }
+            }
             if best.as_ref().map_or(true, |(b, _)| sc > *b) {
                 best = Some((sc, out));
             }
         }
-        best.map(|(_, s)| s).unwrap_or_else(|| self.fallback(slots))
+        best.map(|(_, s)| s).unwrap_or_else(|| self.fallback(slots, sentence_start))
     }
 
     fn score(&self, cand: &str, fixed: &[bool]) -> i32 {
@@ -195,7 +224,7 @@ impl Resolver {
     }
 
     /// Structural rules for when the wordlist offers no opinion.
-    fn fallback(&self, slots: &[Slot]) -> String {
+    fn fallback(&self, slots: &[Slot], sentence_start: bool) -> String {
         let n_alpha = slots.len();
         let mut out = String::new();
         for (i, s) in slots.iter().enumerate() {
@@ -211,7 +240,8 @@ impl Resolver {
                     // In English a short word starting with the bar is almost
                     // always "I"/"It"/"If". Other languages have no such rule,
                     // so prefer the lowercase reading there.
-                    let want_upper = self.english && i == 0 && n_alpha <= 2;
+                    let want_upper =
+                        (i == 0 && sentence_start) || (self.english && i == 0 && n_alpha <= 2);
                     let pick = if want_upper { upper.or(lower) } else { lower.or(upper) };
                     out.push_str(pick.unwrap_or(&v[0]));
                 }
@@ -273,14 +303,20 @@ impl Resolver {
     /// Resolve a whole line, preserving the spaces already decided by spacing.
     pub fn resolve_line(&self, words: &[(Vec<Slot>, Vec<(i32, i32)>)]) -> String {
         let mut out: Vec<String> = Vec::new();
+        let mut at_start = true; // the first word on a line opens a sentence
         for (slots, gaps) in words {
-            match self.split_near_miss(slots, gaps) {
-                Some((i, _)) => {
-                    out.push(self.resolve_word(&slots[..=i]));
-                    out.push(self.resolve_word(&slots[i + 1..]));
-                }
-                None => out.push(self.resolve_word(slots)),
-            }
+            let word = match self.split_near_miss(slots, gaps) {
+                Some((i, _)) => format!(
+                    "{} {}",
+                    self.resolve_word_at(&slots[..=i], at_start),
+                    self.resolve_word_at(&slots[i + 1..], false)
+                ),
+                None => self.resolve_word_at(slots, at_start),
+            };
+            at_start = word
+                .trim_end_matches(|c: char| c == '"' || c == '\'' || c == ')')
+                .ends_with(['.', '!', '?']);
+            out.push(word);
         }
         out.join(" ")
     }
