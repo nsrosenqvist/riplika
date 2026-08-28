@@ -288,6 +288,11 @@ impl Resolver {
                     Slot::Ambiguous(v) => v[0].clone(),
                 })
                 .collect();
+            // never split across an apostrophe: "you're" is one word, and both
+            // halves happen to look like words on their own
+            if left.ends_with('\'') || right.starts_with('\'') {
+                continue;
+            }
             let lc: String = left.chars().filter(|c| c.is_alphabetic()).collect();
             let rc: String = right.chars().filter(|c| c.is_alphabetic()).collect();
             let l_ok = (lc.len() == 1 && matches!(lc.as_str(), "I" | "l" | "a" | "A"))

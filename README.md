@@ -24,8 +24,8 @@ Tesseract-derived reference that had already been hand-corrected:
 | | |
 |---|---|
 | cue timings matching the source stream | 62,590 / 62,590 (100%) |
-| cues where the text matches exactly | 94.23% |
-| character accuracy | 98.94% |
+| cues where the text matches exactly | 94.39% |
+| character accuracy | 99.02% |
 | glyphs it could not recognise | 0 |
 | runtime, all 122 episodes | ~50 s |
 
@@ -101,6 +101,25 @@ if you get it wrong:
 - **Per-glyph spacing beats one global threshold.** The tail of an `f` or `y`
   eats into the following gap, so a single number turns `if you` into `ifyou`.
   `build` learns a threshold per glyph from the reference.
+
+### Does the wordlist earn its keep
+
+Measured against the 122-episode reference, decoding with and without one:
+
+| wordlist | exact cues | characters |
+|---|---|---|
+| generic English, 54k words | **94.39%** | **99.02%** |
+| domain-specific, 9.5k words built from held-out episodes | 94.33% | 98.87% |
+| none | 93.48% | 98.91% |
+
+It changes the answer on 739 cues and is right on 586 of them - a 9:1 win rate,
+worth about 520 cues. Coverage matters more than domain fit: a wordlist built
+from this very show, but only a sixth the size, scored slightly *worse* than a
+generic one, and merging the two added almost nothing.
+
+The one way it used to hurt was word splitting: `you're` is not in the
+dictionary but `you` and `re` both are, so it came apart into `you 're`.
+Splitting now refuses to cross an apostrophe.
 
 ### Genuine ambiguity
 
