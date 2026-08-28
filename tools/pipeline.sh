@@ -3,9 +3,19 @@
 #
 # Expects a mapping file of lines:
 #   <source-stem>|<episode label>|<part number>|<title>|<air date>|<extended yes/no>
+#
+# Usage: pipeline.sh <rip-dir> <out-dir> <map> <glyph-table> <season> <total>
+#                    [video] [audio] [encode.sh flags...]
+#
+# Note: subtitles are recognised from the first subtitle track of the encode,
+# so if --languages reorders them, the glyph table must match whichever
+# language ends up first.
 set -u
 RIP="$1"; OUT="$2"; MAP="$3"; TABLE="$4"; SEASON="$5"; TOTAL="$6"
-VQ="${7:-medium}"; AQ="${8:-high}"; EXTRA="${9:-}"
+shift 6
+VQ="${1:-medium}"; [ $# -gt 0 ] && shift
+AQ="${1:-high}";   [ $# -gt 0 ] && shift
+ENC_ARGS=("$@")          # e.g. --dual-audio --languages english,swedish
 RIPPER="$(dirname "$0")/../target/release/ripper"
 mkdir -p "$OUT/extras"
 
@@ -24,8 +34,9 @@ while IFS='|' read -r stem label part title date ext <&3; do
   fi
 
   echo "### $stem -> $(basename "$dest")"
-  "$(dirname "$0")/encode.sh" "$src" "$dest.tmp.mp4" "$VQ" "$AQ" $EXTRA \
-      </dev/null 2>&1 | sed 's/^/    /' || { echo "  TRANSCODE FAILED"; continue; }
+  "$(dirname "$0")/encode.sh" "$src" "$dest.tmp.mp4" "$VQ" "$AQ" \
+      ${ENC_ARGS[@]+"${ENC_ARGS[@]}"} </dev/null 2>&1 | sed 's/^/    /' \
+      || { echo "  TRANSCODE FAILED"; continue; }
 
   # recognise the English VobSub and embed it as a default text track
   srt="$dest.srt"

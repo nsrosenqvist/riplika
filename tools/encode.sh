@@ -14,11 +14,18 @@
 #   faststart moov atom at the front, HandBrake's "web optimized"
 #
 # Usage: encode.sh <input> <output> [video: high|medium|low] [audio: high|medium|low]
-#                  [--dual-audio]
+#                  [--dual-audio] [--languages english,swedish]
 set -euo pipefail
 IN="$1"; OUT="$2"; VQ="${3:-medium}"; AQ="${4:-high}"
 DUAL=0
-for arg in "$@"; do [ "$arg" = "--dual-audio" ] && DUAL=1; done
+LANGS=""
+_prev=""
+for arg in "$@"; do
+  [ "$arg" = "--dual-audio" ] && DUAL=1
+  [ "$_prev" = "--languages" ] && LANGS="$arg"
+  _prev="$arg"
+done
+HERE="$(dirname "$0")"
 
 # Video tiers. DVD is 720x480 MPEG-2 at 4-6 Mb/s, so the useful range is narrow:
 # by CRF 18 the encode is transparent against the source and further bits mostly
@@ -43,9 +50,37 @@ esac
 
 # How many audio tracks the source has, so the extra stereo track can be given
 # the right output index
-NAUD=$(ffprobe -v error -select_streams a -show_entries stream=index \
-        -of csv=p=0 "$IN" | grep -c . || true)
-AMAPS=(-map 0:a)
+# Which audio and subtitle tracks to keep. Listing languages in preference
+# order also orders the output, so the first one asked for becomes the default.
+AMAPS=()
+SMAPS=()
+if [ -n "$LANGS" ]; then
+  echo "  languages: $LANGS"
+  while read -r i; do AMAPS+=(-map "0:a:$i"); done \
+    < <(python3 "$HERE/langmap.py" "$IN" a "$LANGS")
+  while read -r i; do SMAPS+=(-map "0:s:$i"); done \
+    < <(python3 "$HERE/langmap.py" "$IN" s "$LANGS")
+else
+  AMAPS=(-map 0:a)
+  SMAPS=(-map "0:s?")
+fi
+NAUD=${#AMAPS[@]}
+NAUD=$((NAUD / 2))   # each map is two argv entries
+NSUB=${#SMAPS[@]}
+NSUB=$((NSUB / 2))
+
+# Make the preference real. ffmpeg carries the source's disposition across, so
+# without this "swedish,english" would put Swedish first but leave English
+# flagged default, and players would still pick English.
+DISPO=()
+if [ -n "$LANGS" ]; then
+  for ((i = 0; i < NAUD; i++)); do
+    [ "$i" = 0 ] && DISPO+=(-disposition:a:0 default) || DISPO+=(-disposition:a:$i 0)
+  done
+  for ((i = 0; i < NSUB; i++)); do
+    [ "$i" = 0 ] && DISPO+=(-disposition:s:0 default) || DISPO+=(-disposition:s:$i 0)
+  done
+fi
 
 # --dual-audio adds an AAC stereo track alongside the untouched original. AC3
 # cannot be decoded by any browser, so without this a web client makes the
@@ -55,7 +90,9 @@ if [ "$DUAL" = "1" ]; then
   if [ "$AQ" != "high" ]; then
     echo "  note: --dual-audio only applies to audio high; ignoring"
   else
-    AMAPS+=(-map 0:a:0)
+    # the stereo track is derived from whichever audio ended up first
+    first_a="${AMAPS[1]:-0:a:0}"
+    AMAPS+=(-map "$first_a")
     # No track title: MP4 cannot carry one through ffmpeg's muxer, unlike
     # Matroska. Players tell the two apart by codec and channel count anyway.
     AOPTS=(-c:a copy
@@ -143,10 +180,11 @@ PYEOF
 echo "  pixel aspect: $sar"
 
 ffmpeg -nostdin -v error -y -i "$IN" \
-  -map 0:v:0 "${AMAPS[@]}" -map 0:s? -dn \
+  -map 0:v:0 "${AMAPS[@]}" ${SMAPS[@]+"${SMAPS[@]}"} -dn \
   -vf "${ivtc}${crop}setsar=${sar}" \
   ${rate:+-fps_mode cfr -r $rate} \
   -c:v libx264 -crf "$CRF" -preset medium -profile:v high -level 4.0 \
+  ${DISPO[@]+"${DISPO[@]}"} \
   "${AOPTS[@]}" \
   -c:s copy \
   -movflags +faststart \
