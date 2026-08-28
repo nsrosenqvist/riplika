@@ -79,10 +79,10 @@ impl Default for State {
 struct Ui {
     nav: adw::NavigationView,
     toasts: adw::ToastOverlay,
-    drive_list: gtk::ListBox,
+    drive_page: adw::StatusPage,
+    drive_combo: adw::ComboRow,
+    drive_group: adw::PreferencesGroup,
     drive_next: gtk::Button,
-    drive_stack: gtk::Stack,
-    empty_page: adw::StatusPage,
     candidate_list: gtk::ListBox,
     identify_next: gtk::Button,
     search_entry: adw::EntryRow,
@@ -196,60 +196,50 @@ fn build_ui() -> Ui {
     toasts.set_child(Some(&nav));
 
     // --- step one: the drive ---------------------------------------------
-    let drive_body = body();
-    let drive_group = adw::PreferencesGroup::builder()
-        .title("Drive")
-        .description("Pick the drive holding the disc")
-        .build();
-    let drive_list = gtk::ListBox::builder()
-        .selection_mode(gtk::SelectionMode::Single)
-        .css_classes(vec!["boxed-list".to_string()])
-        .build();
-    drive_group.add(&drive_list);
-    let refresh = gtk::Button::with_label("Refresh");
-    let drive_next = gtk::Button::builder()
-        .label("Analyse disc")
-        .sensitive(false)
-        .css_classes(vec!["suggested-action".to_string()])
-        .build();
-    let buttons = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(8)
-        .halign(gtk::Align::End)
-        .build();
-    buttons.append(&refresh);
-    buttons.append(&drive_next);
-    drive_body.append(&drive_group);
-    drive_body.append(&buttons);
-    refresh.set_widget_name("refresh");
-
-    // An empty list is not an empty state - it says nothing about why it is
-    // empty or what to do about it. A status page carries the reason and the
-    // one action worth taking, which is the pattern the platform uses
-    // everywhere else.
-    let empty = adw::StatusPage::builder()
+    //
+    // One screen rather than two. A boxed list is heavy furniture for something
+    // that is almost always a single row, and swapping between an empty layout
+    // and a populated one makes the landing screen feel like two places. A
+    // status page is the landing screen; what it says changes with what is in
+    // the machine, and the drive chooser appears only when there is a choice to
+    // make.
+    let drive_page = adw::StatusPage::builder()
         .icon_name("media-optical-symbolic")
         .title("No disc")
         .vexpand(true)
         .build();
-    let empty_action = gtk::Button::builder()
-        .label("Look again")
-        .name("refresh")
+
+    let drive_controls = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(18)
+        .halign(gtk::Align::Center)
+        .build();
+
+    let drive_group = adw::PreferencesGroup::builder().build();
+    let drive_combo = adw::ComboRow::builder().title("Drive").build();
+    drive_group.add(&drive_combo);
+    // Hidden unless there is more than one: a chooser offering one option is
+    // a decision the user does not have.
+    drive_group.set_visible(false);
+
+    let drive_next = gtk::Button::builder()
+        .label("Analyse disc")
+        .sensitive(false)
         .halign(gtk::Align::Center)
         .css_classes(vec!["pill".to_string(), "suggested-action".to_string()])
         .build();
-    empty.set_child(Some(&empty_action));
-
-    // One or the other, never both: a list with nothing in it beside a status
-    // page explaining there is nothing would be its own kind of confusing.
-    let drive_stack = gtk::Stack::builder()
-        .transition_type(gtk::StackTransitionType::Crossfade)
-        .vexpand(true)
+    let refresh = gtk::Button::builder()
+        .label("Look again")
+        .name("refresh")
+        .halign(gtk::Align::Center)
+        .css_classes(vec!["flat".to_string()])
         .build();
-    drive_stack.add_named(&empty, Some("empty"));
-    drive_stack.add_named(&drive_body, Some("drives"));
-    drive_stack.set_visible_child_name("empty");
-    nav.add(&page(Step::Drive.tag(), "Riplika", &drive_stack));
+
+    drive_controls.append(&drive_group);
+    drive_controls.append(&drive_next);
+    drive_controls.append(&refresh);
+    drive_page.set_child(Some(&drive_controls));
+    nav.add(&page(Step::Drive.tag(), "Riplika", &drive_page));
 
     // --- step two: what is it? -------------------------------------------
     let id_body = body();
@@ -376,10 +366,10 @@ fn build_ui() -> Ui {
     Ui {
         nav,
         toasts,
-        drive_list,
+        drive_page,
+        drive_combo,
+        drive_group,
         drive_next,
-        drive_stack,
-        empty_page: empty,
         candidate_list,
         identify_next,
         search_entry,
@@ -409,14 +399,14 @@ impl App {
     fn set_busy(&self, what: Option<&str>) {
         self.state.borrow_mut().busy = what.map(str::to_string);
         let idle = what.is_none();
-        let has_drive = self.state.borrow().drive.is_some();
         let has_candidate = !self.state.borrow().candidates.is_empty();
 
-        self.ui.drive_next.set_sensitive(idle && has_drive);
         self.ui.drive_next.set_label(match what {
             Some(w) => w,
             None => "Analyse disc",
         });
+        // One rule for whether analysing is possible, applied from both places.
+        self.refresh_drive_page();
         self.ui.identify_next.set_sensitive(idle && has_candidate);
         for name in ["start", "refresh", "search"] {
             for b in find_buttons(&self.ui.output_dir, name) {
@@ -536,66 +526,72 @@ impl App {
         });
     }
 
-    /// What the empty state should say, given what the machine has.
+    /// What the drive page should say, given what the machine has.
     ///
-    /// "Nothing here" is not worth a screen. Which of the three situations you
-    /// are in decides what you do next, so the page says which one it is.
-    fn empty_state(drives: &[Drive]) -> Option<(&'static str, String)> {
+    /// Three situations, and which one you are in decides what you do next, so
+    /// the page says which one rather than just showing nothing.
+    fn drive_status(drives: &[Drive], selected: Option<&Drive>) -> (String, String, bool) {
         if drives.is_empty() {
-            return Some((
-                "No disc drive",
+            return (
+                "No disc drive".into(),
                 "No optical drive was found. Connect one and look again.".into(),
-            ));
+                false,
+            );
         }
-        if !drives.iter().any(Drive::has_disc) {
-            let names: Vec<&str> = drives.iter().map(|d| d.device.as_str()).collect();
-            return Some((
-                "No disc",
-                format!("Insert a DVD into {}, then look again.", names.join(" or ")),
-            ));
+        match selected {
+            Some(d) => match &d.disc_label {
+                // The label is what the disc calls itself, and seeing it is the
+                // first confirmation that the right disc is in the tray.
+                Some(label) => (label.clone(), format!("{} in {}", d.name, d.device), true),
+                None => (
+                    "No disc".into(),
+                    format!("Insert a DVD into {}, then look again.", d.device),
+                    false,
+                ),
+            },
+            None => ("No disc".into(), "Choose a drive.".into(), false),
         }
-        None
     }
 
     fn show_drives(&self, drives: &[Drive]) {
-        while let Some(r) = self.ui.drive_list.row_at_index(0) {
-            self.ui.drive_list.remove(&r);
-        }
+        let model = gtk::StringList::new(&[]);
         for d in drives {
-            let row = adw::ActionRow::builder()
-                .title(&d.name)
-                .subtitle(format!(
-                    "{}   {}",
-                    d.device,
-                    d.disc_label.as_deref().unwrap_or("no disc")
-                ))
-                .build();
-            row.set_sensitive(d.has_disc());
-            self.ui.drive_list.append(&row);
+            model.append(&format!(
+                "{}  -  {}",
+                d.device,
+                d.disc_label.as_deref().unwrap_or("empty")
+            ));
         }
-        self.state.borrow_mut().drives = drives.to_vec();
+        self.ui.drive_combo.set_model(Some(&model));
+        // A chooser offering one option is not a choice worth showing.
+        self.ui.drive_group.set_visible(drives.len() > 1);
 
-        match Self::empty_state(drives) {
-            Some((title, description)) => {
-                self.ui.empty_page.set_title(title);
-                self.ui.empty_page.set_description(Some(&description));
-                self.ui.drive_stack.set_visible_child_name("empty");
-            }
-            None => self.ui.drive_stack.set_visible_child_name("drives"),
+        // Prefer a drive with something in it: on a machine with two, the one
+        // holding a disc is what was meant.
+        let pick = drives.iter().position(Drive::has_disc).unwrap_or(0);
+        if !drives.is_empty() {
+            self.ui.drive_combo.set_selected(pick as u32);
         }
+        {
+            let mut state = self.state.borrow_mut();
+            state.drives = drives.to_vec();
+            state.drive = drives.get(pick).cloned();
+        }
+        self.refresh_drive_page();
+    }
 
-        // Select the only usable drive rather than making the user click it.
-        let loaded: Vec<usize> = drives
-            .iter()
-            .enumerate()
-            .filter(|(_, d)| d.has_disc())
-            .map(|(i, _)| i)
-            .collect();
-        if let [only] = loaded[..]
-            && let Some(row) = self.ui.drive_list.row_at_index(only as i32) {
-                self.ui.drive_list.select_row(Some(&row));
-            }
-        self.ui.drive_next.set_sensitive(!loaded.is_empty());
+    /// Re-read the drive page from state.
+    fn refresh_drive_page(&self) {
+        let (drives, selected) = {
+            let state = self.state.borrow();
+            (state.drives.clone(), state.drive.clone())
+        };
+        let (title, description, ready) = Self::drive_status(&drives, selected.as_ref());
+        self.ui.drive_page.set_title(&title);
+        self.ui.drive_page.set_description(Some(&description));
+        // Analysing a drive with no disc in it can only fail, so it is not
+        // offered rather than offered and then refused.
+        self.ui.drive_next.set_sensitive(ready && !self.is_busy());
     }
 
     fn show_candidates(&self, cands: &[Candidate]) {
@@ -797,12 +793,12 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
     // Step one -------------------------------------------------------------
     {
         let app = Rc::clone(app);
-        let list = app.ui.drive_list.clone();
-        list.connect_row_selected(move |_, row| {
-            let Some(row) = row else { return };
-            let i = row.index() as usize;
+        let combo = app.ui.drive_combo.clone();
+        combo.connect_selected_notify(move |c| {
+            let i = c.selected() as usize;
             let d = app.state.borrow().drives.get(i).cloned();
             app.state.borrow_mut().drive = d;
+            app.refresh_drive_page();
         });
     }
     // Two buttons carry this name now - the one beside the list and the one in
@@ -1166,50 +1162,60 @@ mod busy_tests {
 }
 
 #[cfg(test)]
-mod empty_state_tests {
+mod drive_page_tests {
     use super::*;
 
     fn drive(device: &str, label: Option<&str>) -> Drive {
         Drive {
             id: device.into(),
             device: device.into(),
-            name: "drive".into(),
+            name: "PIONEER BD-RW".into(),
             disc_label: label.map(str::to_string),
         }
     }
 
     #[test]
-    fn no_drive_at_all_says_so() {
-        let (title, description) = App::empty_state(&[]).unwrap();
+    fn no_drive_at_all_says_so_and_offers_nothing() {
+        let (title, description, ready) = App::drive_status(&[], None);
         assert_eq!(title, "No disc drive");
         assert!(description.contains("Connect one"), "{description}");
+        assert!(!ready, "there is nothing to analyse");
     }
 
     #[test]
-    fn a_drive_with_no_disc_asks_for_one_and_names_it() {
-        // "nothing here" is not worth a screen; which situation you are in
-        // decides what you do next
-        let (title, description) = App::empty_state(&[drive("/dev/sr0", None)]).unwrap();
+    fn a_drive_with_no_disc_asks_for_one_and_names_the_tray() {
+        let d = drive("/dev/sr0", None);
+        let (title, description, ready) = App::drive_status(std::slice::from_ref(&d), Some(&d));
         assert_eq!(title, "No disc");
         assert!(description.contains("/dev/sr0"), "{description}");
+        // analysing an empty drive can only fail, so it is not offered
+        assert!(!ready);
     }
 
     #[test]
-    fn several_empty_drives_are_all_named() {
-        let d = [drive("/dev/sr0", None), drive("/dev/sr1", None)];
-        let (_, description) = App::empty_state(&d).unwrap();
-        assert!(description.contains("/dev/sr0") && description.contains("/dev/sr1"), "{description}");
+    fn a_disc_is_named_by_its_own_label() {
+        // seeing the label is the first confirmation that the right disc is in
+        let d = drive("/dev/sr0", Some("PARKS_AND_RECREATION"));
+        let (title, description, ready) = App::drive_status(std::slice::from_ref(&d), Some(&d));
+        assert_eq!(title, "PARKS_AND_RECREATION");
+        assert!(description.contains("PIONEER"), "{description}");
+        assert!(description.contains("/dev/sr0"), "{description}");
+        assert!(ready);
     }
 
     #[test]
-    fn a_loaded_drive_means_there_is_no_empty_state() {
-        let d = [drive("/dev/sr0", Some("PARKS_AND_RECREATION"))];
-        assert!(App::empty_state(&d).is_none());
+    fn selecting_the_empty_one_of_two_drives_withdraws_the_action() {
+        let loaded = drive("/dev/sr1", Some("DISC"));
+        let empty = drive("/dev/sr0", None);
+        let drives = [empty.clone(), loaded.clone()];
+        assert!(App::drive_status(&drives, Some(&loaded)).2);
+        assert!(!App::drive_status(&drives, Some(&empty)).2, "the empty tray is not analysable");
     }
 
     #[test]
-    fn one_loaded_drive_among_empty_ones_still_counts() {
-        let d = [drive("/dev/sr0", None), drive("/dev/sr1", Some("DISC"))];
-        assert!(App::empty_state(&d).is_none());
+    fn a_chooser_is_only_worth_showing_when_there_is_a_choice() {
+        // the rule the page applies to the dropdown's visibility
+        assert!(![drive("/dev/sr0", Some("A"))].len() > 1);
+        assert!([drive("/dev/sr0", Some("A")), drive("/dev/sr1", None)].len() > 1);
     }
 }
