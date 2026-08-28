@@ -129,13 +129,13 @@ impl Resolver {
                 match s {
                     Slot::Fixed(t) => {
                         out.push_str(t);
-                        fixed.extend(std::iter::repeat(true).take(t.chars().count()));
+                        fixed.extend(std::iter::repeat_n(true, t.chars().count()));
                     }
                     Slot::Ambiguous(v) => {
                         let pick = k % v.len();
                         k /= v.len();
                         out.push_str(&v[pick]);
-                        fixed.extend(std::iter::repeat(false).take(v[pick].chars().count()));
+                        fixed.extend(std::iter::repeat_n(false, v[pick].chars().count()));
                     }
                 }
             }
@@ -147,7 +147,7 @@ impl Resolver {
                     _ => {}
                 }
             }
-            if best.as_ref().map_or(true, |(b, _)| sc > *b) {
+            if best.as_ref().is_none_or(|(b, _)| sc > *b) {
                 best = Some((sc, out));
             }
         }
@@ -232,10 +232,10 @@ impl Resolver {
                 Slot::Fixed(t) => out.push_str(t),
                 Slot::Ambiguous(v) => {
                     let upper: Option<&String> = v.iter().find(|x| {
-                        x.chars().next().map_or(false, |c| c.is_uppercase())
+                        x.chars().next().is_some_and(|c| c.is_uppercase())
                     });
                     let lower: Option<&String> = v.iter().find(|x| {
-                        x.chars().next().map_or(false, |c| c.is_lowercase())
+                        x.chars().next().is_some_and(|c| c.is_lowercase())
                     });
                     // In English a short word starting with the bar is almost
                     // always "I"/"It"/"If". Other languages have no such rule,
@@ -298,7 +298,7 @@ impl Resolver {
             let l_ok = (lc.len() == 1 && matches!(lc.as_str(), "I" | "l" | "a" | "A"))
                 || (lc.len() >= 2 && self.is_word(&lc));
             let r_ok = rc.len() >= 2 && self.is_word(&rc);
-            if l_ok && r_ok && best.map_or(true, |(g, _)| gap > g) {
+            if l_ok && r_ok && best.is_none_or(|(g, _)| gap > g) {
                 best = Some((gap, i));
             }
         }
@@ -319,7 +319,7 @@ impl Resolver {
                 None => self.resolve_word_at(slots, at_start),
             };
             at_start = word
-                .trim_end_matches(|c: char| c == '"' || c == '\'' || c == ')')
+                .trim_end_matches(['"', '\'', ')'])
                 .ends_with(['.', '!', '?']);
             out.push(word);
         }

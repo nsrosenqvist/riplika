@@ -7,7 +7,7 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 
-use crate::table::{Entry, Table};
+use crate::subs::table::{Entry, Table};
 
 fn png_data_uri(e: &Entry, zoom: usize) -> String {
     let bits = e.bitmap();

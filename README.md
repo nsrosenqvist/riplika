@@ -1,8 +1,178 @@
 # ripper
 
-Deterministic subtitle recognition for DVD rips.
+Turn a disc into a tagged, subtitled library. Four stages:
 
-DVD subtitles are not photographed text — they are a rendered bitmap font, so
+```
+rip ───▶ identify ───▶ transcode ───▶ subtitles
+MakeMKV   label +       ffmpeg         VobSub bitmaps
+          catalogue +   one pass       to text, per language
+          disc structure
+```
+
+There is a command line and a GTK/libadwaita window; both are thin shells over
+one library, so they cannot disagree about what anything means.
+
+## Layout
+
+| crate | what it is |
+|---|---|
+| `ripper-core` | the whole pipeline as a library |
+| `ripper-cli` | `ripper`, the terminal front end |
+| `ripper-gui` | `ripper-gui`, the window |
+
+Two rules shape `ripper-core`, and both come from bugs that shipped in the shell
+scripts this replaces.
+
+**Deciding is separate from doing.** Nothing that talks to ffmpeg or MakeMKV
+also decides what to ask them. A planner turns state into an argv vector and a
+runner executes it, so a test can assert on the exact arguments with no disc in
+the drive. That is what catches the arguments that are wrong but not *invalid* —
+a missing `-map` that silently drops the subtitle track, a `-disposition` index
+one too high — which is precisely the class of bug that a shell script cannot be
+tested for and that cost the most time here.
+
+**The outside world is behind a trait.** `Runner`, `Prober`, `Ripper`,
+`Catalogue` and `Fs` all have fake implementations, so the entire pipeline runs
+end to end in milliseconds with no hardware, no ffmpeg and no network. A disc
+with two episodes and a play-all is a few lines of test data.
+
+```
+core/src/
+  host.rs        Command, Runner, Fs - the only way out of the process
+  model.rs       the shared vocabulary: discs, titles, tracks, roles, settings
+  lang.rs        ISO 639 matching and language preference order
+  media.rs       ffprobe, as one JSON call
+  naming.rs      what a file is called and where it goes
+  rip/           MakeMKV: enumerate a disc, then read it
+  identify/      volume label, disc structure, and the catalogues
+  transcode/     what to measure, and the ffmpeg command to build
+  subs/          bitmap subtitles to text
+  job.rs         the four stages in order, reporting as it goes
+```
+
+`job.rs` deliberately exposes `rip`, `organise` and `produce` separately rather
+than only a single `run`. The window has to stop between the second and the
+third to show what it identified and let you correct it; a single call that did
+everything would work for a script and be useless for a window.
+
+## Install
+
+Needs `ffmpeg`, `ffprobe` and `mkvextract` on `PATH`, plus `makemkvcon` to read
+discs. A `.idx`/`.sub` pair can be read with no external tools.
+
+```
+cargo build --release
+```
+
+## Use
+
+```sh
+ripper drives                     # what is connected, and what is loaded
+ripper scan                       # titles on the disc, without ripping it
+ripper identify                   # what the disc appears to be, and why
+
+# the whole pipeline
+ripper rip --languages english,swedish --video medium --audio high \
+           --table glyphs.json --words ./words -o ~/Videos
+
+# an already-ripped folder, skipping the disc
+ripper process ~/rips/parks-s7d1 --title "Parks and Recreation" --season 7 \
+               --disc 1 --dry-run
+```
+
+`--dry-run` prints the plan - which title becomes which episode, and what each
+one will be called - and stops. Worth doing once per disc.
+
+Set `TMDB_API_KEY` to add film lookup; TV works with no key at all via TVmaze.
+
+## Identification
+
+A DVD carries no usable identifier, and there is no database keyed by disc.
+Redump and the DVD-Video hash registries cover games and preservation, not
+retail television, and neither can answer "which episodes are on this disc". So
+two independent kinds of evidence are combined, and both are shown:
+
+- **The volume label.** `PARKS_AND_RECREATION_S7D1` is the single most
+  informative thing on a disc and it costs nothing to read. It is also capped at
+  32 characters, so it truncates, and every authoring house has its own
+  conventions - it can only ever be a hypothesis to search with.
+- **The disc's own structure.** How many episode-length titles there are, how
+  long they run, and how they group under the "play all" title. A play-all
+  replays the episodes back to back, so its chapter list is theirs
+  concatenated - decomposing it recovers both which titles are episodes and what
+  order they belong in, with no network and no guessing.
+
+A candidate is only trusted when the two agree, and the reasons are carried
+along so a wrong guess is visible rather than mysterious. Which disc of a season
+you are holding is genuinely ambiguous from one disc - a season split 5/5/4 and
+one split 4/4/6 look identical from disc two - so episode numbering prefers what
+is already in the output folder, then falls back to a guess it tells you about.
+
+## Transcoding
+
+HandBrake is a wrapper around the same libx264; encoding a title both ways with
+matching settings produces byte-identical x264 parameter strings. What HandBrake
+actually supplies is the preprocessing decisions, so those are made explicitly:
+
+| | |
+|---|---|
+| crop | detected from the middle of the film, not the opening titles |
+| inverse telecine | applied only when the duplicate frames are really there |
+| frame rate | pinned constant |
+| pixel aspect | snapped to the four ratios a DVD can have |
+| subtitles | recognised per language, bitmaps dropped once they are |
+| faststart | moov atom at the front |
+
+Three tiers each for picture and sound. DVD is 720x480 MPEG-2 at 4-6 Mb/s, so
+the useful range is narrow: by CRF 18 the encode is transparent against the
+source and further bits mostly track MPEG-2's own noise, while below CRF 23 SD
+detail goes quickly.
+
+| tier | picture | sound |
+|---|---|---|
+| high | CRF 18, ~240 MB an episode | original AC3, untouched |
+| medium | CRF 20, ~170 MB - the sweet spot | AAC 160k stereo |
+| low | CRF 23, ~107 MB | AAC 96k stereo |
+
+`--audio high` keeps the original 5.1 with no downmix and no second lossy
+generation. The cost is browsers, which cannot decode AC3 at all, so a web
+client makes the server transcode; `--dual-audio` adds an AAC stereo track
+beside the original for exactly that case.
+
+`--languages english,swedish` filters audio and subtitles together, and the
+order is meaningful: the first language listed ends up first *and* carries the
+default flag, because players go by the flag rather than the order. A subtitle
+filter matching nothing is honoured exactly - a subtitle you cannot read is
+worse than none - while an audio filter matching nothing keeps everything, since
+a file with no audio is simply broken.
+
+### Things that were wrong before, and the tests that hold them down
+
+Each of these produced a file that looked correct:
+
+- **A blanket `-map 0`** carried the DVD's `bin_data` stream through and
+  accumulated a duplicate on every pass. Mapping is explicit, `-dn` is set, and
+  chapters come over separately via `-map_chapters 0`.
+- **`-c copy` with no subtitle `-map`** wrote files with no subtitles in them.
+- **ffmpeg reads stdin** looking for keypresses, so inside a loop that reads a
+  list it eats the rest of the list. One run processed one episode out of eight
+  and reported success. Every child now gets a closed stdin, in one place.
+- **`fieldmatch,decimate` applied blind** threw away one real frame in five
+  (24,772 kept of 30,964) because the source was *soft* telecine, already
+  resolved to 23.976 by the decoder. Detection measures what the decoder
+  produces rather than what the container declares.
+- **Writing straight to the destination** left a truncated file at the final
+  path when a run was interrupted, which the next run counted as a finished
+  episode and skipped. Encoding goes to `.part` and renames on success.
+- **Frames captured as text.** Perceptual hashing read raw greyscale through a
+  UTF-8 conversion, which replaces invalid bytes with U+FFFD and changes the
+  length, so no extended cut ever matched. Frames go to a file.
+
+## Subtitles
+
+Deterministic recognition, not OCR.
+
+DVD subtitles are not photographed text - they are a rendered bitmap font, so
 every `e` on a disc is the *same pixels*. `ripper` exploits that: it segments the
 subtitle bitmaps into individual glyphs, labels the few hundred distinct shapes
 once, and then decodes everything else by exact lookup. No statistical OCR, no
@@ -11,7 +181,18 @@ per-image tuning, and the same input always produces the same output.
 Cue timings come straight from the subtitle stream and are never re-derived, so
 output is sample-accurate with the source by construction.
 
-## Why not just run Tesseract
+Recognition runs on the *rip*, before encoding, so the SRTs already exist when
+ffmpeg starts and can be extra inputs to the one pass that was always necessary.
+The shell version needed three passes an episode; two of them existed only
+because it recognised from the transcode instead.
+
+Once a track is recognised its bitmap is redundant, and a client that selects a
+bitmap track forces the server to burn it into the picture and re-encode - so
+bitmaps are dropped. `--keep-bitmap-subs` retains them. A track whose
+recognition *failed* keeps its bitmap either way: losing the text form of a
+language is a nuisance, losing the language is not.
+
+### Why not just run Tesseract
 
 Tesseract guesses shapes, so it confuses characters that *look* similar — `is`
 becomes `ts`, `if` becomes `lf`, `to` becomes `fo` — and the errors move around
@@ -34,18 +215,9 @@ and the reference does not** (`he fell in` vs `he tell in`, `Go on` vs `Goon`,
 `a lot of` vs `a fot of`), 82.9% differ only in punctuation or spacing, and
 0.6% — 20 cues in 62,590 — are cases where the reference looks better.
 
-## Install
+### Building a glyph table
 
-Needs `ffmpeg`, `ffprobe` and `mkvextract` on `PATH` for reading subtitles out
-of video containers. A `.idx`/`.sub` pair can be read with no external tools.
-
-```
-cargo build --release
-```
-
-## Use
-
-Building a glyph table is a one-time cost per release font. If you already have
+Building one is a one-time cost per release font. If you already have
 trusted subtitles for a few episodes, labels can be voted from them
 automatically; otherwise the table comes out unlabelled and you fill it in from
 the review page.
@@ -72,7 +244,7 @@ ripper inspect episode.mp4 --at 673473 --table glyphs.json
 `build` is incremental: point it at more files and it extends the existing
 table, so a table grows to cover a whole series.
 
-## How it works
+### How it works
 
 ```
 .idx/.sub ──▶ SPU decode ──▶ glyph segmentation ──▶ table lookup ──▶ SRT
@@ -135,7 +307,7 @@ acronyms, and position within the word. Where the geometry shows a gap that only
 just missed the space threshold, a word may also be split (`Ijust` → `I just`) —
 but only there, so `Pawnee` never becomes `Paw nee`.
 
-## Other languages
+### Other languages
 
 The method is script-agnostic — it matches bitmaps — but two things are not: the
 wordlist, and the rules for resolving genuinely ambiguous glyphs.
@@ -228,3 +400,6 @@ Known rough edges:
 - The wordlist is `/usr/share/dict/cracklib-small` by default, which is a
   password dictionary — serviceable, but a real English wordlist would resolve
   ambiguity better. Override with `--words`.
+- Film lookup needs a `TMDB_API_KEY`; without one only television resolves.
+- The window has not been through a proper design pass. It works, it is not
+  pretty.

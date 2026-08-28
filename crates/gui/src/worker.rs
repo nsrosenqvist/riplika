@@ -1,0 +1,189 @@
+//! Running the pipeline off the main thread.
+//!
+//! GTK's main loop must never block: a forty-minute rip on it would freeze the
+//! window, including the cancel button. So each phase runs on its own thread
+//! and reports back through a channel that the main loop drains on a timer.
+//!
+//! The phases are separate threads rather than one, because the user has to be
+//! able to intervene between them - to correct a wrong identification, or to
+//! change the quality after seeing how many episodes there are.
+
+use ripper_core::host::{Cancel, RealFs, RealRunner};
+use ripper_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, UreqHttp};
+use ripper_core::job::{Event, Pipeline, Ports, Report};
+use ripper_core::media::FfProbe;
+use ripper_core::model::{Candidate, DiscScan, Drive, Item, JobSettings, Media};
+use ripper_core::rip::MakeMkv;
+use std::path::PathBuf;
+use std::sync::mpsc::{channel, Receiver, Sender};
+
+/// What a worker sends back to the window.
+pub enum Msg {
+    Drives(Vec<Drive>),
+    Scanned(Box<DiscScan>),
+    Candidates(Vec<Candidate>),
+    Organised(Vec<Item>),
+    Event(Event),
+    Finished(Box<Report>),
+    Failed(String),
+}
+
+pub struct Channel {
+    pub rx: Receiver<Msg>,
+    tx: Sender<Msg>,
+}
+
+impl Default for Channel {
+    fn default() -> Self {
+        let (tx, rx) = channel();
+        Channel { rx, tx }
+    }
+}
+
+impl Channel {
+    pub fn sender(&self) -> Sender<Msg> {
+        self.tx.clone()
+    }
+}
+
+/// The concrete implementations, built inside whichever thread needs them.
+struct Real {
+    runner: RealRunner,
+    fs: RealFs,
+    http: UreqHttp,
+}
+
+impl Real {
+    fn new(cancel: Cancel) -> Self {
+        Real {
+            runner: RealRunner::new(cancel),
+            fs: RealFs,
+            http: UreqHttp,
+        }
+    }
+
+    fn catalogues(&self) -> Catalogues<'_> {
+        let mut v: Vec<Box<dyn Catalogue + '_>> = vec![Box::new(TvMaze { http: &self.http })];
+        if let Some(t) = Tmdb::from_env(&self.http) {
+            v.push(Box::new(t));
+        }
+        Catalogues(v)
+    }
+}
+
+fn report(tx: &Sender<Msg>, r: ripper_core::Result<()>) {
+    if let Err(e) = r {
+        let _ = tx.send(Msg::Failed(e.to_string()));
+    }
+}
+
+/// List the drives.
+pub fn list_drives(tx: Sender<Msg>) {
+    std::thread::spawn(move || {
+        let real = Real::new(Cancel::new());
+        let mk = MakeMkv::new(&real.runner);
+        match ripper_core::rip::Ripper::drives(&mk) {
+            Ok(d) => {
+                let _ = tx.send(Msg::Drives(d));
+            }
+            Err(e) => {
+                let _ = tx.send(Msg::Failed(e.to_string()));
+            }
+        }
+    });
+}
+
+/// Read the disc and work out what it is.
+pub fn analyse(drive: Drive, cancel: Cancel, tx: Sender<Msg>) {
+    std::thread::spawn(move || {
+        let real = Real::new(cancel.clone());
+        let mk = MakeMkv::new(&real.runner);
+        let prober = FfProbe(&real.runner);
+        let cat = real.catalogues();
+        let p = Pipeline::new(
+            Ports {
+                runner: &real.runner,
+                prober: &prober,
+                ripper: &mk,
+                catalogue: &cat,
+                fs: &real.fs,
+                cancel,
+            },
+            JobSettings::default(),
+        );
+        let t = tx.clone();
+        let mut events = move |e: Event| {
+            let _ = t.send(Msg::Event(e));
+        };
+        report(
+            &tx,
+            (|| {
+                let scan = p.scan(&drive, &mut events)?;
+                let candidates = p.identify(&scan, &mut events);
+                let _ = tx.send(Msg::Scanned(Box::new(scan)));
+                let _ = tx.send(Msg::Candidates(candidates));
+                Ok(())
+            })(),
+        );
+    });
+}
+
+/// Look a title up by hand, for when the guess was wrong.
+pub fn search(query: String, season: Option<u32>, tx: Sender<Msg>) {
+    std::thread::spawn(move || {
+        let real = Real::new(Cancel::new());
+        let cat = real.catalogues();
+        match ripper_core::identify::search(&cat, &query, season) {
+            Ok(c) => {
+                let _ = tx.send(Msg::Candidates(c));
+            }
+            Err(e) => {
+                let _ = tx.send(Msg::Failed(e.to_string()));
+            }
+        }
+    });
+}
+
+/// Rip, sort out and produce - the long one.
+pub fn run(
+    scan: DiscScan,
+    media: Media,
+    disc: Option<u32>,
+    rip_dir: PathBuf,
+    settings: JobSettings,
+    cancel: Cancel,
+    tx: Sender<Msg>,
+) {
+    std::thread::spawn(move || {
+        let real = Real::new(cancel.clone());
+        let mk = MakeMkv::new(&real.runner);
+        let prober = FfProbe(&real.runner);
+        let cat = real.catalogues();
+        let p = Pipeline::new(
+            Ports {
+                runner: &real.runner,
+                prober: &prober,
+                ripper: &mk,
+                catalogue: &cat,
+                fs: &real.fs,
+                cancel,
+            },
+            settings,
+        );
+        let t = tx.clone();
+        let mut events = move |e: Event| {
+            let _ = t.send(Msg::Event(e));
+        };
+        report(
+            &tx,
+            (|| {
+                let files = p.rip(&scan, &rip_dir, &mut events)?;
+                let items = p.organise(&files, &media, disc, &mut events)?;
+                let _ = tx.send(Msg::Organised(items.clone()));
+                let report = p.produce(&items, &media, &mut events)?;
+                let _ = tx.send(Msg::Finished(Box::new(report)));
+                Ok(())
+            })(),
+        );
+    });
+}

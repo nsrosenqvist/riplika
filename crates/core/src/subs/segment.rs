@@ -4,7 +4,7 @@
 //! identical everywhere it appears. Segmenting into glyphs lets us look them up
 //! by exact match instead of guessing with statistical OCR.
 
-use crate::vobsub::Spu;
+use crate::subs::vobsub::Spu;
 
 #[derive(Debug, Clone)]
 pub struct Glyph {

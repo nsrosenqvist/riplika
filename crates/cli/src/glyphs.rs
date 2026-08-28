@@ -1,341 +1,28 @@
-//! ripper - deterministic DVD subtitle recognition.
+//! The glyph-table side of the tool: building a table, reviewing it, and
+//! recognising with it.
 //!
-//! DVD subtitles are a rendered bitmap font: every "e" on a disc is the same
-//! pixels. So instead of running statistical OCR over every frame, we segment
-//! the bitmaps into glyphs once, label the few hundred distinct shapes, and
-//! then decode by exact lookup. Timings always come from the subtitle stream,
-//! so output is sample-accurate with the source by construction.
+//! These are the commands that exist because recognition is *deterministic*.
+//! A table is built once per disc font, checked by eye once, and then every
+//! episode decodes by exact lookup. The reviewing commands matter as much as
+//! the building ones: the one manual step is where the mistakes come from.
 
-#[cfg(test)]
-mod tests;
-
-mod recognize;
-mod resolve;
-mod segment;
-mod sheet;
-mod source;
-mod srt;
-mod table;
-mod vobsub;
-
-use clap::{Parser, Subcommand};
+use ripper_core::host::RealRunner;
+use ripper_core::subs::{segment, source, srt, table, vobsub};
+use segment::SegOpts;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-
-use segment::SegOpts;
 use table::Table;
 
-#[derive(Parser)]
-#[command(name = "ripper", about = "Deterministic DVD subtitle recognition", version)]
-struct Cli {
-    #[command(subcommand)]
-    cmd: Cmd,
-}
-
-#[derive(Subcommand)]
-enum Cmd {
-    /// Segment inputs into glyphs and build (or extend) a glyph table.
-    ///
-    /// With --reference, labels are voted from already-trusted SRTs whose cue
-    /// times line up with the subtitle stream; otherwise the table comes out
-    /// unlabelled and is filled in via `sheet` + `label`.
-    Build {
-        /// Video files or .idx files.
-        inputs: Vec<PathBuf>,
-        #[arg(long, default_value = "glyphs.json")]
-        table: PathBuf,
-        /// Directory of reference .srt files named after each input.
-        #[arg(long)]
-        reference: Option<PathBuf>,
-        /// Minimum share of votes needed to accept a label.
-        #[arg(long, default_value_t = 0.90)]
-        min_agreement: f32,
-        #[arg(long)]
-        name: Option<String>,
-        /// Subtitle stream index, as ffmpeg counts subtitle streams.
-        #[arg(long)]
-        stream: Option<usize>,
-    },
-    /// Write an HTML page for reviewing and correcting labels.
-    Sheet {
-        #[arg(long, default_value = "glyphs.json")]
-        table: PathBuf,
-        #[arg(long, default_value = "glyphs.html")]
-        out: PathBuf,
-        #[arg(long, default_value_t = 4)]
-        zoom: usize,
-    },
-    /// Apply a corrections file ({glyph key: text}) to the table.
-    Label {
-        #[arg(long, default_value = "glyphs.json")]
-        table: PathBuf,
-        /// JSON produced by the review sheet.
-        corrections: PathBuf,
-    },
-    /// Recognize subtitles and write an SRT.
-    Ocr {
-        input: PathBuf,
-        #[arg(long, default_value = "glyphs.json")]
-        table: PathBuf,
-        #[arg(short, long)]
-        out: Option<PathBuf>,
-        /// Character emitted where no glyph matched.
-        #[arg(long, default_value_t = '\u{25a1}')]
-        placeholder: char,
-        /// Wordlist used to resolve ambiguous glyphs (I vs l).
-        #[arg(long)]
-        words: Option<PathBuf>,
-        /// Subtitle language. Only affects ambiguity resolution; anything other
-        /// than "en" disables the English-only rules.
-        #[arg(long, default_value = "en")]
-        lang: String,
-        /// Subtitle stream index, as ffmpeg counts subtitle streams.
-        #[arg(long)]
-        stream: Option<usize>,
-    },
-    /// Print the segmentation of one subtitle, for diagnosing bad output.
-    Inspect {
-        input: PathBuf,
-        /// Timestamp in milliseconds; the nearest cue is shown.
-        #[arg(long)]
-        at: u64,
-        #[arg(long, default_value = "glyphs.json")]
-        table: PathBuf,
-        /// Subtitle stream index, as ffmpeg counts subtitle streams.
-        #[arg(long)]
-        stream: Option<usize>,
-    },
-    /// Fingerprint a disc from its title durations, for matching against a
-    /// catalogue. Accepts ripped files or a directory of them.
-    Fingerprint {
-        inputs: Vec<PathBuf>,
-        /// Ignore titles shorter than this many seconds.
-        #[arg(long, default_value_t = 120)]
-        min_seconds: u64,
-    },
-    /// Look for labels that are probably wrong.
-    Check {
-        #[arg(long, default_value = "glyphs.json")]
-        table: PathBuf,
-    },
-    /// Compare a produced SRT against a reference one.
-    Verify {
-        produced: PathBuf,
-        reference: PathBuf,
-    },
-}
-
-fn main() {
-    // Restore the default SIGPIPE handling that Rust disables at startup.
-    // Without this, `ripper check | head` kills the pipe and the next println!
-    // panics with "failed printing to stdout: Broken pipe".
-    #[cfg(unix)]
-    unsafe {
-        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
-    }
-    if let Err(e) = run() {
-        eprintln!("error: {e}");
-        std::process::exit(1);
-    }
-}
-
-fn run() -> Result<(), String> {
-    match Cli::parse().cmd {
-        Cmd::Build {
-            inputs,
-            table,
-            reference,
-            min_agreement,
-            name,
-            stream,
-        } => build(&inputs, &table, reference.as_deref(), min_agreement, name, stream),
-        Cmd::Sheet { table, out, zoom } => {
-            let t = Table::load(&table)?;
-            let html = sheet::render(&t, zoom);
-            std::fs::write(&out, html).map_err(|e| format!("{}: {e}", out.display()))?;
-            println!(
-                "{} glyphs ({} labelled, {} to review) -> {}",
-                t.glyphs.len(),
-                t.labelled(),
-                t.unlabelled(),
-                out.display()
-            );
-            Ok(())
-        }
-        Cmd::Label {
-            table,
-            corrections,
-        } => {
-            let mut t = Table::load(&table)?;
-            let s = std::fs::read_to_string(&corrections)
-                .map_err(|e| format!("{}: {e}", corrections.display()))?;
-            let fixes: BTreeMap<String, String> =
-                serde_json::from_str(&s).map_err(|e| format!("{}: {e}", corrections.display()))?;
-            let mut n = 0;
-            for g in t.glyphs.iter_mut() {
-                if let Some(v) = fixes.get(&g.key) {
-                    if g.text.as_deref() != Some(v.as_str()) {
-                        n += 1;
-                    }
-                    g.text = Some(v.clone());
-                }
-            }
-            t.save(&table)?;
-            println!("applied {n} changes; {} still unlabelled", t.unlabelled());
-            Ok(())
-        }
-        Cmd::Ocr {
-            input,
-            table,
-            out,
-            placeholder,
-            words,
-            lang,
-            stream,
-        } => {
-            let t = Table::load(&table)?;
-            let r = resolve::Resolver::load_lang(words.as_deref(), &lang);
-            if !r.has_wordlist() {
-                eprintln!(
-                    "note: no wordlist for '{lang}' - ambiguous glyphs will use \
-                     structural rules only. Pass --words for better results."
-                );
-            }
-            let (text, stats) = ocr_one(&input, &t, &r, placeholder, stream)?;
-            let dest = out.unwrap_or_else(|| input.with_extension("srt"));
-            std::fs::write(&dest, text).map_err(|e| format!("{}: {e}", dest.display()))?;
-            println!(
-                "{} cues, word-gap {}px, {} unknown glyph instances ({} distinct) -> {}",
-                stats.cues,
-                stats.space_gap,
-                stats.unknown,
-                stats.distinct_unknown.len(),
-                dest.display()
-            );
-            Ok(())
-        }
-        Cmd::Inspect { input, at, table, stream } => {
-            let t = Table::load(&table).unwrap_or_default();
-            let src = source::load(&input, stream)?;
-            let events = vobsub::decode_all(&src.idx, &src.sub);
-            let opts = SegOpts::default();
-            let Some(ev) = events
-                .iter()
-                .min_by_key(|e| e.start_ms.abs_diff(at))
-            else {
-                return Err("no subtitle events".into());
-            };
-            println!("cue at {} ms  ({}x{} bitmap)", ev.start_ms, ev.spu.w, ev.spu.h);
-            for (li, line) in segment::segment(&ev.spu, &src.idx.palette, &opts)
-                .iter()
-                .enumerate()
-            {
-                println!(
-                    "line {li}: top={} bottom={} height={}",
-                    line.top,
-                    line.bottom,
-                    line.height()
-                );
-                let gaps = segment::gaps(line);
-                for (i, g) in line.glyphs.iter().enumerate() {
-                    let key = g.key();
-                    let e = t.get(&key);
-                    println!(
-                        "   {:>3} x={:<4} y={:<4} {:>2}x{:<2} gap_after={:<4} {:?} thr={:?}",
-                        i,
-                        g.x,
-                        g.y,
-                        g.w,
-                        g.h,
-                        gaps.get(i).map(|v| v.to_string()).unwrap_or("-".into()),
-                        e.and_then(|e| e.text.clone()).unwrap_or("?".into()),
-                        e.and_then(|e| e.gap),
-                    );
-                }
-            }
-            Ok(())
-        }
-        Cmd::Fingerprint {
-            inputs,
-            min_seconds,
-        } => fingerprint(&inputs, min_seconds),
-        Cmd::Check { table } => check(&Table::load(&table)?),
-        Cmd::Verify {
-            produced,
-            reference,
-        } => verify(&produced, &reference),
-    }
-}
-
-#[derive(Default)]
-struct OcrStats {
-    cues: usize,
-    unknown: usize,
-    space_gap: i32,
-    distinct_unknown: BTreeMap<String, u64>,
-}
-
-fn ocr_one(
-    input: &Path,
-    t: &Table,
-    resolver: &resolve::Resolver,
-    placeholder: char,
-    stream: Option<usize>,
-) -> Result<(String, OcrStats), String> {
-    let src = source::load(input, stream)?;
-    let events = vobsub::decode_all(&src.idx, &src.sub);
-    let opts = SegOpts::default();
-
-    // segment everything first so the word-gap can be measured from the whole file
-    let segmented: Vec<Vec<segment::Line>> = events
-        .iter()
-        .map(|ev| segment::segment(&ev.spu, &src.idx.palette, &opts))
-        .collect();
-    let fallback = segmented
-        .iter()
-        .flatten()
-        .next()
-        .map(|l| segment::space_threshold(l, &opts))
-        .unwrap_or(6);
-    let space_gap = recognize::estimate_space_gap(&segmented, fallback);
-
-    let mut cues = Vec::new();
-    let mut ends = Vec::new();
-    let mut stats = OcrStats::default();
-    stats.space_gap = space_gap;
-
-    for (ev, lines) in events.iter().zip(&segmented) {
-        let r = recognize::lines_to_text(lines, t, resolver, space_gap, placeholder);
-        if r.text.trim().is_empty() {
-            continue;
-        }
-        for k in &r.unknown {
-            *stats.distinct_unknown.entry(k.clone()).or_insert(0) += 1;
-            stats.unknown += 1;
-        }
-        cues.push(srt::Cue {
-            start_ms: ev.start_ms,
-            end_ms: ev.end_ms.unwrap_or(ev.start_ms + 2000),
-            text: r.text,
-        });
-        ends.push(ev.end_ms);
-    }
-
-    srt::tidy(&mut cues, &ends);
-    stats.cues = cues.len();
-    Ok((srt::write(&cues), stats))
-}
-
-fn build(
+pub fn build(
     inputs: &[PathBuf],
     table_path: &Path,
     reference: Option<&Path>,
     min_agreement: f32,
     name: Option<String>,
-    stream: Option<usize>,
+    stream: usize,
 ) -> Result<(), String> {
     let mut t = if table_path.exists() {
-        Table::load(table_path)?
+        Table::load(table_path).map_err(|e| e.to_string())?
     } else {
         Table::default()
     };
@@ -352,7 +39,7 @@ fn build(
     let mut gapobs: BTreeMap<usize, (Vec<i32>, Vec<i32>)> = BTreeMap::new();
 
     for input in inputs {
-        let src = match source::load(input, stream) {
+        let src = match source::load(&RealRunner::default(), input, stream) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("  skip {}: {e}", input.display());
@@ -423,12 +110,11 @@ fn build(
                     }
                     t.vote(gs[k], &c.to_string());
                     n_votes += 1;
-                    if k > 0 {
-                        if let Some(&g) = lg.get(k - 1) {
+                    if k > 0
+                        && let Some(&g) = lg.get(k - 1) {
                             let e = gapobs.entry(gs[k - 1]).or_default();
                             if space_pending { e.1.push(g) } else { e.0.push(g) }
                         }
-                    }
                     space_pending = false;
                     k += 1;
                 }
@@ -455,7 +141,7 @@ fn build(
     }
     let (set, ambiguous, shaky) = t.apply_votes(min_agreement);
     t.reindex();
-    t.save(table_path)?;
+    t.save(table_path).map_err(|e| e.to_string())?;
 
     println!();
     println!("events segmented   : {n_ev}");
@@ -480,14 +166,14 @@ fn build(
 /// "PARKS_AND_RECREATION", with no season or disc number - but the set of title
 /// lengths is highly distinctive and survives ripping, so it can be matched
 /// against a catalogue without the disc in hand.
-fn fingerprint(inputs: &[PathBuf], min_seconds: u64) -> Result<(), String> {
+pub fn fingerprint(inputs: &[PathBuf], min_seconds: u64) -> Result<(), String> {
     let mut files: Vec<PathBuf> = Vec::new();
     for p in inputs {
         if p.is_dir() {
             let rd = std::fs::read_dir(p).map_err(|e| format!("{}: {e}", p.display()))?;
             for e in rd.flatten() {
                 let q = e.path();
-                if q.extension().map_or(false, |x| x == "mkv" || x == "mp4") {
+                if q.extension().is_some_and(|x| x == "mkv" || x == "mp4") {
                     files.push(q);
                 }
             }
@@ -539,7 +225,7 @@ fn fingerprint(inputs: &[PathBuf], min_seconds: u64) -> Result<(), String> {
 /// is case: `o` and `O` are the same shape at different sizes, and a contact
 /// sheet that scales every glyph to one cell hides exactly that. Height tells
 /// them apart, so check it.
-fn check(t: &Table) -> Result<(), String> {
+pub fn check(t: &Table) -> Result<(), String> {
     const XH: &str = "acemnorsuvwxz";
     const CAP: &str = "ACEMNORSUVWXZ";
 
@@ -595,10 +281,10 @@ fn check(t: &Table) -> Result<(), String> {
         println!("{unl} glyphs still unlabelled");
         issues += unl;
     }
-    let multi: Vec<&crate::table::Entry> = t
+    let multi: Vec<&table::Entry> = t
         .glyphs
         .iter()
-        .filter(|g| g.text.as_deref().map_or(false, |l| l.chars().count() > 1 && !l.contains('|')))
+        .filter(|g| g.text.as_deref().is_some_and(|l| l.chars().count() > 1 && !l.contains('|')))
         .collect();
     if !multi.is_empty() {
         println!("{} glyphs carry multi-character labels (letters that merged):", multi.len());
@@ -606,7 +292,7 @@ fn check(t: &Table) -> Result<(), String> {
             println!("  {:?}  (n={})", g.text.as_deref().unwrap_or(""), g.count);
         }
     }
-    let amb = t.glyphs.iter().filter(|g| g.text.as_deref().map_or(false, |l| l.contains('|'))).count();
+    let amb = t.glyphs.iter().filter(|g| g.text.as_deref().is_some_and(|l| l.contains('|'))).count();
     if amb > 0 {
         println!("{amb} ambiguity classes - resolved from context at decode time");
     }
@@ -616,7 +302,7 @@ fn check(t: &Table) -> Result<(), String> {
     Ok(())
 }
 
-fn verify(produced: &Path, reference: &Path) -> Result<(), String> {
+pub fn verify(produced: &Path, reference: &Path) -> Result<(), String> {
     let a = srt::parse(
         &std::fs::read_to_string(produced).map_err(|e| format!("{}: {e}", produced.display()))?,
     );

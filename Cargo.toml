@@ -1,15 +1,21 @@
-[package]
-name = "ripper"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = ["crates/core", "crates/cli", "crates/gui"]
+resolver = "3"
 
-[dependencies]
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+ripper-core = { path = "crates/core" }
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
-libc = "0.2.189"
+libc = "0.2"
 png = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+ureq = { version = "3", features = ["json"] }
 
 [profile.release]
 opt-level = 3

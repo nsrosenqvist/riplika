@@ -1,9 +1,9 @@
 //! Tests for the parts where a regression would be silent: the ambiguity
 //! resolver, mark merging, spacing, and SRT round-tripping.
 
-use crate::resolve::{Resolver, Slot};
-use crate::segment::{SegOpts, Glyph, Line};
-use crate::srt;
+use crate::subs::resolve::{Resolver, Slot};
+use crate::subs::segment::{SegOpts, Glyph, Line};
+use crate::subs::srt;
 
 fn amb() -> Slot {
     // the l/I bar, most-frequent reading first, as the table stores it
@@ -114,10 +114,10 @@ fn space_threshold_scales_with_line_height() {
     let tall = Line { glyphs: vec![], top: 0, bottom: 39 };
     let short = Line { glyphs: vec![], top: 0, bottom: 9 };
     assert!(
-        crate::segment::space_threshold(&tall, &opts)
-            > crate::segment::space_threshold(&short, &opts)
+        crate::subs::segment::space_threshold(&tall, &opts)
+            > crate::subs::segment::space_threshold(&short, &opts)
     );
-    assert!(crate::segment::space_threshold(&short, &opts) >= 2);
+    assert!(crate::subs::segment::space_threshold(&short, &opts) >= 2);
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn gaps_are_measured_between_bounding_boxes() {
         top: 0,
         bottom: 0,
     };
-    assert_eq!(crate::segment::gaps(&line), vec![4, 0]);
+    assert_eq!(crate::subs::segment::gaps(&line), vec![4, 0]);
 }
 
 

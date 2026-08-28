@@ -1,8 +1,8 @@
 //! Turning segmented glyphs back into text via the table.
 
-use crate::resolve::{Resolver, Slot};
-use crate::segment::Line;
-use crate::table::Table;
+use crate::subs::resolve::{Resolver, Slot};
+use crate::subs::segment::Line;
+use crate::subs::table::Table;
 
 pub struct Recognized {
     pub text: String,

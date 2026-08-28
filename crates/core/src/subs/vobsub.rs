@@ -101,12 +101,11 @@ pub fn read_spu(buf: &[u8], pos: usize) -> Option<Vec<u8>> {
             total = Some(u16::from_be_bytes([data[0], data[1]]) as usize);
         }
         p = end;
-        if let Some(t) = total {
-            if data.len() >= t {
+        if let Some(t) = total
+            && data.len() >= t {
                 data.truncate(t);
                 return Some(data);
             }
-        }
     }
     total.filter(|t| data.len() >= *t).map(|t| {
         data.truncate(t);
@@ -304,7 +303,7 @@ impl Spu {
             let pi = self.pal_idx[i] as usize;
             let rgb = palette.get(pi).copied().unwrap_or([0, 0, 0]);
             let lum = 299 * rgb[0] as u32 + 587 * rgb[1] as u32 + 114 * rgb[2] as u32;
-            if best.map_or(true, |(bl, _)| lum > bl) {
+            if best.is_none_or(|(bl, _)| lum > bl) {
                 best = Some((lum, i as u8));
             }
         }
