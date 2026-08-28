@@ -210,6 +210,9 @@ pub fn parse_scan(output: &str, drive: Drive) -> Result<DiscScan> {
             id,
             duration: b.duration,
             chapter_count: b.chapters,
+            // MakeMKV reports a count but not the durations; those only arrive
+            // once the title has been ripped and probed.
+            chapters: Vec::new(),
             size_bytes: b.size,
             output_name: if b.output_name.is_empty() {
                 format!("title_t{id:02}.mkv")

@@ -583,9 +583,9 @@ mod tests {
             },
             label: "PARKS_AND_RECREATION_S7D1".into(),
             titles: vec![
-                DiscTitle { id: 0, duration: 2_550_000, chapter_count: 4, size_bytes: 0, output_name: "title_t00.mkv".into(), tracks: vec![] },
-                DiscTitle { id: 1, duration: 1_275_000, chapter_count: 2, size_bytes: 0, output_name: "title_t01.mkv".into(), tracks: vec![] },
-                DiscTitle { id: 2, duration: 1_275_000, chapter_count: 2, size_bytes: 0, output_name: "title_t02.mkv".into(), tracks: vec![] },
+                DiscTitle { id: 0, duration: 2_550_000, chapter_count: 4, chapters: vec![], size_bytes: 0, output_name: "title_t00.mkv".into(), tracks: vec![] },
+                DiscTitle { id: 1, duration: 1_275_000, chapter_count: 2, chapters: vec![], size_bytes: 0, output_name: "title_t01.mkv".into(), tracks: vec![] },
+                DiscTitle { id: 2, duration: 1_275_000, chapter_count: 2, chapters: vec![], size_bytes: 0, output_name: "title_t02.mkv".into(), tracks: vec![] },
             ],
         }
     }

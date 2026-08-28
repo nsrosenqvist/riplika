@@ -82,6 +82,13 @@ pub struct DiscTitle {
     pub id: u32,
     pub duration: Millis,
     pub chapter_count: usize,
+    /// Chapter durations, when the scanner can give them before ripping.
+    ///
+    /// MakeMKV reports only a count, but ffmpeg's `dvdvideo` demuxer reports
+    /// the durations - and those are what decomposes a play-all. Knowing them
+    /// in advance means the play-all itself never has to be read.
+    #[serde(default)]
+    pub chapters: Vec<Millis>,
     pub size_bytes: u64,
     /// The filename MakeMKV will give it, e.g. `title_t03.mkv`.
     pub output_name: String,

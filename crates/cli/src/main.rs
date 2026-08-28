@@ -16,6 +16,19 @@ struct Cli {
     cmd: Cmd,
 }
 
+/// Which program reads the disc.
+#[derive(clap::Args, Clone)]
+struct Source {
+    /// Disc reader: auto, dvd or makemkv.
+    ///
+    /// `dvd` uses ffmpeg's dvdvideo demuxer over libdvdread/libdvdnav/libdvdcss
+    /// and needs nothing proprietary, but reads DVDs only. `makemkv` also reads
+    /// Blu-ray, where there is no free equivalent. `auto` picks `dvd` for a
+    /// DVD and `makemkv` otherwise.
+    #[arg(long, default_value = "auto")]
+    reader: String,
+}
+
 #[derive(clap::Args, Clone)]
 struct Output {
     /// Where the finished files go.
@@ -54,11 +67,16 @@ struct Output {
 #[derive(Subcommand)]
 enum Cmd {
     /// List optical drives and what is in them.
-    Drives,
+    Drives {
+        #[command(flatten)]
+        source: Source,
+    },
     /// Show what is on a disc, without ripping it.
     Scan {
-        /// Drive, e.g. disc:0. Defaults to the first with a disc in it.
+        /// Drive, e.g. disc:0 or /dev/sr0. Defaults to the one with a disc in it.
         drive: Option<String>,
+        #[command(flatten)]
+        source: Source,
     },
     /// Work out what a disc is.
     Identify { drive: Option<String> },
@@ -217,8 +235,8 @@ fn main() {
 
 fn dispatch() -> Result<(), String> {
     match Cli::parse().cmd {
-        Cmd::Drives => run::drives(),
-        Cmd::Scan { drive } => run::scan(drive.as_deref()),
+        Cmd::Drives { source } => run::drives(&source.reader),
+        Cmd::Scan { drive, source } => run::scan(drive.as_deref(), &source.reader),
         Cmd::Identify { drive } => run::identify(drive.as_deref()),
         Cmd::Search { query, season } => run::search(&query, season),
         Cmd::Rip { drive, rip_dir, title, season, disc, dry_run, output } => run::rip(

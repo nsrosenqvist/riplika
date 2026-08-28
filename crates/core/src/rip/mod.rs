@@ -1,5 +1,7 @@
 //! Stage one: getting the disc onto disk.
 
+pub mod dvd;
+pub mod iso;
 pub mod makemkv;
 
 use crate::host::Runner;
@@ -219,8 +221,8 @@ TINFO:0,27,0,"title_t00.mkv"
             },
             label: "X".into(),
             titles: vec![
-                DiscTitle { id: 0, duration: 1000, chapter_count: 1, size_bytes: 0, output_name: "a.mkv".into(), tracks: vec![] },
-                DiscTitle { id: 1, duration: 1000, chapter_count: 1, size_bytes: 0, output_name: "b.mkv".into(), tracks: vec![] },
+                DiscTitle { id: 0, duration: 1000, chapter_count: 1, chapters: vec![], size_bytes: 0, output_name: "a.mkv".into(), tracks: vec![] },
+                DiscTitle { id: 1, duration: 1000, chapter_count: 1, chapters: vec![], size_bytes: 0, output_name: "b.mkv".into(), tracks: vec![] },
             ],
         };
         let f = FakeRipper::new(scan.clone());

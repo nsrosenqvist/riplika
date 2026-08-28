@@ -26,6 +26,12 @@ use std::sync::{Arc, Mutex};
 pub struct Command {
     pub program: String,
     pub args: Vec<String>,
+    /// Environment overrides for the child.
+    ///
+    /// Set on the command rather than on the process because these are
+    /// per-invocation decisions - `DVDCSS_METHOD` matters for reading a disc
+    /// and nothing else - and a process-wide setenv is not thread-safe.
+    pub env: Vec<(String, String)>,
 }
 
 impl Command {
@@ -33,7 +39,14 @@ impl Command {
         Command {
             program: program.into(),
             args: Vec::new(),
+            env: Vec::new(),
         }
+    }
+
+    /// Set an environment variable for this invocation only.
+    pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.push((key.into(), value.into()));
+        self
     }
 
     pub fn arg(mut self, a: impl Into<String>) -> Self {
@@ -91,7 +104,10 @@ impl Command {
                 s.clone()
             }
         };
-        std::iter::once(quote(&self.program))
+        self.env
+            .iter()
+            .map(|(k, v)| format!("{k}={}", quote(v)))
+            .chain(std::iter::once(quote(&self.program)))
             .chain(self.args.iter().map(quote))
             .collect::<Vec<_>>()
             .join(" ")
@@ -194,6 +210,9 @@ impl RealRunner {
     fn build(&self, cmd: &Command) -> StdCommand {
         let mut c = StdCommand::new(&cmd.program);
         c.args(&cmd.args);
+        for (k, v) in &cmd.env {
+            c.env(k, v);
+        }
         // Never let a child eat our stdin: see the module comment.
         c.stdin(Stdio::null());
         c
@@ -516,6 +535,17 @@ mod tests {
         let c = Command::new("ffmpeg")
             .args(["-i", "/tmp/a b.mkv", "-map", "0:s:0"]);
         assert_eq!(c.display(), "ffmpeg -i '/tmp/a b.mkv' -map 0:s:0");
+    }
+
+    #[test]
+    fn the_environment_shows_up_in_the_rendering_and_reaches_the_child() {
+        let c = Command::new("ffprobe").env("DVDCSS_METHOD", "key").arg("-i");
+        assert_eq!(c.display(), "DVDCSS_METHOD=key ffprobe -i");
+        // and it really is passed on, not just displayed
+        let out = RealRunner::default()
+            .run(&Command::new("sh").args(["-c", "printf %s \"$RIPLIKA_TEST\""]).env("RIPLIKA_TEST", "yes"))
+            .unwrap();
+        assert_eq!(out.stdout, "yes");
     }
 
     #[test]

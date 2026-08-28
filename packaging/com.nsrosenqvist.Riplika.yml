@@ -1,0 +1,117 @@
+# Flatpak manifest for Riplika.
+#
+# The sandbox shapes what this can be, in two ways worth stating plainly.
+#
+# MakeMKV cannot be bundled: it is proprietary, so redistributing it in this
+# manifest is not ours to do. Calling the host's copy would need
+# --talk-name=org.freedesktop.Flatpak, which is sandbox escape wearing a hat -
+# it would let this application run anything at all on the host, and claiming
+# to be sandboxed afterwards would be a lie. So the Flatpak is DVD-only, which
+# is workable precisely because the DVD path needs nothing proprietary:
+# libdvdread, libdvdnav and libdvdcss do the work, and ffmpeg exposes them.
+# Blu-ray needs the native build with makemkvcon on PATH.
+#
+# --device=all is required and is not a small permission. Flatpak has no
+# narrower option for an optical drive: --device=dri is the GPU, and there is
+# nothing for /dev/sr0 alone. Reading a disc means access to devices generally.
+app-id: com.nsrosenqvist.Riplika
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: riplika-gui
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/riplika/cargo
+
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # the optical drive; see the note above
+  - --device=all
+  # catalogue lookups against TVmaze and TMDB
+  - --share=network
+  # somewhere to write the library, and somewhere to put the working rip
+  - --filesystem=xdg-videos
+  - --filesystem=xdg-download
+
+modules:
+  # --- disc reading -------------------------------------------------------
+  - name: libdvdcss
+    sources:
+      - type: archive
+        url: https://download.videolan.org/pub/videolan/libdvdcss/1.6.0/libdvdcss-1.6.0.tar.xz
+        sha256: 7ea556c846b7bfc32d47b41cae56d1863a6b6d5f706bb162778d6f298490977c
+
+  - name: libdvdread
+    config-opts:
+      - --with-libdvdcss
+    sources:
+      - type: archive
+        url: https://download.videolan.org/pub/videolan/libdvdread/7.1.1/libdvdread-7.1.1.tar.xz
+        sha256: a0d47876548bec806774bbf8dbf20bb19ba139464383156b32eb8e59915b90a9
+
+  - name: libdvdnav
+    sources:
+      - type: archive
+        url: https://download.videolan.org/pub/videolan/libdvdnav/7.0.0/libdvdnav-7.0.0.tar.xz
+        sha256: a2a18f5ad36d133c74bf9106b6445806fa253b09141a46392550394b647b221e
+
+  # --- the tools the pipeline drives --------------------------------------
+  # ffmpeg must be built --enable-libdvdnav --enable-libdvdread: without them
+  # there is no dvdvideo demuxer and the application cannot read a disc at all.
+  - name: ffmpeg
+    config-opts:
+      - --enable-gpl
+      - --enable-version3
+      - --enable-shared
+      - --disable-static
+      - --disable-doc
+      - --disable-programs
+      - --enable-ffmpeg
+      - --enable-ffprobe
+      - --enable-libdvdnav
+      - --enable-libdvdread
+      - --enable-libx264
+      - --enable-libvorbis
+      - --enable-libopus
+    sources:
+      - type: archive
+        url: https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz
+        sha256: de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
+
+  # mkvextract, used to pull a VobSub track out as an .idx/.sub pair; ffmpeg
+  # cannot write that pair.
+  - name: mkvtoolnix
+    buildsystem: simple
+    build-commands:
+      - ./configure --prefix=/app --disable-gui --disable-qt
+      - rake -j$FLATPAK_BUILDER_N_JOBS
+      - rake install
+    sources:
+      - type: archive
+        url: https://mkvtoolnix.download/sources/mkvtoolnix-75.0.0.tar.xz
+        sha256: e7ad116f374cdf8370fa566ed7fe23ecdcf413dbe6dd90ab3f82904d0cf7516f
+
+  # --- the application ----------------------------------------------------
+  - name: riplika
+    buildsystem: simple
+    build-options:
+      env:
+        CARGO_NET_OFFLINE: 'true'
+    build-commands:
+      - cargo --offline build --release
+      - install -Dm755 target/release/riplika-gui /app/bin/riplika-gui
+      - install -Dm755 target/release/riplika /app/bin/riplika
+      - install -Dm644 data/com.nsrosenqvist.Riplika.desktop
+          /app/share/applications/com.nsrosenqvist.Riplika.desktop
+    sources:
+      - type: dir
+        path: ..
+      # generated with flatpak-cargo-generator.py from Cargo.lock
+      - cargo-sources.json

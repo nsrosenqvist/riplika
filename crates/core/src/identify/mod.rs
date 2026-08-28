@@ -346,6 +346,7 @@ mod tests {
                     id: i as u32,
                     duration: *d,
                     chapter_count: 6,
+                    chapters: Vec::new(),
                     size_bytes: 0,
                     output_name: format!("title_t{i:02}.mkv"),
                     tracks: vec![],

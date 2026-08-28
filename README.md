@@ -57,8 +57,10 @@ everything would work for a script and be useless for a window.
 
 ## Install
 
-Needs `ffmpeg`, `ffprobe` and `mkvextract` on `PATH`, plus `makemkvcon` to read
-discs. A `.idx`/`.sub` pair can be read with no external tools.
+Needs `ffmpeg`, `ffprobe` and `mkvextract` on `PATH`. ffmpeg must be built
+`--enable-libdvdnav --enable-libdvdread` to read DVDs, which is the usual
+packaging. `makemkvcon` is needed only for Blu-ray - see [Reading
+discs](#reading-discs). A `.idx`/`.sub` pair can be read with no external tools.
 
 ```
 cargo build --release
@@ -70,6 +72,10 @@ cargo build --release
 riplika drives                     # what is connected, and what is loaded
 riplika scan                       # titles on the disc, without ripping it
 riplika identify                   # what the disc appears to be, and why
+
+# --reader picks who reads the disc: auto (default), dvd, or makemkv.
+# "dvd" needs nothing proprietary; "makemkv" is the only one that does Blu-ray.
+riplika scan --reader dvd
 
 # the whole pipeline
 riplika rip --languages english,swedish --video medium --audio high \
@@ -84,6 +90,133 @@ riplika process ~/rips/parks-s7d1 --title "Parks and Recreation" --season 7 \
 one will be called - and stops. Worth doing once per disc.
 
 Set `TMDB_API_KEY` to add film lookup; TV works with no key at all via TVmaze.
+
+## Reading discs
+
+MakeMKV is proprietary, so it is worth knowing exactly what it is needed for.
+
+| | DVD | Blu-ray |
+|---|---|---|
+| free software | **yes**, and it is the default | **no** |
+| what does it | libdvdread + libdvdnav + libdvdcss, through ffmpeg's `dvdvideo` demuxer | MakeMKV |
+
+`--reader dvd` needs nothing beyond an ffmpeg built `--enable-libdvdnav
+--enable-libdvdread`, which is the usual packaging. `--reader makemkv` is still
+there and is still the only option for Blu-ray. `auto`, the default, looks for a
+`VIDEO_TS` directory and picks the free path when it finds one.
+
+Verified on a Parks and Recreation season 7 disc: the free reader finds the same
+titles MakeMKV does - seven 21-minute episodes, the 43-minute and 107-minute
+play-alls, the 27-minute extended cut and the extras.
+
+### Why Blu-ray is different
+
+`libbluray` reads the structure but does no decryption. That needs `libaacs`,
+which is free software shipping no keys - you supply a `KEYDB.cfg` of volume
+unique keys assembled by third parties, which is always incomplete and always
+behind - and `libbdplus`, which needs conversion tables, for the BD+ titles that
+most studios use. AACS 2.0 on UHD discs is out of reach entirely. MakeMKV
+implements both and is maintained against new releases, and nothing free is
+close. This is a real gap, not a packaging inconvenience.
+
+### What MakeMKV still does that the free path cannot
+
+Two things, and both are real.
+
+**Region.** libdvdcss does the player-key exchange with the drive, and an RPC-2
+drive can refuse it when the disc's region does not match the region the drive
+is set to. A drive can only be set to one region, and only a few times. MakeMKV
+talks to the drive itself and does not care, which is why it is the one that
+copes with a shelf holding both Region 1 and Region 2 discs.
+
+**Damage.** MakeMKV retries unreadable sectors and carries on past the ones it
+cannot get. libdvdread mostly gives up. That covers scratched discs and also the
+deliberately corrupt sectors some copy protections write to break naive rippers.
+
+Losing either of those *silently* would be worse than not having the free path
+at all, because both fail the same way: the scan succeeds and quietly returns
+fewer titles. So `auto` watches for the signature - `Error cracking CSS key`,
+unreadable sectors - abandons the scan the moment it appears, and hands the disc
+to MakeMKV:
+
+```
+reader: ffmpeg dvdvideo (makemkv in reserve)
+  the free reader could not read this disc fully:
+    libdvdcss could not decrypt parts of the disc (/VIDEO_TS/VTS_06_1.VOB) -
+    titles in those parts are missing from this scan
+  handing it to makemkv, which works around this
+```
+
+With `--reader dvd` there is no fallback, so it stops with the same complaint
+rather than pretending. Keep MakeMKV installed; the free path just means it is
+not on the critical path for an ordinary DVD.
+
+### Two things that make the free DVD path work
+
+Both were found by running it against a real disc, and both fail in the same
+dangerous way - a scan that succeeds and quietly returns a season with no
+episodes in it.
+
+**`DVDCSS_METHOD=key`.** libdvdcss defaults to cracking title keys by brute
+force. On this disc that failed for exactly the VTSs holding the episodes:
+
+```
+libdvdnav: Error cracking CSS key for /VIDEO_TS/VTS_06_1.VOB (0x000651ea)
+```
+
+The scan then returns the extras and nothing else, which looks like a disc that
+simply has no episodes on it. Asking for the proper player-key exchange with the
+drive decrypts everything, and is faster.
+
+**The title count comes from the disc.** DVD title numbering is not contiguous.
+This disc has content at titles 2-19 and again at 39-58, with a seventeen-title
+hole in between, so any stop-after-N-empty-titles rule gives up in the hole -
+losing every episode, since they are at 41-47. Probing all 99 instead is safe
+but slow. So `rip/iso.rs` walks ISO 9660 to `VIDEO_TS.IFO` and reads the title
+table, which costs three sector reads and gives an exact count:
+
+```
+number of titles: 58
+  title 41: chapters=5  vts=11 ttn=2      <- episode
+  title 48: chapters=21 vts=11 ttn=9      <- the play-all
+```
+
+That table also carries chapter counts, and the demuxer reports chapter
+*durations* - which MakeMKV's scan does not. Those are what decompose a
+play-all, so a disc can in principle be sorted out before anything is read, and
+the play-all title never ripped at all. On this disc that is two and a half
+hours of redundant reading.
+
+## Flatpak
+
+`packaging/com.nsrosenqvist.Riplika.yml` builds the window against
+`org.gnome.Platform`, bundling libdvdcss, libdvdread, libdvdnav, ffmpeg and
+mkvextract.
+
+Two things about it are worth knowing before you rely on it.
+
+**It is DVD-only.** MakeMKV cannot be bundled - it is proprietary, so
+redistributing it is not ours to do - and reaching the host's copy would need
+`--talk-name=org.freedesktop.Flatpak`, which lets the application run anything
+at all on the host. Claiming to be sandboxed after that would be a lie. The
+Flatpak is coherent precisely because the DVD path needs nothing proprietary;
+for Blu-ray, use the native build.
+
+**`--device=all` is required.** Flatpak has no narrower permission for an
+optical drive: `--device=dri` is the GPU and there is nothing for `/dev/sr0`
+alone. Reading a disc means granting access to devices generally.
+
+I have not built it. `flatpak-builder` is not installed here, so the manifest is
+structurally right and its checksums are real and verified against upstream's
+published sums, but it has never been through a build. Expect the ffmpeg and
+mkvtoolnix modules to need adjusting.
+
+```sh
+flatpak install org.gnome.Platform//50 org.gnome.Sdk//50 \
+                org.freedesktop.Sdk.Extension.rust-stable//25.08
+python3 flatpak-cargo-generator.py Cargo.lock -o packaging/cargo-sources.json
+flatpak-builder --install --user build packaging/com.nsrosenqvist.Riplika.yml
+```
 
 ## Identification
 
