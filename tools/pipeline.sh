@@ -5,6 +5,7 @@
 #   <source-stem>|<episode label>|<part number>|<title>|<air date>|<extended yes/no>
 set -u
 RIP="$1"; OUT="$2"; MAP="$3"; TABLE="$4"; SEASON="$5"; TOTAL="$6"
+VQ="${7:-medium}"; AQ="${8:-high}"; EXTRA="${9:-}"
 RIPPER="$(dirname "$0")/../target/release/ripper"
 mkdir -p "$OUT/extras"
 
@@ -23,9 +24,8 @@ while IFS='|' read -r stem label part title date ext <&3; do
   fi
 
   echo "### $stem -> $(basename "$dest")"
-  HandBrakeCLI -i "$src" -o "$dest.tmp.mp4" -e x264 -q 20 --encoder-profile main \
-      --detelecine -a 1 -E av_aac -B 160 --mixdown stereo -s 1,2 --optimize \
-      </dev/null >/dev/null 2>&1 || { echo "  TRANSCODE FAILED"; continue; }
+  "$(dirname "$0")/encode.sh" "$src" "$dest.tmp.mp4" "$VQ" "$AQ" $EXTRA \
+      </dev/null 2>&1 | sed 's/^/    /' || { echo "  TRANSCODE FAILED"; continue; }
 
   # recognise the English VobSub and embed it as a default text track
   srt="$dest.srt"
@@ -44,7 +44,7 @@ while IFS='|' read -r stem label part title date ext <&3; do
   # metadata, matching the rest of the library
   # -map 0 keeps every stream: without it ffmpeg's default selection drops the
   # text track that was just embedded
-  ffmpeg -v error -y -nostdin -i "$dest" -map 0 -c copy \
+  ffmpeg -v error -y -nostdin -i "$dest" -map 0:v -map 0:a -map 0:s -dn -c copy \
     -metadata title="$disp" \
     -metadata show="Parks and Recreation" \
     -metadata season_number="$((10#$SEASON))" \

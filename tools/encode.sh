@@ -14,8 +14,11 @@
 #   faststart moov atom at the front, HandBrake's "web optimized"
 #
 # Usage: encode.sh <input> <output> [video: high|medium|low] [audio: high|medium|low]
+#                  [--dual-audio]
 set -euo pipefail
 IN="$1"; OUT="$2"; VQ="${3:-medium}"; AQ="${4:-high}"
+DUAL=0
+for arg in "$@"; do [ "$arg" = "--dual-audio" ] && DUAL=1; done
 
 # Video tiers. DVD is 720x480 MPEG-2 at 4-6 Mb/s, so the useful range is narrow:
 # by CRF 18 the encode is transparent against the source and further bits mostly
@@ -37,6 +40,30 @@ case "$AQ" in
   low)    AOPTS=(-c:a aac -b:a 96k  -ac 2) ;;
   *) echo "audio quality must be high, medium or low" >&2; exit 2 ;;
 esac
+
+# How many audio tracks the source has, so the extra stereo track can be given
+# the right output index
+NAUD=$(ffprobe -v error -select_streams a -show_entries stream=index \
+        -of csv=p=0 "$IN" | grep -c . || true)
+AMAPS=(-map 0:a)
+
+# --dual-audio adds an AAC stereo track alongside the untouched original. AC3
+# cannot be decoded by any browser, so without this a web client makes the
+# server transcode audio; with it there is a track every client can take.
+# The original stays first and default, so capable players still get 5.1.
+if [ "$DUAL" = "1" ]; then
+  if [ "$AQ" != "high" ]; then
+    echo "  note: --dual-audio only applies to audio high; ignoring"
+  else
+    AMAPS+=(-map 0:a:0)
+    # No track title: MP4 cannot carry one through ffmpeg's muxer, unlike
+    # Matroska. Players tell the two apart by codec and channel count anyway.
+    AOPTS=(-c:a copy
+           -c:a:$NAUD aac -b:a:$NAUD 160k -ac:a:$NAUD 2
+           -disposition:a:$NAUD 0)
+    echo "  dual audio: original + AAC stereo fallback"
+  fi
+fi
 
 echo "  video: $VQ (crf $CRF)   audio: $AQ"
 
@@ -116,7 +143,7 @@ PYEOF
 echo "  pixel aspect: $sar"
 
 ffmpeg -nostdin -v error -y -i "$IN" \
-  -map 0:v:0 -map 0:a -map 0:s? -dn \
+  -map 0:v:0 "${AMAPS[@]}" -map 0:s? -dn \
   -vf "${ivtc}${crop}setsar=${sar}" \
   ${rate:+-fps_mode cfr -r $rate} \
   -c:v libx264 -crf "$CRF" -preset medium -profile:v high -level 4.0 \
@@ -125,4 +152,5 @@ ffmpeg -nostdin -v error -y -i "$IN" \
   -movflags +faststart \
   "$OUT"
 
-echo "  $(basename "$OUT"): $(ffprobe -v error -show_entries format=size,bit_rate -of csv=p=0 "$OUT")"
+sz=$(stat -c%s "$OUT")
+echo "  wrote $(basename "$OUT"): $((sz / 1048576)) MB"
