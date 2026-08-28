@@ -133,7 +133,13 @@ impl<'a> Pipeline<'a> {
 
     pub fn scan(&self, drive: &Drive, events: Events) -> Result<DiscScan> {
         events(Event::Stage(Stage::Scan));
-        self.ports.ripper.scan(drive)
+        self.ports.ripper.scan(drive, &mut |fraction, message| {
+            events(Event::Progress {
+                stage: Stage::Scan,
+                fraction,
+                message: message.map(str::to_string),
+            });
+        })
     }
 
     /// Guess what the disc is. Never fatal: an unidentified disc can still be

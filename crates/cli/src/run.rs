@@ -127,7 +127,21 @@ pub fn scan(drive: Option<&str>, which: &str) -> Result<(), String> {
     let real = Real::new();
     let r = reader(which, &real.runner)?;
     let d = pick_drive(r.as_ref(), drive)?;
-    let scan = r.scan(&d).map_err(|e| e.to_string())?;
+    // The scan probes each title in turn; on a full disc that is minutes, so
+    // it says where it has got to rather than sitting silent.
+    let mut last = String::new();
+    let scan = r
+        .scan(&d, &mut |fraction, message| {
+            use std::io::Write;
+            let line = format!("\r\x1b[K  {:>3.0}%  {}", fraction * 100.0, message.unwrap_or(""));
+            if line != last {
+                print!("{line}");
+                let _ = std::io::stdout().flush();
+                last = line;
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    println!("\r\x1b[K");
     println!("{}  ({} titles)\n", scan.label, scan.titles.len());
     for t in &scan.titles {
         let audio = t.tracks.iter().filter(|x| x.kind == riplika_core::model::TrackKind::Audio).count();
@@ -167,7 +181,7 @@ pub fn identify(drive: Option<&str>) -> Result<(), String> {
     let real = Real::new();
     let mk = MakeMkv::new(&real.runner);
     let d = pick_drive(&mk, drive)?;
-    let scan = mk.scan(&d).map_err(|e| e.to_string())?;
+    let scan = mk.scan(&d, &mut |_, _| {}).map_err(|e| e.to_string())?;
     let cat = real.catalogues();
     let cands = riplika_core::identify::identify(&scan, &cat).map_err(|e| e.to_string())?;
     println!("{}\n", scan.label);
@@ -540,7 +554,11 @@ mod tests {
         fn drives(&self) -> riplika_core::Result<Vec<Drive>> {
             Ok(self.0.clone())
         }
-        fn scan(&self, _: &Drive) -> riplika_core::Result<DiscScan> {
+        fn scan(
+            &self,
+            _: &Drive,
+            _: &mut dyn FnMut(f32, Option<&str>),
+        ) -> riplika_core::Result<DiscScan> {
             Err("not used".into())
         }
         fn rip(

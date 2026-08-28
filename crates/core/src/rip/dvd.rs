@@ -336,14 +336,18 @@ impl DvdVideo<'_> {
     /// would spend several minutes assembling a title list that is missing
     /// whole video title sets, and the caller almost certainly wants to hand
     /// the disc to MakeMKV instead.
-    pub fn scan_checked(&self, drive: &Drive) -> Result<(DiscScan, ScanHealth)> {
+    pub fn scan_checked(
+        &self,
+        drive: &Drive,
+        progress: &mut dyn FnMut(f32, Option<&str>),
+    ) -> Result<(DiscScan, ScanHealth)> {
         // Try each decryption method in turn. They answer different problems -
         // a region-locked drive refuses the handshake, a cracking-resistant
         // disc defeats the brute force - so a disc that one cannot read is
         // often trivial for the next.
         let mut last: Option<(DiscScan, ScanHealth)> = None;
         for method in CSS_METHODS {
-            let attempt = self.scan_with(drive, method)?;
+            let attempt = self.scan_with(drive, method, progress)?;
             if attempt.1.is_trustworthy() {
                 return Ok(attempt);
             }
@@ -357,7 +361,12 @@ impl DvdVideo<'_> {
     }
 
     /// One scan attempt with one decryption method.
-    pub fn scan_with(&self, drive: &Drive, method: &str) -> Result<(DiscScan, ScanHealth)> {
+    pub fn scan_with(
+        &self,
+        drive: &Drive,
+        method: &str,
+        progress: &mut dyn FnMut(f32, Option<&str>),
+    ) -> Result<(DiscScan, ScanHealth)> {
         let device = PathBuf::from(&drive.device);
         let mut health = ScanHealth {
             method: method.to_string(),
@@ -377,7 +386,14 @@ impl DvdVideo<'_> {
         health.declared = numbers.len();
 
         let mut titles = Vec::new();
-        for n in numbers {
+        let total = health.declared.max(1) as f32;
+        for (done, n) in numbers.into_iter().enumerate() {
+            // Each probe is a real fraction of the work, and there are up to 99
+            // of them, so this is genuine progress rather than a guess.
+            progress(
+                done as f32 / total,
+                Some(&format!("title {n} of {}", health.declared)),
+            );
             let out = self.runner.run(&probe_command_with(&device, n, method))?;
             inspect_stderr(&out.stderr, &mut health);
             if !health.is_trustworthy() {
@@ -396,6 +412,7 @@ impl DvdVideo<'_> {
             }
         }
         health.decoded = titles.len();
+        progress(1.0, None);
 
         if titles.is_empty() {
             return Err(Error(format!(
@@ -565,8 +582,12 @@ impl super::Ripper for DvdVideo<'_> {
             .collect())
     }
 
-    fn scan(&self, drive: &Drive) -> Result<DiscScan> {
-        self.scan_checked(drive).map(|(s, _)| s)
+    fn scan(
+        &self,
+        drive: &Drive,
+        progress: &mut dyn FnMut(f32, Option<&str>),
+    ) -> Result<DiscScan> {
+        self.scan_checked(drive, progress).map(|(s, _)| s)
     }
 
     fn rip(
@@ -703,7 +724,7 @@ pub(crate) mod tests {
             r = r.on(&format!("-title {n} "), EPISODE);
         }
         let d = DvdVideo { runner: &r, max_title: 58 };
-        let scan = d.scan(&drive()).unwrap();
+        let scan = d.scan(&drive(), &mut |_, _| {}).unwrap();
         assert_eq!(
             scan.titles.iter().map(|t| t.id).collect::<Vec<_>>(),
             vec![2, 41, 42, 43, 44, 45, 46, 47]
@@ -714,7 +735,7 @@ pub(crate) mod tests {
     fn an_empty_drive_is_an_error_not_an_empty_scan() {
         let r = FakeRunner::new();
         let d = DvdVideo { runner: &r, max_title: 12 };
-        assert!(d.scan(&drive()).unwrap_err().0.contains("no titles"));
+        assert!(d.scan(&drive(), &mut |_, _| {}).unwrap_err().0.contains("no titles"));
     }
 
     #[test]
@@ -896,7 +917,7 @@ mod health_tests {
         // pressing on would spend minutes building a list we know is short
         let r = FakeRunner::new().fail("ffprobe", CSS_FAILURE);
         let d = DvdVideo { runner: &r, max_title: 58 };
-        let (_, health) = d.scan_checked(&drive()).unwrap();
+        let (_, health) = d.scan_checked(&drive(), &mut |_, _| {}).unwrap();
         assert!(!health.is_trustworthy());
         // one probe per decryption method: each attempt is abandoned the moment
         // it fails, but a method that fails is not the end - the next one
@@ -908,7 +929,7 @@ mod health_tests {
     fn the_plain_scan_still_succeeds_on_a_healthy_disc() {
         let r = FakeRunner::new().on("-title 1 ", super::tests::EPISODE);
         let d = DvdVideo { runner: &r, max_title: 3 };
-        assert_eq!(d.scan(&drive()).unwrap().titles.len(), 1);
+        assert_eq!(d.scan(&drive(), &mut |_, _| {}).unwrap().titles.len(), 1);
     }
 }
 
@@ -942,7 +963,7 @@ mod tolerance_tests {
             .on("DVDCSS_METHOD=disc", tests::EPISODE);
         let mut d = DvdVideo::new(&r);
         d.max_title = 1;
-        let (scan, health) = d.scan_checked(&drive()).unwrap();
+        let (scan, health) = d.scan_checked(&drive(), &mut |_, _| {}).unwrap();
         assert!(health.is_trustworthy());
         assert_eq!(health.method, "disc");
         assert_eq!(scan.titles.len(), 1);
@@ -953,7 +974,7 @@ mod tolerance_tests {
         let r = FakeRunner::new().fail("ffprobe", REGION_REFUSED);
         let mut d = DvdVideo::new(&r);
         d.max_title = 1;
-        let (_, health) = d.scan_checked(&drive()).unwrap();
+        let (_, health) = d.scan_checked(&drive(), &mut |_, _| {}).unwrap();
         assert!(!health.is_trustworthy());
         // and it tried everything before giving up
         assert_eq!(r.calls().len(), CSS_METHODS.len());
@@ -1082,5 +1103,54 @@ mod advice_tests {
         let advice = rescue_advice(Path::new("/dev/riplika-no-such-device"), 41);
         assert!(advice.contains("riplika rescue"), "{advice}");
         assert!(advice.contains("/dev/riplika-no-such-device"), "{advice}");
+    }
+}
+
+#[cfg(test)]
+mod scan_progress_tests {
+    use super::*;
+    use crate::host::FakeRunner;
+    use crate::rip::Ripper;
+
+    fn drive() -> Drive {
+        Drive {
+            id: "/dev/riplika-no-such-device".into(),
+            device: "/dev/riplika-no-such-device".into(),
+            name: "d".into(),
+            disc_label: Some("DISC".into()),
+        }
+    }
+
+    #[test]
+    fn a_scan_reports_where_it_has_got_to() {
+        // A scan probes each title in turn and takes minutes on a full disc.
+        // Reporting nothing leaves a progress bar that never moves, which reads
+        // as a hung application.
+        let mut r = FakeRunner::new();
+        for n in 1..=8 {
+            r = r.on(&format!("-title {n} "), tests::EPISODE);
+        }
+        let d = DvdVideo { runner: &r, max_title: 8 };
+        let mut seen: Vec<f32> = Vec::new();
+        d.scan(&drive(), &mut |f, _| seen.push(f)).unwrap();
+
+        assert!(seen.len() > 1, "only {} report(s)", seen.len());
+        assert_eq!(seen.first().copied(), Some(0.0));
+        assert_eq!(seen.last().copied(), Some(1.0), "must finish at 100%");
+        assert!(seen.windows(2).all(|w| w[0] <= w[1]), "went backwards: {seen:?}");
+    }
+
+    #[test]
+    fn progress_names_the_title_being_probed() {
+        let r = FakeRunner::new().on("-title 1 ", tests::EPISODE);
+        let d = DvdVideo { runner: &r, max_title: 3 };
+        let mut messages: Vec<String> = Vec::new();
+        d.scan(&drive(), &mut |_, m| {
+            if let Some(m) = m {
+                messages.push(m.to_string());
+            }
+        })
+        .unwrap();
+        assert!(messages.iter().any(|m| m.contains("title 1")), "{messages:?}");
     }
 }

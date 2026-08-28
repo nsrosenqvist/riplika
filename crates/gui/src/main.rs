@@ -135,7 +135,26 @@ fn hms(ms: u64) -> String {
     format!("{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
 }
 
+/// A comfortable measure for a page of form rows.
+///
+/// Wide enough that a label and its control are not squeezed together, narrow
+/// enough that the eye does not have to travel the width of a maximised window
+/// to get from one to the other.
+const CONTENT_WIDTH: i32 = 860;
+
+/// Narrower, for a page that is a handful of centred things rather than a form.
+const FOCUSED_WIDTH: i32 = 560;
+
 fn page(tag: &str, title: &str, child: &impl IsA<gtk::Widget>) -> adw::NavigationPage {
+    page_clamped(tag, title, child, CONTENT_WIDTH)
+}
+
+fn page_clamped(
+    tag: &str,
+    title: &str,
+    child: &impl IsA<gtk::Widget>,
+    width: i32,
+) -> adw::NavigationPage {
     let view = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     // Reachable from every step: the languages you prefer are most obviously
@@ -152,8 +171,8 @@ fn page(tag: &str, title: &str, child: &impl IsA<gtk::Widget>) -> adw::Navigatio
     // content is held to a comfortable measure and centred, which is what the
     // platform's own preference pages do.
     let clamp = adw::Clamp::builder()
-        .maximum_size(560)
-        .tightening_threshold(400)
+        .maximum_size(width)
+        .tightening_threshold(width / 2)
         // so a page that wants to centre itself vertically has the height to
         // do it in, rather than being sized to its own content
         .vexpand(true)
@@ -388,7 +407,9 @@ fn build_ui() -> Ui {
     // log fills up.
     prog_body.set_valign(gtk::Align::Center);
     prog_body.set_vexpand(true);
-    nav.add(&page(Step::Progress.tag(), "Working", &prog_body));
+    // Narrower than a form page: this is a heading, a bar and a list, and they
+    // read better as a column than spread across the window.
+    nav.add(&page_clamped(Step::Progress.tag(), "Working", &prog_body, FOCUSED_WIDTH));
 
     // --- and what came out ------------------------------------------------
     let res_body = body();
