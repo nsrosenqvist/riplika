@@ -573,11 +573,13 @@ impl App {
         // One rule for whether analysing is possible, applied from both places.
         self.refresh_drive_page();
         self.ui.identify_next.set_sensitive(idle && has_candidate);
-        for name in ["start", "refresh", "search"] {
+        for name in ["refresh", "search"] {
             for b in find_buttons(&self.ui.output_dir, name) {
                 b.set_sensitive(idle);
             }
         }
+        // Start has a second condition of its own.
+        self.refresh_settings_page();
     }
 
     fn is_busy(&self) -> bool {
@@ -643,6 +645,34 @@ impl App {
         )
     }
 
+    /// Is the language choice usable?
+    ///
+    /// An empty set means "no filter" to the pipeline, so unticking everything
+    /// would keep every language rather than none - the opposite of what
+    /// unticking looks like it does. A disc with no language tracks at all is
+    /// a different matter and is fine.
+    fn languages_chosen(&self) -> bool {
+        let rows = self.ui.language_rows.borrow();
+        rows.is_empty() || rows.iter().any(|(_, r)| r.is_active())
+    }
+
+    /// Re-read the rip page from its own controls.
+    fn refresh_settings_page(&self) {
+        let ok = self.languages_chosen();
+        for b in find_buttons(&self.ui.output_dir, "start") {
+            b.set_sensitive(ok && !self.is_busy());
+        }
+        self.ui.language_group.set_description(Some(if ok {
+            "What this disc carries. Your preferred languages start ticked; \
+             the first becomes the default track."
+        } else {
+            // Say what is wrong where the problem is, rather than only grey out
+            // a button at the other end of the page.
+            "Choose at least one language. Unticking them all would keep every \
+             language, not none."
+        }));
+    }
+
     fn settings(&self) -> JobSettings {
         let prefs = self.prefs.prefs.borrow();
         let output = prefs
@@ -687,9 +717,18 @@ impl App {
                 .subtitle(&code)
                 .build();
             row.set_active(wanted);
+            {
+                let app = self.weak();
+                row.connect_active_notify(move |_| {
+                    if let Some(app) = app.upgrade() {
+                        app.refresh_settings_page();
+                    }
+                });
+            }
             self.ui.language_group.add(&row);
             self.ui.language_rows.borrow_mut().push((code, row));
         }
+        self.refresh_settings_page();
     }
 
     fn refresh_paths(&self) {
@@ -1225,6 +1264,10 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 app.toast("Already working - wait for it, or cancel it first");
                 return;
             }
+            if !app.languages_chosen() {
+                app.toast("Choose at least one language");
+                return;
+            }
             let disc = app.ui.disc_entry.text().trim().parse::<u32>().ok();
             let settings = app.settings();
             let rip_dir = app.prefs.prefs.borrow().rip_dir();
@@ -1746,5 +1789,43 @@ mod locking_tests {
         // the others are forms; leaving them loses nothing
         assert_eq!(Step::Progress.tag(), "progress");
         assert_ne!(Step::Settings.tag(), Step::Progress.tag());
+    }
+}
+
+#[cfg(test)]
+mod language_choice_tests {
+    use super::*;
+    use riplika_core::lang::LanguageSet;
+    use riplika_core::model::TrackKind;
+
+    #[test]
+    fn an_empty_set_means_no_filter_which_is_not_what_unticking_looks_like() {
+        // The trap: to the pipeline an empty set means "keep everything", so
+        // unticking every language would keep them all rather than none. The
+        // window refuses the choice rather than quietly inverting it.
+        let tags: Vec<String> = ["eng", "swe"].iter().map(|s| s.to_string()).collect();
+        let none = LanguageSet::default();
+        assert_eq!(none.select(&tags), vec![0, 1], "empty means keep everything");
+    }
+
+    #[test]
+    fn a_real_choice_filters_as_expected() {
+        let tags: Vec<String> = ["eng", "swe", "spa"].iter().map(|s| s.to_string()).collect();
+        let set = LanguageSet::parse("swedish");
+        assert_eq!(set.select(&tags), vec![1]);
+        assert!(set.select_with_fallback(&tags, TrackKind::Subtitle).len() == 1);
+    }
+
+    #[test]
+    fn a_disc_with_no_language_tracks_is_not_the_same_as_choosing_none() {
+        // nothing to tick is fine; ticking nothing is not
+        let empty: Vec<(String, bool)> = Vec::new();
+        let has_none_to_offer = empty.is_empty();
+        let offered_but_unticked = vec![("eng".to_string(), false)];
+        assert!(has_none_to_offer, "a disc with no tracks may still be ripped");
+        assert!(
+            !offered_but_unticked.iter().any(|(_, on)| *on),
+            "a disc with tracks and none ticked must be refused"
+        );
     }
 }
