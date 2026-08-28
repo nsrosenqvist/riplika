@@ -129,6 +129,7 @@ struct Ui {
     disc_entry: adw::EntryRow,
     stage_label: gtk::Label,
     progress: gtk::ProgressBar,
+    progress_text: gtk::Label,
     log: gtk::TextView,
     log_scroll: gtk::ScrolledWindow,
     cancel_button: gtk::Button,
@@ -429,7 +430,24 @@ fn build_ui() -> Ui {
         .wrap(true)
         .build();
     stage_label.add_css_class("title-2");
-    let progress = gtk::ProgressBar::builder().show_text(true).build();
+    // Our own label rather than the bar's own text. GtkProgressBar draws its
+    // text as a node inside itself, so the space between the two is whatever
+    // the theme says and can only be changed by overriding it. A label above
+    // the bar can be spaced, sized and ellipsised like any other.
+    let progress_text = gtk::Label::builder()
+        .label("")
+        .justify(gtk::Justification::Center)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    progress_text.add_css_class("dim-label");
+    progress_text.add_css_class("caption");
+    let progress = gtk::ProgressBar::new();
+    let progress_block = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(6)
+        .build();
+    progress_block.append(&progress_text);
+    progress_block.append(&progress);
     // A list row per line is enormous furniture for one line of text, and a
     // long run produces hundreds. This is a log; it should look like one and
     // stay out of the way of the thing that matters, which is the progress bar.
@@ -465,7 +483,7 @@ fn build_ui() -> Ui {
         .spacing(18)
         .build();
     focus.append(&stage_label);
-    focus.append(&progress);
+    focus.append(&progress_block);
     // Directly under the bar: it is the page's only action, and putting it
     // below the log made its position depend on how much had been logged.
     focus.append(&cancel_button);
@@ -521,6 +539,7 @@ fn build_ui() -> Ui {
         disc_entry,
         stage_label,
         progress,
+        progress_text,
         log,
         log_scroll,
         cancel_button,
@@ -996,6 +1015,7 @@ impl App {
             Event::Stage(s) => {
                 self.ui.stage_label.set_label(s.label());
                 self.ui.progress.set_fraction(0.0);
+                self.ui.progress_text.set_label("");
                 // Each stage reads at its own rate, so an estimate carried over
                 // from the last one would be wrong in a way that looks precise.
                 self.state.borrow_mut().eta = riplika_core::job::Eta::new();
@@ -1012,10 +1032,11 @@ impl App {
                 if let Some(left) = remaining {
                     parts.push(riplika_core::job::describe_remaining(left));
                 }
-                self.ui.progress.set_text(Some(&parts.join("  \u{b7}  ")));
+                self.ui.progress_text.set_label(&parts.join("  \u{b7}  "));
             }
             Event::ItemStarted { index, total, name } => {
                 self.ui.progress.set_fraction(index as f64 / total.max(1) as f64);
+                self.ui.progress_text.set_label(&format!("{} of {}", index + 1, total));
                 self.log_line(&format!("[{}/{}] {name}", index + 1, total));
             }
             Event::ItemFinished { destination, bytes, .. } => {
