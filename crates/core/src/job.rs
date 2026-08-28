@@ -164,18 +164,32 @@ impl<'a> Pipeline<'a> {
     pub fn rip(&self, scan: &DiscScan, dest: &Path, events: Events) -> Result<Vec<PathBuf>> {
         events(Event::Stage(Stage::Rip));
         self.ports.fs.create_dir_all(dest)?;
-        self.ports.ripper.rip(
-            &scan.drive,
-            &scan.titles,
-            dest,
-            &mut |fraction, message| {
+        let outcome = {
+            let mut report = |fraction: f32, message: Option<&str>| {
                 events(Event::Progress {
                     stage: Stage::Rip,
                     fraction,
                     message: message.map(str::to_string),
                 });
-            },
-        )
+            };
+            self.ports
+                .ripper
+                .rip(&scan.drive, &scan.titles, dest, &mut report)?
+        };
+
+        // Titles that could not be read are reported, not thrown: a disc is
+        // mostly menus and transitions, and losing one of those should not cost
+        // the episodes.
+        for (id, why) in &outcome.failed {
+            events(Event::Warning(format!("title {id} could not be read: {why}")));
+        }
+        if outcome.written.is_empty() {
+            return Err(Error(format!(
+                "nothing could be read from the disc ({} titles failed)",
+                outcome.failed.len()
+            )));
+        }
+        Ok(outcome.written)
     }
 
     /// Stages two and three: sort the ripped files out and name them.

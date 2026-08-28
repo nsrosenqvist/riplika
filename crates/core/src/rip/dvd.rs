@@ -596,10 +596,10 @@ impl super::Ripper for DvdVideo<'_> {
         titles: &[DiscTitle],
         dest: &Path,
         progress: &mut dyn FnMut(f32, Option<&str>),
-    ) -> Result<Vec<PathBuf>> {
+    ) -> Result<super::RipOutcome> {
         std::fs::create_dir_all(dest).map_err(|e| Error(format!("{}: {e}", dest.display())))?;
         let device = PathBuf::from(&drive.device);
-        let mut written = Vec::new();
+        let mut outcome = super::RipOutcome::default();
 
         for (n, title) in titles.iter().enumerate() {
             let out_path = dest.join(&title.output_name);
@@ -608,12 +608,18 @@ impl super::Ripper for DvdVideo<'_> {
 
             let mut report = |p: f32, m: &str| progress(base + p * span, Some(m));
             match self.rip_one(&device, title, &out_path, &mut report) {
-                Ok(()) => written.push(out_path),
-                Err(e) => return Err(Error(format!("title {}: {e}", title.id))),
+                Ok(()) => outcome.written.push(out_path),
+                // A disc is mostly menus and transitions, and one of them being
+                // unreadable is not a reason to abandon the episodes. The
+                // failure is carried out so the caller can say so.
+                Err(e) => {
+                    let _ = std::fs::remove_file(&out_path);
+                    outcome.failed.push((title.id, e.0));
+                }
             }
         }
         progress(1.0, None);
-        Ok(written)
+        Ok(outcome)
     }
 }
 
@@ -1078,16 +1084,71 @@ mod tolerance_tests {
     }
 
     #[test]
-    fn a_title_that_cannot_be_read_at_all_is_an_error_not_an_empty_file() {
+    fn a_title_that_cannot_be_read_is_reported_not_written() {
         let r = FakeRunner::new().fail("ffmpeg", "Input/output error");
         let d = DvdVideo::new(&r);
         let title = parse_title(tests::EPISODE, 41).unwrap();
         let dir = std::env::temp_dir().join("riplika-unreadable-test");
-        let e = d.rip(&drive(), &[title], &dir, &mut |_, _| {}).unwrap_err();
+        let outcome = d.rip(&drive(), &[title], &dir, &mut |_, _| {}).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
-        assert!(e.0.contains("unreadable"), "{}", e.0);
-        // and it says what it tried, so the failure is diagnosable
-        assert!(e.0.contains("key"), "{}", e.0);
+        assert!(outcome.written.is_empty());
+        assert_eq!(outcome.failed.len(), 1);
+        assert_eq!(outcome.failed[0].0, 41);
+        assert!(outcome.failed[0].1.contains("unreadable"), "{:?}", outcome.failed[0]);
+        // and it says what to try, so the failure is actionable
+        assert!(outcome.failed[0].1.contains("riplika rescue"));
+    }
+
+    #[test]
+    fn one_unreadable_title_does_not_abandon_the_rest_of_the_disc() {
+        // A disc is mostly menus, transitions and extras. Aborting on the first
+        // one that will not read cost a 47-title disc after two titles, and the
+        // episodes were still to come.
+        struct OneBadTitle;
+        impl Runner for OneBadTitle {
+            fn run(&self, cmd: &Command) -> Result<crate::host::Output> {
+                // probing a produced file: claim the expected length
+                if cmd.program == "ffprobe" && !cmd.has("dvdvideo") {
+                    return Ok(crate::host::Output {
+                        status: 0,
+                        stdout: r#"{"streams":[],"chapters":[],"format":{"duration":"1289.0"}}"#.into(),
+                        stderr: String::new(),
+                    });
+                }
+                Ok(crate::host::Output::default())
+            }
+            fn stream(&self, cmd: &Command, _: &mut dyn FnMut(&str)) -> Result<crate::host::Output> {
+                let dest = PathBuf::from(cmd.args.last().unwrap());
+                if cmd.value_of("-title") == Some("3") {
+                    return Ok(crate::host::Output {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: "Invalid data found".into(),
+                    });
+                }
+                std::fs::create_dir_all(dest.parent().unwrap()).ok();
+                std::fs::write(&dest, b"x").ok();
+                Ok(crate::host::Output::default())
+            }
+        }
+
+        let d = DvdVideo::new(&OneBadTitle);
+        let titles: Vec<DiscTitle> = [2u32, 3, 4, 5]
+            .iter()
+            .map(|n| {
+                let mut t = parse_title(tests::EPISODE, *n).unwrap();
+                t.chapter_count = 1;
+                t
+            })
+            .collect();
+        let dir = std::env::temp_dir().join(format!("riplika-partial-{}", std::process::id()));
+        let outcome = d.rip(&drive(), &titles, &dir, &mut |_, _| {}).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(outcome.written.len(), 3, "the readable titles must survive");
+        assert_eq!(outcome.failed.len(), 1);
+        assert_eq!(outcome.failed[0].0, 3);
+        assert!(!outcome.is_complete());
     }
 }
 

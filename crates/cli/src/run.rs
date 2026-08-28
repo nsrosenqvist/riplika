@@ -567,7 +567,7 @@ mod tests {
             _: &[riplika_core::model::DiscTitle],
             _: &Path,
             _: &mut dyn FnMut(f32, Option<&str>),
-        ) -> riplika_core::Result<Vec<PathBuf>> {
+        ) -> riplika_core::Result<riplika_core::rip::RipOutcome> {
             Err("not used".into())
         }
     }

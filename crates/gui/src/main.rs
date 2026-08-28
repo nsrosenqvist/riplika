@@ -34,6 +34,23 @@ enum Step {
 }
 
 impl Step {
+    /// The route to this step, so navigation can replace the stack rather
+    /// than push onto it.
+    ///
+    /// Progress is reached from two places and its route says so: while a disc
+    /// is being scanned there is nothing behind it but the drive page, and
+    /// going back from a rip means starting the choices again rather than
+    /// re-entering settings while the drive is busy.
+    fn path(self) -> &'static [&'static str] {
+        match self {
+            Step::Drive => &["drive"],
+            Step::Identify => &["drive", "identify"],
+            Step::Settings => &["drive", "identify", "settings"],
+            Step::Progress => &["drive", "progress"],
+            Step::Results => &["drive", "results"],
+        }
+    }
+
     fn tag(self) -> &'static str {
         match self {
             Step::Drive => "drive",
@@ -479,8 +496,16 @@ impl App {
         self.ui.toasts.add_toast(adw::Toast::new(text));
     }
 
+    /// Move to a step.
+    ///
+    /// AdwNavigationView is a stack, and pushing a tag already on it is an
+    /// error - it warns and does nothing, so the window simply stops moving.
+    /// This flow reaches the progress page twice, once while scanning and
+    /// again while ripping, so it cannot be driven by pushing. Each step
+    /// declares the whole path to itself instead, and the stack is replaced
+    /// with it; the back button still works because the path is a real one.
     fn go(&self, step: Step) {
-        self.ui.nav.push_by_tag(step.tag());
+        self.ui.nav.replace_with_tags(step.path());
     }
 
     fn log_line(&self, text: &str) {
@@ -1090,7 +1115,10 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
         let app = Rc::clone(app);
         app.clone().ui.cancel_button.connect_clicked(move |b| {
             if b.label().map(|l| l == "Close").unwrap_or(false) {
-                app.ui.nav.pop();
+                // Back to the start rather than popping: after a finished or
+                // abandoned job the choices are stale, and the drive page is
+                // where a second disc begins.
+                app.go(Step::Drive);
                 return;
             }
             app.state.borrow().cancel.cancel();
@@ -1497,5 +1525,50 @@ mod picker_tests {
         assert!(state.query.is_empty());
         state.query = "parks".into();
         assert_eq!(state.query, "parks");
+    }
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+
+    /// AdwNavigationView is a stack: pushing a tag already on it warns and does
+    /// nothing, so the window silently stops moving. The flow reaches the
+    /// progress page twice - once scanning, once ripping - so it cannot be
+    /// driven by pushing, and every step declares its whole route instead.
+    #[test]
+    fn every_step_declares_a_route_ending_in_itself() {
+        for step in [Step::Drive, Step::Identify, Step::Settings, Step::Progress, Step::Results] {
+            let path = step.path();
+            assert!(!path.is_empty(), "{:?} has no route", step.tag());
+            assert_eq!(*path.last().unwrap(), step.tag(), "route must end at the step");
+        }
+    }
+
+    #[test]
+    fn no_route_visits_a_page_twice() {
+        // a repeated tag within one route is the same error by another name
+        for step in [Step::Drive, Step::Identify, Step::Settings, Step::Progress, Step::Results] {
+            let mut seen = step.path().to_vec();
+            seen.sort_unstable();
+            let before = seen.len();
+            seen.dedup();
+            assert_eq!(seen.len(), before, "{:?} repeats a page", step.tag());
+        }
+    }
+
+    #[test]
+    fn every_route_starts_at_the_drive_page() {
+        // so the back button always leads somewhere sensible
+        for step in [Step::Identify, Step::Settings, Step::Progress, Step::Results] {
+            assert_eq!(step.path()[0], Step::Drive.tag());
+        }
+    }
+
+    #[test]
+    fn progress_can_be_reached_from_scanning_and_from_ripping() {
+        // the case that broke: pressing Start while progress was already on the
+        // stack from the scan left the window sitting on the settings page
+        assert_eq!(Step::Progress.path(), &["drive", "progress"]);
     }
 }

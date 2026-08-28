@@ -12,6 +12,25 @@ use std::path::{Path, PathBuf};
 /// Titles shorter than this are menu loops and transitions, not content.
 pub const DEFAULT_MIN_LENGTH_SECONDS: u32 = 120;
 
+/// What a rip produced, including what it could not.
+///
+/// A disc has menu stubs, transitions and the occasional genuinely damaged
+/// extra, and one of them failing is not a reason to abandon the other
+/// forty-six titles. The failures are carried out rather than thrown, so the
+/// caller can report them and carry on.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RipOutcome {
+    pub written: Vec<PathBuf>,
+    /// Title id and why it could not be read.
+    pub failed: Vec<(u32, String)>,
+}
+
+impl RipOutcome {
+    pub fn is_complete(&self) -> bool {
+        self.failed.is_empty()
+    }
+}
+
 /// Reads discs. Behind a trait so the pipeline can be tested without one.
 pub trait Ripper: Send + Sync {
     /// Drives on this machine, and what is loaded in them.
@@ -37,7 +56,7 @@ pub trait Ripper: Send + Sync {
         titles: &[DiscTitle],
         dest: &Path,
         progress: &mut dyn FnMut(f32, Option<&str>),
-    ) -> Result<Vec<PathBuf>>;
+    ) -> Result<RipOutcome>;
 }
 
 pub struct MakeMkv<'a> {
@@ -99,13 +118,13 @@ impl Ripper for MakeMkv<'_> {
         titles: &[DiscTitle],
         dest: &Path,
         progress: &mut dyn FnMut(f32, Option<&str>),
-    ) -> Result<Vec<PathBuf>> {
+    ) -> Result<RipOutcome> {
         std::fs::create_dir_all(dest).map_err(|e| Error(format!("{}: {e}", dest.display())))?;
 
         // One invocation per title, rather than `all`. It costs a little in
         // disc seeking but means a failure names the title it happened on, and
         // a run can be resumed by skipping what is already there.
-        let mut written = Vec::new();
+        let mut outcome = RipOutcome::default();
         for (n, title) in titles.iter().enumerate() {
             let out_path = dest.join(&title.output_name);
             let base = n as f32 / titles.len() as f32;
@@ -125,21 +144,21 @@ impl Ripper for MakeMkv<'_> {
                 }
             })?;
 
+            // A disc has menu stubs and the odd damaged extra; one of them
+            // failing is not a reason to abandon the rest of the disc.
             if let Some(msg) = makemkv::parse_error(&out.stdout) {
-                return Err(Error(format!("title {}: {msg}", title.id)));
+                outcome.failed.push((title.id, msg));
+                continue;
             }
             // MakeMKV exits zero having saved nothing, so the file is the proof
             if !out_path.exists() {
-                return Err(Error(format!(
-                    "title {} produced no file at {}",
-                    title.id,
-                    out_path.display()
-                )));
+                outcome.failed.push((title.id, "produced no file".into()));
+                continue;
             }
-            written.push(out_path);
+            outcome.written.push(out_path);
         }
         progress(1.0, None);
-        Ok(written)
+        Ok(outcome)
     }
 }
 
@@ -178,7 +197,7 @@ impl Ripper for FakeRipper {
         titles: &[DiscTitle],
         dest: &Path,
         progress: &mut dyn FnMut(f32, Option<&str>),
-    ) -> Result<Vec<PathBuf>> {
+    ) -> Result<RipOutcome> {
         let mut out = Vec::new();
         for (n, t) in titles.iter().enumerate() {
             progress(n as f32 / titles.len() as f32, Some(&t.output_name));
@@ -186,7 +205,7 @@ impl Ripper for FakeRipper {
         }
         progress(1.0, None);
         self.written.lock().unwrap().extend(out.iter().cloned());
-        Ok(out)
+        Ok(RipOutcome { written: out, failed: Vec::new() })
     }
 }
 
@@ -379,7 +398,7 @@ impl Ripper for Auto<'_> {
         titles: &[DiscTitle],
         dest: &Path,
         progress: &mut dyn FnMut(f32, Option<&str>),
-    ) -> Result<Vec<PathBuf>> {
+    ) -> Result<RipOutcome> {
         self.reader().rip(drive, titles, dest, progress)
     }
 }
