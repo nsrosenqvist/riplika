@@ -6,6 +6,7 @@
 //! only safe if it is easy to overrule.
 
 mod prefs_dialog;
+mod show_picker;
 mod worker;
 
 use adw::prelude::*;
@@ -49,9 +50,13 @@ struct State {
     drive: Option<Drive>,
     scan: Option<DiscScan>,
     candidates: Vec<Candidate>,
+    /// What the page has settled on, from identification or from the picker.
+    selected: Option<Candidate>,
     chosen: Option<Media>,
     items: Vec<Item>,
     cancel: riplika_core::host::Cancel,
+    /// What was last searched for, so reopening the picker resumes it.
+    query: String,
     /// A catalogue search is in flight, so its result should be announced.
     searching: bool,
     /// What is running, if anything.
@@ -69,10 +74,12 @@ impl Default for State {
             drive: None,
             scan: None,
             candidates: Vec::new(),
+            selected: None,
             chosen: None,
             items: Vec::new(),
             cancel: riplika_core::host::Cancel::new(),
             busy: None,
+            query: String::new(),
             searching: false,
         }
     }
@@ -86,9 +93,10 @@ struct Ui {
     drive_combo: adw::ComboRow,
     drive_group: adw::PreferencesGroup,
     drive_next: gtk::Button,
-    candidate_list: gtk::ListBox,
+    chosen_row: adw::ActionRow,
+    /// The open picker, so search results can be put where the user is looking.
+    picker: RefCell<Option<show_picker::Picker>>,
     identify_next: gtk::Button,
-    search_entry: adw::EntryRow,
     season_entry: adw::EntryRow,
     video: adw::ComboRow,
     audio: adw::ComboRow,
@@ -106,6 +114,9 @@ struct Ui {
 }
 
 struct App {
+    /// A handle back to itself, so a widget callback can reach the window
+    /// without keeping it alive and leaking it.
+    me: RefCell<std::rc::Weak<App>>,
     ui: Ui,
     state: RefCell<State>,
     prefs: Rc<prefs_dialog::Store>,
@@ -215,11 +226,13 @@ fn build(app: &adw::Application) {
         .build();
 
     let app_state = Rc::new(App {
+        me: RefCell::new(std::rc::Weak::new()),
         ui,
         state: RefCell::new(State::default()),
         prefs: Rc::new(prefs_dialog::Store::new(Preferences::load())),
     });
 
+    *app_state.me.borrow_mut() = Rc::downgrade(&app_state);
     wire(&app_state, &window);
     window.present();
 }
@@ -277,23 +290,24 @@ fn build_ui() -> Ui {
 
     // --- step two: what is it? -------------------------------------------
     //
-    // Two questions that were being asked as one. A catalogue search finds a
-    // *show*; which season and disc you are holding is a separate matter that
-    // no search can answer. Putting the season inside "search instead" implied
-    // it was a query term, so setting it looked like it did nothing - and the
-    // answer then arrived silently, in a list further up the page.
+    // The alternatives are only interesting while you are choosing between
+    // them; left on the page they are a list of things already rejected, and
+    // they push what actually needs answering further down. So this states what
+    // it settled on, and the alternatives live in a dialog opened when that is
+    // wrong.
     let id_body = body();
     let id_group = adw::PreferencesGroup::builder()
         .title("Identified as")
-        .description("Choose another if this is wrong")
         .build();
-    let candidate_list = gtk::ListBox::builder()
-        .selection_mode(gtk::SelectionMode::Single)
-        .css_classes(vec!["boxed-list".to_string()])
+    let chosen_row = adw::ActionRow::builder()
+        .title("Not identified")
+        .subtitle("Choose the show")
+        .activatable(true)
         .build();
-    id_group.add(&candidate_list);
+    chosen_row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+    id_group.add(&chosen_row);
 
-    // Applies to whichever show is selected above; changing it needs no search.
+    // Applies to whichever show is chosen above; changing it needs no search.
     let detail_group = adw::PreferencesGroup::builder()
         .title("This disc")
         .description("Which part of the show it holds. The disc number decides where episode numbering starts.")
@@ -303,18 +317,6 @@ fn build_ui() -> Ui {
     detail_group.add(&season_entry);
     detail_group.add(&disc_entry);
 
-    let search_group = adw::PreferencesGroup::builder()
-        .title("Wrong show?")
-        .description("Search the catalogues by name")
-        .build();
-    let search_entry = adw::EntryRow::builder().title("Title").build();
-    let search_button = gtk::Button::builder()
-        .label("Search")
-        .name("search")
-        .halign(gtk::Align::End)
-        .build();
-    search_group.add(&search_entry);
-
     let identify_next = gtk::Button::builder()
         .label("Continue")
         .sensitive(false)
@@ -323,8 +325,6 @@ fn build_ui() -> Ui {
         .build();
     id_body.append(&id_group);
     id_body.append(&detail_group);
-    id_body.append(&search_group);
-    id_body.append(&search_button);
     id_body.append(&identify_next);
     nav.add(&page(Step::Identify.tag(), "What is this?", &id_body));
 
@@ -426,9 +426,9 @@ fn build_ui() -> Ui {
         drive_combo,
         drive_group,
         drive_next,
-        candidate_list,
+        chosen_row,
+        picker: RefCell::new(None),
         identify_next,
-        search_entry,
         season_entry,
         video,
         audio,
@@ -650,42 +650,69 @@ impl App {
         self.ui.drive_next.set_sensitive(ready && !self.is_busy());
     }
 
-    /// Say that a search is under way, where its answer will appear.
+    /// Take in a fresh set of candidates.
     ///
-    /// The result lands in the candidate list, so that is where the waiting
-    /// belongs. Feedback beside the button the user just pressed would still
-    /// leave them watching the wrong part of the window.
-    fn show_searching(&self) {
-        while let Some(r) = self.ui.candidate_list.row_at_index(0) {
-            self.ui.candidate_list.remove(&r);
+    /// They land in the picker if it is open - that is where the user is
+    /// looking - and otherwise become the page's stated answer.
+    fn show_candidates(&self, cands: &[Candidate]) {
+        self.state.borrow_mut().candidates = cands.to_vec();
+        let already_chosen = self.state.borrow().selected.is_some();
+
+        if let Some(picker) = self.ui.picker.borrow().as_ref() {
+            let app = self.weak();
+            picker.show(cands, move |i| {
+                if let Some(app) = app.upgrade() {
+                    app.choose(i);
+                }
+            });
+            return;
         }
-        let row = adw::ActionRow::builder().title("Searching...").build();
-        let spinner = gtk::Spinner::builder().spinning(true).build();
-        row.add_suffix(&spinner);
-        self.ui.candidate_list.append(&row);
-        self.ui.identify_next.set_sensitive(false);
+        // Identification's best guess becomes the answer, but never overrides
+        // something the user has already picked.
+        if !already_chosen {
+            self.state.borrow_mut().selected = cands.first().cloned();
+        }
+        self.show_choice();
     }
 
-    fn show_candidates(&self, cands: &[Candidate]) {
-        while let Some(r) = self.ui.candidate_list.row_at_index(0) {
-            self.ui.candidate_list.remove(&r);
+    /// The user picked one from the dialog.
+    fn choose(&self, index: usize) {
+        let chosen = self.state.borrow().candidates.get(index).cloned();
+        if chosen.is_none() {
+            return;
         }
-        for c in cands {
-            let row = adw::ActionRow::builder()
-                .title(c.media.describe_work())
-                .subtitle(c.reasons.join("\n"))
-                .build();
-            let pct = gtk::Label::new(Some(&format!("{:.0}%", c.confidence * 100.0)));
-            pct.add_css_class("dim-label");
-            row.add_suffix(&pct);
-            self.ui.candidate_list.append(&row);
+        self.state.borrow_mut().selected = chosen;
+        if let Some(picker) = self.ui.picker.borrow().as_ref() {
+            picker.close();
         }
-        self.state.borrow_mut().candidates = cands.to_vec();
-        if !cands.is_empty()
-            && let Some(row) = self.ui.candidate_list.row_at_index(0) {
-                self.ui.candidate_list.select_row(Some(&row));
+        *self.ui.picker.borrow_mut() = None;
+        self.show_choice();
+    }
+
+    /// Restate what the page has settled on.
+    fn show_choice(&self) {
+        let selected = self.state.borrow().selected.clone();
+        match selected {
+            Some(c) => {
+                self.ui.chosen_row.set_title(&c.media.describe_work());
+                self.ui.chosen_row.set_subtitle(&c.reasons.join("\n"));
+                if self.ui.season_entry.text().trim().is_empty()
+                    && let Some(n) = c.media.season()
+                {
+                    self.ui.season_entry.set_text(&n.to_string());
+                }
+                self.ui.identify_next.set_sensitive(!self.is_busy());
             }
-        self.ui.identify_next.set_sensitive(!cands.is_empty());
+            None => {
+                self.ui.chosen_row.set_title("Not identified");
+                self.ui.chosen_row.set_subtitle("Choose the show");
+                self.ui.identify_next.set_sensitive(false);
+            }
+        }
+    }
+
+    fn weak(&self) -> std::rc::Weak<App> {
+        self.me.borrow().clone()
     }
 
     fn show_report(&self, r: &Report) {
@@ -771,9 +798,7 @@ impl App {
                 if let Some(n) = guess.season {
                     self.ui.season_entry.set_text(&n.to_string());
                 }
-                self.ui.search_entry.set_text(
-                    &riplika_core::identify::label::parse(&scan.label).title,
-                );
+                self.state.borrow_mut().query = guess.title.clone();
                 self.show_languages(&scan.all_languages());
                 self.state.borrow_mut().scan = Some(*scan);
             }
@@ -927,15 +952,10 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
     {
         let app = Rc::clone(app);
         app.clone().ui.identify_next.connect_clicked(move |_| {
-            let i = app
-                .ui
-                .candidate_list
-                .selected_row()
-                .map(|r| r.index() as usize);
-            let chosen = i.and_then(|i| app.state.borrow().candidates.get(i).cloned());
+            let chosen = app.state.borrow().selected.clone();
             match chosen {
                 Some(c) => {
-                    // The search found a show; the season comes from this page.
+                    // The picker found a show; the season comes from this page.
                     let season = app.ui.season_entry.text().trim().parse::<u32>().ok();
                     let media = match season {
                         Some(n) => c.media.with_season(n),
@@ -944,38 +964,49 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                     app.state.borrow_mut().chosen = Some(media);
                     app.go(Step::Settings);
                 }
-                None => app.toast("Choose what this disc is, or search for it"),
+                None => app.toast("Choose what this disc is first"),
             }
         });
     }
     {
+        // Tapping what it settled on is how you disagree with it.
         let app = Rc::clone(app);
         let tx = tx.clone();
-        let run_search = move |app: &Rc<App>, tx: &std::sync::mpsc::Sender<Msg>| {
-            let q = app.ui.search_entry.text().to_string();
-            if q.trim().is_empty() {
-                app.toast("Type a title to search for");
-                return;
-            }
-            // A season is not a search term - it is a fact about the disc - so
-            // it is not sent, and setting it needs no search at all.
-            let season = app.ui.season_entry.text().trim().parse::<u32>().ok().or(Some(1));
-            app.state.borrow_mut().searching = true;
-            app.show_searching();
-            worker::search(q, season, tx.clone());
-        };
-
-        for button in find_buttons(&app.ui.identify_next, "search") {
-            let app = Rc::clone(&app);
+        let window = window.clone();
+        let row = app.ui.chosen_row.clone();
+        row.connect_activated(move |_| {
+            let query = {
+                let state = app.state.borrow();
+                if state.query.trim().is_empty() {
+                    state
+                        .selected
+                        .as_ref()
+                        .map(|c| c.media.title().to_string())
+                        .unwrap_or_default()
+                } else {
+                    state.query.clone()
+                }
+            };
+            let app_for_search = Rc::clone(&app);
             let tx = tx.clone();
-            let run = run_search.clone();
-            button.connect_clicked(move |_| run(&app, &tx));
-        }
-        // Pressing Return in the field is what a person will try first.
-        let app2 = Rc::clone(&app);
-        let tx2 = tx.clone();
-        let run = run_search.clone();
-        app.ui.search_entry.connect_entry_activated(move |_| run(&app2, &tx2));
+            let picker = show_picker::present(&window, &query, move |q| {
+                app_for_search.state.borrow_mut().query = q.clone();
+                if let Some(p) = app_for_search.ui.picker.borrow().as_ref() {
+                    p.show_searching();
+                }
+                worker::search(q, None, tx.clone());
+            });
+
+            // Open on what is already known rather than an empty list.
+            let candidates = app.state.borrow().candidates.clone();
+            let chooser = app.weak();
+            picker.show(&candidates, move |i| {
+                if let Some(app) = chooser.upgrade() {
+                    app.choose(i);
+                }
+            });
+            *app.ui.picker.borrow_mut() = Some(picker);
+        });
     }
 
 
@@ -986,12 +1017,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
         let app = Rc::clone(app);
         let entry = app.ui.season_entry.clone();
         entry.connect_changed(move |e| {
-            let selected = app
-                .ui
-                .candidate_list
-                .selected_row()
-                .map(|r| r.index() as usize)
-                .and_then(|i| app.state.borrow().candidates.get(i).cloned());
+            let selected = app.state.borrow().selected.clone();
             if let (Some(c), Ok(n)) = (selected, e.text().trim().parse::<u32>()) {
                 app.ui.identify_next.set_label(&format!(
                     "Continue with season {n} of {}",
@@ -1409,5 +1435,78 @@ mod identify_page_tests {
         assert_eq!(phrase(0), "Nothing found");
         assert_eq!(phrase(1), "1 match");
         assert_eq!(phrase(4), "4 matches");
+    }
+}
+
+#[cfg(test)]
+mod picker_tests {
+    use super::*;
+
+    fn candidate(title: &str, season: u32, confidence: f32) -> Candidate {
+        Candidate {
+            media: Media::Series {
+                title: title.into(),
+                year: Some(2009),
+                season,
+                provider_id: Some("1633".into()),
+            },
+            confidence,
+            reasons: vec!["volume label".into()],
+        }
+    }
+
+    #[test]
+    fn identification_supplies_the_answer_when_none_has_been_chosen() {
+        let mut state = State::default();
+        let cands = [candidate("Parks and Recreation", 1, 0.85)];
+        if state.selected.is_none() {
+            state.selected = cands.first().cloned();
+        }
+        assert_eq!(state.selected.unwrap().media.title(), "Parks and Recreation");
+    }
+
+    #[test]
+    fn a_later_identification_does_not_override_what_the_user_picked() {
+        // reopening the picker and searching must not have its result quietly
+        // replaced by the disc's original guess
+        let mut state = State::default();
+        state.selected = Some(candidate("The Office", 3, 0.4));
+        let cands = [candidate("Parks and Recreation", 1, 0.85)];
+        if state.selected.is_none() {
+            state.selected = cands.first().cloned();
+        }
+        assert_eq!(state.selected.unwrap().media.title(), "The Office");
+    }
+
+    #[test]
+    fn choosing_from_the_picker_replaces_the_answer() {
+        let mut state = State::default();
+        state.candidates = vec![
+            candidate("Parks and Recreation", 1, 0.85),
+            candidate("Parks", 1, 0.11),
+        ];
+        state.selected = state.candidates.first().cloned();
+        state.selected = state.candidates.get(1).cloned();
+        assert_eq!(state.selected.unwrap().media.title(), "Parks");
+    }
+
+    #[test]
+    fn choosing_an_index_that_is_gone_changes_nothing() {
+        // results can be replaced by a newer search while a row is being tapped
+        let mut state = State::default();
+        state.selected = Some(candidate("Parks and Recreation", 1, 0.85));
+        let chosen = state.candidates.get(7).cloned();
+        if chosen.is_some() {
+            state.selected = chosen;
+        }
+        assert_eq!(state.selected.unwrap().media.title(), "Parks and Recreation");
+    }
+
+    #[test]
+    fn the_query_is_remembered_so_reopening_resumes_where_it_was() {
+        let mut state = State::default();
+        assert!(state.query.is_empty());
+        state.query = "parks".into();
+        assert_eq!(state.query, "parks");
     }
 }
