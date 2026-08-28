@@ -92,6 +92,8 @@ enum Cmd {
         /// Where the raw rip goes. Kept afterwards so it can be re-run.
         #[arg(long, default_value = "/tmp/riplika-rip")]
         rip_dir: PathBuf,
+        #[command(flatten)]
+        source: Source,
         /// Skip identification and use this title.
         #[arg(long)]
         title: Option<String>,
@@ -258,13 +260,14 @@ fn dispatch() -> Result<(), String> {
         Cmd::Scan { drive, source } => run::scan(drive.as_deref(), &source.reader),
         Cmd::Identify { drive } => run::identify(drive.as_deref()),
         Cmd::Search { query, season } => run::search(&query, season),
-        Cmd::Rip { drive, rip_dir, title, season, disc, dry_run, output } => run::rip(
+        Cmd::Rip { drive, rip_dir, source, title, season, disc, dry_run, output } => run::rip(
             drive.as_deref(),
             &rip_dir,
             title.as_deref(),
             season,
             disc,
             dry_run,
+            &source.reader,
             output.settings()?,
         ),
         Cmd::Rescue { device, image, vts, chains, dry_run } => {

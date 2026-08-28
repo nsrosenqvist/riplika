@@ -318,19 +318,23 @@ pub fn rip(
     season: Option<u32>,
     disc: Option<u32>,
     dry_run: bool,
+    which_reader: &str,
     settings: JobSettings,
 ) -> Result<(), String> {
     let real = Real::new();
-    let mk = MakeMkv::new(&real.runner);
+    // The same reader selection `scan` uses. Hardcoding MakeMKV here meant the
+    // free path was built, tested and then never reached by the one command
+    // that matters.
+    let mk = reader(which_reader, &real.runner)?;
     let prober = FfProbe(&real.runner);
     let cat = real.catalogues();
-    let d = pick_drive(&mk, drive)?;
+    let d = pick_drive(mk.as_ref(), drive)?;
 
     let pipeline = Pipeline::new(
         Ports {
             runner: &real.runner,
             prober: &prober,
-            ripper: &mk,
+            ripper: mk.as_ref(),
             catalogue: &cat,
             fs: &real.fs,
             cancel: real.cancel.clone(),
@@ -343,14 +347,34 @@ pub fn rip(
     let media = decide_media(title, season, &cat, Some(&scan))?;
     let disc = disc.or_else(|| riplika_core::identify::label::parse(&scan.label).disc);
 
+    if dry_run {
+        // Ripping first and then stopping is not a dry run - it is the whole
+        // disc read for nothing. When the scanner gave chapter durations the
+        // mapping can be worked out from the scan alone.
+        match pipeline.preview(&scan, &media, disc, rip_dir) {
+            Some(items) => {
+                show_plan(&items);
+                println!(
+                    "\n(dry run: nothing read. Extended cuts cannot be spotted \
+                     without the files, so they are not shown.)"
+                );
+            }
+            None => {
+                println!("\n{} titles; this reader reports no chapter durations,", scan.titles.len());
+                println!("so the episode mapping cannot be worked out without ripping first.");
+                for t in &scan.titles {
+                    println!("  {:>3}  {:>9}  {}", t.id, hms(t.duration), t.output_name);
+                }
+            }
+        }
+        return Ok(());
+    }
+
     let files = pipeline.rip(&scan, rip_dir, &mut events).map_err(|e| e.to_string())?;
     let items = pipeline
         .organise(&files, &media, disc, &mut events)
         .map_err(|e| e.to_string())?;
     show_plan(&items);
-    if dry_run {
-        return Ok(());
-    }
     let report = pipeline
         .produce(&items, &media, &mut events)
         .map_err(|e| e.to_string())?;
@@ -372,6 +396,7 @@ pub fn process(
     let real = Real::new();
     let prober = FfProbe(&real.runner);
     let cat = real.catalogues();
+    // Never used: this command works from files that are already on disk.
     let mk = MakeMkv::new(&real.runner);
 
     let mut files: Vec<PathBuf> = real

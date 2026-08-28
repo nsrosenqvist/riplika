@@ -275,6 +275,78 @@ impl<'a> Pipeline<'a> {
         }
     }
 
+    /// Work out the plan from a scan alone, without ripping anything.
+    ///
+    /// Only possible when the scanner reported chapter *durations*: those are
+    /// what decompose a play-all, and MakeMKV gives only a count. When they are
+    /// there this is what `--dry-run` should show, and it costs nothing beyond
+    /// the scan that has already happened.
+    pub fn preview(
+        &self,
+        scan: &DiscScan,
+        media: &Media,
+        disc: Option<u32>,
+        rip_dir: &Path,
+    ) -> Option<Vec<Item>> {
+        if scan.titles.iter().all(|t| t.chapters.is_empty()) {
+            return None;
+        }
+        let shapes: Vec<structure::TitleShape> = scan
+            .titles
+            .iter()
+            .enumerate()
+            .map(|(i, t)| structure::TitleShape {
+                key: t.output_name.clone(),
+                order: i as u32,
+                duration: t.duration,
+                chapters: t.chapters.clone(),
+            })
+            .collect();
+        let mut st = structure::decompose(&shapes, structure::EpisodeRange::default());
+        if st.episodes.is_empty() {
+            let by_duration =
+                structure::episodes_by_duration(&shapes, structure::EpisodeRange::default());
+            st.loose.retain(|k| !by_duration.contains(k));
+            st.episodes = by_duration;
+        }
+
+        let episodes = match (media, media.provider_id()) {
+            (Media::Series { season, .. }, Some(id)) => {
+                self.ports.catalogue.episodes(&id, *season).unwrap_or_default()
+            }
+            _ => Vec::new(),
+        };
+        let existing = self
+            .ports
+            .fs
+            .list(&self.season_dir(media))
+            .map(|f| identify::existing_episode_numbers(&f))
+            .unwrap_or_default();
+        let offset = identify::episode_offset(disc, st.episodes.len(), &existing);
+
+        // Extended cuts need the pictures compared, which needs the files, so a
+        // preview cannot spot them. Everything else is the real mapping.
+        let mut items = identify::assign(media, &episodes, &st, rip_dir, offset, &[]);
+        for item in &mut items {
+            if let Some(t) = scan
+                .titles
+                .iter()
+                .find(|t| item.source.ends_with(&t.output_name))
+            {
+                item.duration = t.duration;
+            }
+            if item.role.is_output() {
+                item.destination = Some(naming::destination(
+                    &self.settings.output_dir,
+                    media,
+                    item,
+                    self.settings.container,
+                ));
+            }
+        }
+        Some(items)
+    }
+
     /// Stage four and the encode: produce the output files.
     pub fn produce(&self, items: &[Item], media: &Media, events: Events) -> Result<Report> {
         let mut report = Report::default();
@@ -908,5 +980,132 @@ mod tests {
         let items = p.organise(&files, &media, Some(2), &mut sink).unwrap();
         let first = items.iter().find(|i| matches!(i.role, Role::Episode { .. })).unwrap();
         assert_eq!(first.role, Role::Episode { season: 7, number: 3 });
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+    use crate::host::{Cancel, FakeFs, FakeRunner};
+    use crate::identify::catalogue::{FakeHttp, TvMaze};
+    use crate::media::FakeProber;
+    use crate::rip::FakeRipper;
+
+    const SEARCH: &str = r#"[{"score":0.94,"show":{"id":1633,"name":"Parks and Recreation","premiered":"2009-04-09"}}]"#;
+    const EPISODES: &str = r#"[
+      {"name":"2017","season":7,"number":1,"airdate":"2015-01-13","runtime":30},
+      {"name":"Ron and Jammy","season":7,"number":2,"airdate":"2015-01-13","runtime":30}
+    ]"#;
+
+    fn drive() -> Drive {
+        Drive {
+            id: "disc:0".into(),
+            device: "/dev/sr0".into(),
+            name: "d".into(),
+            disc_label: Some("PARKS_AND_RECREATION_S7D1".into()),
+        }
+    }
+
+    fn title(id: u32, duration: Millis, chapters: &[Millis]) -> DiscTitle {
+        DiscTitle {
+            id,
+            duration,
+            chapter_count: chapters.len(),
+            chapters: chapters.to_vec(),
+            size_bytes: 0,
+            output_name: format!("title_t{id:02}.mkv"),
+            tracks: vec![],
+        }
+    }
+
+    /// Two episodes and the play-all that orders them, as the free reader
+    /// reports it: with chapter durations.
+    fn scan_with_chapters() -> DiscScan {
+        DiscScan {
+            drive: drive(),
+            label: "PARKS_AND_RECREATION_S7D1".into(),
+            titles: vec![
+                title(0, 2_550_000, &[600_000, 675_000, 600_000, 675_000]),
+                title(1, 1_275_000, &[600_000, 675_000]),
+                title(2, 1_275_000, &[600_000, 675_000]),
+            ],
+        }
+    }
+
+    fn season7() -> Media {
+        Media::Series {
+            title: "Parks and Recreation".into(),
+            year: Some(2009),
+            season: 7,
+            provider_id: Some("1633".into()),
+        }
+    }
+
+    #[test]
+    fn a_preview_maps_episodes_without_reading_the_disc() {
+        // A "dry run" that rips the whole disc and then stops is not a dry run,
+        // it is eight gigabytes read for nothing.
+        let runner = FakeRunner::new();
+        let prober = FakeProber::new();
+        let ripper = FakeRipper::new(scan_with_chapters());
+        let http = FakeHttp::new().on("/search/shows", SEARCH).on("/episodes", EPISODES);
+        let cat = TvMaze { http: &http };
+        let fs = FakeFs::new();
+        let p = Pipeline::new(
+            Ports {
+                runner: &runner,
+                prober: &prober,
+                ripper: &ripper,
+                catalogue: &cat,
+                fs: &fs,
+                cancel: Cancel::new(),
+            },
+            JobSettings { output_dir: PathBuf::from("/media"), ..JobSettings::default() },
+        );
+
+        let items = p
+            .preview(&scan_with_chapters(), &season7(), Some(1), Path::new("/rip"))
+            .expect("chapter durations were reported, so a preview is possible");
+
+        let episodes: Vec<&Item> = items
+            .iter()
+            .filter(|i| matches!(i.role, Role::Episode { .. }))
+            .collect();
+        assert_eq!(episodes.len(), 2);
+        assert_eq!(episodes[0].role, Role::Episode { season: 7, number: 1 });
+        assert_eq!(episodes[0].title, "2017");
+        assert!(items.iter().any(|i| i.role == Role::PlayAll));
+
+        // and nothing was read: no ffmpeg, no ripping
+        assert!(runner.calls().is_empty(), "{:?}", runner.calls());
+        assert!(ripper.written.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_scanner_without_chapter_durations_cannot_preview() {
+        // MakeMKV reports a chapter count but not the durations, and the
+        // durations are what decompose a play-all
+        let runner = FakeRunner::new();
+        let prober = FakeProber::new();
+        let mut scan = scan_with_chapters();
+        for t in &mut scan.titles {
+            t.chapters.clear();
+        }
+        let ripper = FakeRipper::new(scan.clone());
+        let http = FakeHttp::new().on("/search/shows", SEARCH).on("/episodes", EPISODES);
+        let cat = TvMaze { http: &http };
+        let fs = FakeFs::new();
+        let p = Pipeline::new(
+            Ports {
+                runner: &runner,
+                prober: &prober,
+                ripper: &ripper,
+                catalogue: &cat,
+                fs: &fs,
+                cancel: Cancel::new(),
+            },
+            JobSettings::default(),
+        );
+        assert!(p.preview(&scan, &season7(), Some(1), Path::new("/rip")).is_none());
     }
 }
