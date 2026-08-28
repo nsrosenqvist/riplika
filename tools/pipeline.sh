@@ -1,5 +1,5 @@
 #!/bin/bash
-# Transcode ripped titles, OCR their subtitles, embed them, and tag the result.
+# Transcode ripped titles, recognise their subtitles, embed them, and tag.
 #
 # Expects a mapping file of lines:
 #   <source-stem>|<episode label>|<part number>|<title>|<air date>|<extended yes/no>
@@ -7,19 +7,26 @@
 # Usage: pipeline.sh <rip-dir> <out-dir> <map> <glyph-table> <season> <total>
 #                    [video] [audio] [encode.sh flags...]
 #
-# Note: subtitles are recognised from the first subtitle track of the encode,
-# so if --languages reorders them, the glyph table must match whichever
-# language ends up first.
+# Every subtitle track that survives encoding is recognised on its own terms:
+# its language decides the ambiguity rules and which wordlist is used. One glyph
+# table covers a whole disc - the language tracks on a disc share a font - but
+# it has to carry labels for the characters each language actually uses.
+#
+# Wordlists are looked up as <words-dir>/<code>.txt, e.g. words/swe.txt. Set the
+# directory with RIPPER_WORDS; without a match the language falls back to
+# structural rules, which is fine but less accurate.
 set -u
 RIP="$1"; OUT="$2"; MAP="$3"; TABLE="$4"; SEASON="$5"; TOTAL="$6"
 shift 6
 VQ="${1:-medium}"; [ $# -gt 0 ] && shift
 AQ="${1:-high}";   [ $# -gt 0 ] && shift
 ENC_ARGS=("$@")          # e.g. --dual-audio --languages english,swedish
-RIPPER="$(dirname "$0")/../target/release/ripper"
+HERE="$(dirname "$0")"
+RIPPER="$HERE/../target/release/ripper"
+WORDS="${RIPPER_WORDS:-$HERE/../work/words}"
 mkdir -p "$OUT/extras"
 
-# Read the mapping on fd 3: HandBrake and ffmpeg both consume stdin, and would
+# Read the mapping on fd 3: ffmpeg and the encoder both consume stdin, and would
 # otherwise swallow the rest of the list after the first iteration.
 while IFS='|' read -r stem label part title date ext <&3; do
   [ -z "${stem:-}" ] && continue
@@ -34,27 +41,73 @@ while IFS='|' read -r stem label part title date ext <&3; do
   fi
 
   echo "### $stem -> $(basename "$dest")"
-  "$(dirname "$0")/encode.sh" "$src" "$dest.tmp.mp4" "$VQ" "$AQ" \
+  tmp="$dest.tmp.mp4"
+  "$HERE/encode.sh" "$src" "$tmp" "$VQ" "$AQ" \
       ${ENC_ARGS[@]+"${ENC_ARGS[@]}"} </dev/null 2>&1 | sed 's/^/    /' \
       || { echo "  TRANSCODE FAILED"; continue; }
 
-  # recognise the English VobSub and embed it as a default text track
-  srt="$dest.srt"
-  if "$RIPPER" ocr "$dest.tmp.mp4" --table "$TABLE" --stream 0 -o "$srt" >/dev/null 2>&1; then
-    ffmpeg -v error -y -nostdin -i "$dest.tmp.mp4" -i "$srt" \
-      -map 0:v:0 -map 0:a -map 1:0 -map 0:s -dn -map_chapters 0 \
-      -c copy -c:s:0 mov_text -metadata:s:s:0 language=eng -metadata:s:s:0 title="English" \
-      -disposition:s:0 default -disposition:s:1 0 -disposition:s:2 0 \
-      -movflags +faststart "$dest" && rm -f "$dest.tmp.mp4"
+  # One pass per subtitle track, each in its own language
+  mapfile -t sublangs < <(ffprobe -v error -select_streams s \
+      -show_entries stream_tags=language -of csv=p=0 "$tmp" \
+      | sed 's/,*$//')
+  srts=()
+  srtlangs=()
+  for i in "${!sublangs[@]}"; do
+    code="${sublangs[$i]}"
+    [ -z "$code" ] && code="und"
+    args=(--stream "$i" --lang "$code")
+    wl="$WORDS/$code.txt"
+    if [ -f "$wl" ]; then
+      args+=(--words "$wl")
+      note="wordlist $code.txt"
+    else
+      note="no wordlist"
+    fi
+    out="$dest.$code.srt"
+    if msg=$("$RIPPER" ocr "$tmp" --table "$TABLE" "${args[@]}" -o "$out" 2>&1); then
+      unk=$(printf '%s' "$msg" | grep -oE "[0-9]+ unknown" | grep -oE "^[0-9]+" || echo 0)
+      cues=$(printf '%s' "$msg" | grep -oE "^[0-9]+ cues" | grep -oE "^[0-9]+" || echo 0)
+      srts+=("$out"); srtlangs+=("$code")
+      if [ "${unk:-0}" -gt 0 ]; then
+        echo "    subs $code: $cues cues, $note, $unk unrecognised glyphs - table may be missing this language"
+      else
+        echo "    subs $code: $cues cues, $note"
+      fi
+    else
+      echo "    subs $code: recognition failed, leaving the bitmap track only"
+      rm -f "$out"
+    fi
+  done
+
+  if [ "${#srts[@]}" -gt 0 ]; then
+    # video, audio, then a text track per language, then the bitmaps
+    ins=(); maps=(-map 0:v:0 -map 0:a); codecs=(); meta=(); dispo=()
+    for n in "${!srts[@]}"; do
+      ins+=(-i "${srts[$n]}")
+      maps+=(-map "$((n + 1)):0")
+      codecs+=(-c:s:$n mov_text)
+      meta+=(-metadata:s:s:$n "language=${srtlangs[$n]}")
+      [ "$n" = 0 ] && dispo+=(-disposition:s:0 default) || dispo+=(-disposition:s:$n 0)
+    done
+    nsrt=${#srts[@]}
+    nbmp=$(ffprobe -v error -select_streams s -show_entries stream=index -of csv=p=0 "$tmp" | grep -c . || true)
+    maps+=(-map 0:s)
+    for ((b = 0; b < nbmp; b++)); do dispo+=(-disposition:s:$((nsrt + b)) 0); done
+
+    if ffmpeg -v error -y -nostdin -i "$tmp" "${ins[@]}" \
+        "${maps[@]}" -dn -map_chapters 0 -c copy "${codecs[@]}" \
+        "${meta[@]}" "${dispo[@]}" -movflags +faststart "$dest"; then
+      rm -f "$tmp"
+    else
+      echo "  EMBED FAILED - keeping the transcode as-is"
+      mv -f "$tmp" "$dest"
+    fi
   else
-    echo "  SUBTITLE OCR FAILED - keeping transcode without a text track"
-    mv -f "$dest.tmp.mp4" "$dest"
+    mv -f "$tmp" "$dest"
   fi
-  rm -f "$srt"
+  rm -f "$dest".*.srt
 
   # metadata, matching the rest of the library
-  # -map 0 keeps every stream: without it ffmpeg's default selection drops the
-  # text track that was just embedded
   ffmpeg -v error -y -nostdin -i "$dest" -map 0:v -map 0:a -map 0:s -dn -c copy \
     -metadata title="$disp" \
     -metadata show="Parks and Recreation" \

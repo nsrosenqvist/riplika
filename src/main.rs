@@ -126,6 +126,13 @@ enum Cmd {
 }
 
 fn main() {
+    // Restore the default SIGPIPE handling that Rust disables at startup.
+    // Without this, `ripper check | head` kills the pipe and the next println!
+    // panics with "failed printing to stdout: Broken pipe".
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     if let Err(e) = run() {
         eprintln!("error: {e}");
         std::process::exit(1);
