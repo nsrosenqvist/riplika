@@ -205,23 +205,28 @@ where
     page.add(&tracks);
 
     // --- folders ----------------------------------------------------------
+    // Only the working folder. The glyph table and the wordlists are
+    // application data with a standard place to live, built once and then used
+    // without being thought about - there is no answer a user could give that
+    // would be better than the default, so they are not asked.
+    //
+    // Where a rip lands is a real question: it wants tens of gigabytes, and a
+    // small home partition is a good reason to put it elsewhere.
     let folders = adw::PreferencesGroup::builder()
-        .title("Folders")
-        .description("Where subtitle recognition finds what it needs")
+        .title("Working folder")
+        .description(&format!(
+            "Where a disc lands before it is encoded - tens of gigabytes, deleted afterwards. \
+             Subtitle data lives in {}.",
+            Preferences::data_dir().display()
+        ))
         .build();
-    let p = store.prefs.borrow();
-    let table = folder_row(
-        "Glyph table",
-        &describe(&p.glyph_table, "None - subtitles will stay as bitmaps"),
-    );
-    let words = folder_row("Wordlists", &describe(&p.words_dir, "None"));
     let rip = folder_row(
-        "Working folder",
-        &describe(&p.rip_dir, "System temporary folder"),
+        "Folder",
+        &describe(
+            &Some(store.prefs.borrow().rip_dir()),
+            "System temporary folder",
+        ),
     );
-    drop(p);
-    folders.add(&table);
-    folders.add(&words);
     folders.add(&rip);
     page.add(&folders);
 
@@ -324,15 +329,6 @@ where
         });
     };
 
-    pick(
-        &table, &dialog, Rc::clone(&store), false, "Glyph table",
-        "None - subtitles will stay as bitmaps",
-        |p, v| p.glyph_table = v, |p| p.glyph_table.clone(), on_change.clone(),
-    );
-    pick(
-        &words, &dialog, Rc::clone(&store), true, "Wordlists", "None",
-        |p, v| p.words_dir = v, |p| p.words_dir.clone(), on_change.clone(),
-    );
     pick(
         &rip, &dialog, Rc::clone(&store), true, "Working folder",
         "System temporary folder",

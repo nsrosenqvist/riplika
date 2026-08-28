@@ -14,6 +14,17 @@ use crate::model::{Container, Quality};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Resolve one of the XDG base directories, ours appended.
+///
+/// Pure, taking what the environment said rather than reading it, because these
+/// are process-global and a test that sets one races every other test.
+pub fn xdg_dir(explicit: Option<PathBuf>, home: Option<PathBuf>, fallback: &str) -> PathBuf {
+    explicit
+        .or_else(|| home.map(|h| h.join(fallback)))
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("riplika")
+}
+
 /// The name of the tool needed for Blu-ray, and for working around discs the
 /// free reader cannot manage.
 pub const MAKEMKV: &str = "makemkvcon";
@@ -127,11 +138,67 @@ impl Preferences {
             include_extended_cuts: self.include_extended_cuts,
             include_extras: self.include_extras,
             drop_commentary: self.drop_commentary,
-            words_dir: self.words_dir.clone(),
-            glyph_table: self.glyph_table.clone(),
+            words_dir: self.words_dir(),
+            glyph_table: self.glyph_table(),
             episode_template: Some(self.episode_template.clone())
                 .filter(|t| !t.trim().is_empty()),
         }
+    }
+
+    /// `$XDG_DATA_HOME/riplika` - the glyph table and the wordlists.
+    ///
+    /// Application data, not settings: built once by `riplika build`, then used
+    /// without being thought about. There is no reason for anyone to point at
+    /// them by hand, so they are not offered as a choice.
+    pub fn data_dir() -> PathBuf {
+        xdg_dir(
+            std::env::var_os("XDG_DATA_HOME").map(PathBuf::from),
+            std::env::var_os("HOME").map(PathBuf::from),
+            ".local/share",
+        )
+    }
+
+    /// `$XDG_CACHE_HOME/riplika` - where a rip lands before it is encoded.
+    ///
+    /// Cache, because it can be thrown away and made again from the disc. Not
+    /// the system temporary directory: that is a tmpfs on most desktops, held
+    /// in RAM, and a disc is eight gigabytes.
+    pub fn cache_dir() -> PathBuf {
+        xdg_dir(
+            std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from),
+            std::env::var_os("HOME").map(PathBuf::from),
+            ".cache",
+        )
+    }
+
+    /// Where subtitle recognition looks, unless told otherwise.
+    pub fn default_glyph_table() -> PathBuf {
+        Self::data_dir().join("glyphs.json")
+    }
+
+    pub fn default_words_dir() -> PathBuf {
+        Self::data_dir().join("words")
+    }
+
+    pub fn default_rip_dir() -> PathBuf {
+        Self::cache_dir().join("rip")
+    }
+
+    /// The glyph table to use: what was configured, or the standard place.
+    pub fn glyph_table(&self) -> Option<PathBuf> {
+        self.glyph_table
+            .clone()
+            .or_else(|| Some(Self::default_glyph_table()).filter(|p| p.exists()))
+    }
+
+    pub fn words_dir(&self) -> Option<PathBuf> {
+        self.words_dir
+            .clone()
+            .or_else(|| Some(Self::default_words_dir()).filter(|p| p.is_dir()))
+    }
+
+    pub fn rip_dir(&self) -> PathBuf {
+        self.rip_dir.clone().unwrap_or_else(Self::default_rip_dir)
     }
 
     /// `$XDG_CONFIG_HOME/riplika/preferences.json`.
@@ -314,5 +381,81 @@ mod tests {
         unsafe { std::env::set_var("XDG_CONFIG_HOME", "/tmp/xdg-test") };
         assert_eq!(Preferences::path(), PathBuf::from("/tmp/xdg-test/riplika/preferences.json"));
         unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
+    }
+}
+
+#[cfg(test)]
+mod xdg_tests {
+    use super::*;
+
+    #[test]
+    fn the_xdg_variable_is_used_when_it_is_set() {
+        assert_eq!(
+            xdg_dir(Some(PathBuf::from("/x/data")), None, ".local/share"),
+            PathBuf::from("/x/data/riplika")
+        );
+    }
+
+    #[test]
+    fn without_it_the_standard_place_under_home_is_used() {
+        assert_eq!(
+            xdg_dir(None, Some(PathBuf::from("/home/someone")), ".local/share"),
+            PathBuf::from("/home/someone/.local/share/riplika")
+        );
+        assert_eq!(
+            xdg_dir(None, Some(PathBuf::from("/home/someone")), ".cache"),
+            PathBuf::from("/home/someone/.cache/riplika")
+        );
+    }
+
+    #[test]
+    fn a_rip_does_not_land_in_the_system_temporary_directory() {
+        // On most desktops that is a tmpfs held in RAM, and a disc is eight
+        // gigabytes. Filling it takes the whole session down with it.
+        let rip = Preferences::default().rip_dir();
+        assert!(!rip.starts_with("/tmp/"), "{}", rip.display());
+        assert!(rip.to_string_lossy().contains("riplika"));
+    }
+
+    #[test]
+    fn the_three_directories_are_distinct() {
+        // settings, data and scratch have different lifetimes: one is backed
+        // up, one is rebuilt, one is thrown away
+        let config = Preferences::path();
+        let data = Preferences::data_dir();
+        let cache = Preferences::cache_dir();
+        assert_ne!(data, cache);
+        assert!(!config.starts_with(&cache));
+        assert!(!data.starts_with(&cache));
+    }
+
+    #[test]
+    fn an_explicit_choice_still_wins() {
+        // someone whose home is small should be able to rip elsewhere
+        let p = Preferences {
+            rip_dir: Some(PathBuf::from("/mnt/big/rip")),
+            glyph_table: Some(PathBuf::from("/somewhere/mine.json")),
+            ..Preferences::default()
+        };
+        assert_eq!(p.rip_dir(), PathBuf::from("/mnt/big/rip"));
+        assert_eq!(p.glyph_table(), Some(PathBuf::from("/somewhere/mine.json")));
+    }
+
+    #[test]
+    fn an_absent_glyph_table_is_absent_rather_than_a_path_to_nothing() {
+        // the pipeline warns and keeps the bitmaps; it must not be handed a
+        // path that does not exist and told to read it
+        let p = Preferences {
+            glyph_table: None,
+            words_dir: None,
+            ..Preferences::default()
+        };
+        // whichever way this machine is set up, a missing file is None
+        if !Preferences::default_glyph_table().exists() {
+            assert_eq!(p.glyph_table(), None);
+        }
+        if !Preferences::default_words_dir().is_dir() {
+            assert_eq!(p.words_dir(), None);
+        }
     }
 }

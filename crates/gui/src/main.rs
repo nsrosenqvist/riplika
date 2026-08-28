@@ -1227,13 +1227,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             }
             let disc = app.ui.disc_entry.text().trim().parse::<u32>().ok();
             let settings = app.settings();
-            let rip_dir = app
-                .prefs
-                .prefs
-                .borrow()
-                .rip_dir
-                .clone()
-                .unwrap_or_else(|| std::env::temp_dir().join("riplika-rip"));
+            let rip_dir = app.prefs.prefs.borrow().rip_dir();
             if settings.glyph_table.is_none() {
                 app.toast("No glyph table: subtitles will stay as bitmaps");
             }
@@ -1397,10 +1391,7 @@ mod tests {
         // ripping into the library would leave raw titles among the episodes
         let prefs = Preferences::default();
         let output = prefs.output_dir.clone().unwrap_or_else(|| glib::home_dir().join("Videos"));
-        let rip = prefs
-            .rip_dir
-            .clone()
-            .unwrap_or_else(|| std::env::temp_dir().join("riplika-rip"));
+        let rip = prefs.rip_dir();
         assert_ne!(output, rip);
     }
 

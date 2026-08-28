@@ -340,6 +340,26 @@ python3 flatpak-cargo-generator.py Cargo.lock -o packaging/cargo-sources.json
 flatpak-builder --install --user build packaging/com.nsrosenqvist.Riplika.yml
 ```
 
+## Where things live
+
+| | | |
+|---|---|---|
+| `$XDG_CONFIG_HOME/riplika/` | settings | worth backing up |
+| `$XDG_DATA_HOME/riplika/` | glyph table, wordlists | rebuildable, but slowly |
+| `$XDG_CACHE_HOME/riplika/rip/` | a disc, before encoding | thrown away |
+| login keyring | the TMDB key | not in any file |
+
+Three lifetimes, three places. The rip does **not** go in the system temporary
+directory: on most desktops that is a tmpfs held in RAM, and a disc is eight
+gigabytes - filling it takes the session down with it.
+
+The glyph table and the wordlists are not offered as settings. They are
+application data with a standard place to live, built once by `riplika build`
+and then used without being thought about; there is no answer a user could give
+that would beat the default. Where a rip lands *is* a real question - it wants
+tens of gigabytes, and a small home partition is a good reason to put it
+elsewhere - so that one is asked.
+
 ## Preferences
 
 The window keeps settings in `$XDG_CONFIG_HOME/riplika/preferences.json`, not
