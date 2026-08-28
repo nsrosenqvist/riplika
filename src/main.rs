@@ -105,6 +105,14 @@ enum Cmd {
         #[arg(long)]
         stream: Option<usize>,
     },
+    /// Fingerprint a disc from its title durations, for matching against a
+    /// catalogue. Accepts ripped files or a directory of them.
+    Fingerprint {
+        inputs: Vec<PathBuf>,
+        /// Ignore titles shorter than this many seconds.
+        #[arg(long, default_value_t = 120)]
+        min_seconds: u64,
+    },
     /// Look for labels that are probably wrong.
     Check {
         #[arg(long, default_value = "glyphs.json")]
@@ -240,6 +248,10 @@ fn run() -> Result<(), String> {
             }
             Ok(())
         }
+        Cmd::Fingerprint {
+            inputs,
+            min_seconds,
+        } => fingerprint(&inputs, min_seconds),
         Cmd::Check { table } => check(&Table::load(&table)?),
         Cmd::Verify {
             produced,
@@ -452,6 +464,65 @@ fn build(
     println!("per-glyph spacing  : {learned} glyphs");
     println!("unlabelled         : {}", t.unlabelled());
     println!("table              : {}", table_path.display());
+    Ok(())
+}
+
+/// Identify a disc by the durations of the titles on it.
+///
+/// A DVD carries no usable identifier - the volume label may be just
+/// "PARKS_AND_RECREATION", with no season or disc number - but the set of title
+/// lengths is highly distinctive and survives ripping, so it can be matched
+/// against a catalogue without the disc in hand.
+fn fingerprint(inputs: &[PathBuf], min_seconds: u64) -> Result<(), String> {
+    let mut files: Vec<PathBuf> = Vec::new();
+    for p in inputs {
+        if p.is_dir() {
+            let rd = std::fs::read_dir(p).map_err(|e| format!("{}: {e}", p.display()))?;
+            for e in rd.flatten() {
+                let q = e.path();
+                if q.extension().map_or(false, |x| x == "mkv" || x == "mp4") {
+                    files.push(q);
+                }
+            }
+        } else {
+            files.push(p.clone());
+        }
+    }
+    if files.is_empty() {
+        return Err("no input files".into());
+    }
+
+    let mut secs: Vec<u64> = Vec::new();
+    for f in &files {
+        let out = std::process::Command::new("ffprobe")
+            .args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"])
+            .arg(f)
+            .output()
+            .map_err(|e| format!("ffprobe: {e}"))?;
+        let d: f64 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0.0);
+        let d = d.round() as u64;
+        if d >= min_seconds {
+            secs.push(d);
+        }
+    }
+    secs.sort_unstable_by(|a, b| b.cmp(a));
+
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for d in &secs {
+        for b in d.to_le_bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100_0000_01b3);
+        }
+    }
+    let total: u64 = secs.iter().sum();
+
+    println!("titles >= {min_seconds}s : {}", secs.len());
+    println!("total runtime     : {}h{:02}m", total / 3600, (total % 3600) / 60);
+    println!("fingerprint       : {h:016x}");
+    println!("durations         :");
+    for d in &secs {
+        println!("  {:02}:{:02}:{:02}", d / 3600, (d % 3600) / 60, d % 60);
+    }
     Ok(())
 }
 
