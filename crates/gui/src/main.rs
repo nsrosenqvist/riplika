@@ -183,6 +183,21 @@ const CONTENT_WIDTH: i32 = 860;
 /// Narrower, for a page that is a handful of centred things rather than a form.
 const FOCUSED_WIDTH: i32 = 560;
 
+/// A button that shows what it does as well as saying it.
+///
+/// The utility actions - look again, eject - are read at a glance far more
+/// often than they are read as words, and an icon is what makes that possible.
+/// The one action a page exists for is left as plain text, where a picture
+/// would only compete with it.
+fn labelled_button(icon: &str, label: &str, name: &str) -> gtk::Button {
+    let content = adw::ButtonContent::builder()
+        .icon_name(icon)
+        .label(label)
+        .build();
+    let button = gtk::Button::builder().name(name).child(&content).build();
+    button
+}
+
 fn page(tag: &str, title: &str, child: &impl IsA<gtk::Widget>) -> adw::NavigationPage {
     page_clamped(tag, title, child, CONTENT_WIDTH)
 }
@@ -303,12 +318,9 @@ fn build_ui() -> Ui {
         .halign(gtk::Align::Center)
         .css_classes(vec!["pill".to_string(), "suggested-action".to_string()])
         .build();
-    let refresh = gtk::Button::builder()
-        .label("Look again")
-        .name("refresh")
-        .halign(gtk::Align::Center)
-        .css_classes(vec!["flat".to_string()])
-        .build();
+    let refresh = labelled_button("view-refresh-symbolic", "Look again", "refresh");
+    refresh.set_halign(gtk::Align::Center);
+    refresh.add_css_class("flat");
 
     let drive_secondary = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -318,11 +330,8 @@ fn build_ui() -> Ui {
     drive_secondary.append(&refresh);
     // Swapping discs is what you do most on this page, and reaching for the
     // tray button on an external drive is not always possible.
-    let eject = gtk::Button::builder()
-        .label("Eject")
-        .name("eject")
-        .css_classes(vec!["flat".to_string()])
-        .build();
+    let eject = labelled_button("media-eject-symbolic", "Eject", "eject");
+    eject.add_css_class("flat");
     drive_secondary.append(&eject);
 
     drive_controls.append(&drive_group);
@@ -539,16 +548,11 @@ fn build_ui() -> Ui {
         .halign(gtk::Align::Center)
         .margin_top(12)
         .build();
-    let eject_done = gtk::Button::builder()
-        .label("Eject")
-        .name("eject")
-        .css_classes(vec!["pill".to_string()])
-        .build();
-    let another = gtk::Button::builder()
-        .label("Rip another disc")
-        .name("another")
-        .css_classes(vec!["pill".to_string(), "suggested-action".to_string()])
-        .build();
+    let eject_done = labelled_button("media-eject-symbolic", "Eject", "eject");
+    eject_done.add_css_class("pill");
+    let another = labelled_button("media-optical-symbolic", "Rip another disc", "another");
+    another.add_css_class("pill");
+    another.add_css_class("suggested-action");
     results_actions.append(&eject_done);
     results_actions.append(&another);
     res_body.append(&results_status);
