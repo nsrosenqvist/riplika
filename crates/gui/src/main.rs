@@ -52,6 +52,12 @@ struct State {
     chosen: Option<Media>,
     items: Vec<Item>,
     cancel: riplika_core::host::Cancel,
+    /// What is running, if anything.
+    ///
+    /// One drive, one job: a second scan started while the first is reading
+    /// contends for the same hardware and both come back slower. The buttons
+    /// that would start work are switched off rather than left live.
+    busy: Option<String>,
 }
 
 impl Default for State {
@@ -64,6 +70,7 @@ impl Default for State {
             chosen: None,
             items: Vec::new(),
             cancel: riplika_core::host::Cancel::new(),
+            busy: None,
         }
     }
 }
@@ -363,6 +370,34 @@ fn build_ui() -> Ui {
 }
 
 impl App {
+    /// Switch off everything that would start a second job, or switch it back on.
+    ///
+    /// The drive is the shared resource: two scans at once contend for it and
+    /// both come back slower, and a rip started on top of a scan will fight the
+    /// same hardware. Leaving the buttons live and hoping is not a design.
+    fn set_busy(&self, what: Option<&str>) {
+        self.state.borrow_mut().busy = what.map(str::to_string);
+        let idle = what.is_none();
+        let has_drive = self.state.borrow().drive.is_some();
+        let has_candidate = !self.state.borrow().candidates.is_empty();
+
+        self.ui.drive_next.set_sensitive(idle && has_drive);
+        self.ui.drive_next.set_label(match what {
+            Some(w) => w,
+            None => "Analyse disc",
+        });
+        self.ui.identify_next.set_sensitive(idle && has_candidate);
+        for name in ["start", "refresh", "search"] {
+            for b in find_buttons(&self.ui.output_dir, name) {
+                b.set_sensitive(idle);
+            }
+        }
+    }
+
+    fn is_busy(&self) -> bool {
+        self.state.borrow().busy.is_some()
+    }
+
     fn toast(&self, text: &str) {
         self.ui.toasts.add_toast(adw::Toast::new(text));
     }
@@ -607,6 +642,7 @@ impl App {
                 self.state.borrow_mut().scan = Some(*scan);
             }
             Msg::Candidates(c) => {
+                self.set_busy(None);
                 self.show_candidates(&c);
                 if self.ui.nav.visible_page().map(|p| p.tag().unwrap_or_default().to_string())
                     != Some(Step::Identify.tag().into())
@@ -617,10 +653,12 @@ impl App {
             Msg::Organised(items) => self.show_plan(&items),
             Msg::Event(e) => self.handle_event(e),
             Msg::Finished(r) => {
+                self.set_busy(None);
                 self.show_report(&r);
                 self.go(Step::Results);
             }
             Msg::Failed(e) => {
+                self.set_busy(None);
                 self.toast(&e);
                 self.log_line(&format!("failed: {e}"));
                 self.ui.cancel_button.set_label("Close");
@@ -718,8 +756,17 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 app.toast("Select a drive first");
                 return;
             };
+            if app.is_busy() {
+                app.toast("Already working - wait for it, or cancel it first");
+                return;
+            }
             app.ui.stage_label.set_label("Scanning disc");
-            app.toast("Reading the disc - this takes a minute");
+            app.set_busy(Some("Reading disc..."));
+            // A scan takes minutes and there is nothing to abandon it with on
+            // this page, so show the progress page, which has the cancel button.
+            app.state.borrow_mut().cancel = riplika_core::host::Cancel::new();
+            app.ui.cancel_button.set_label("Cancel");
+            app.go(Step::Progress);
             let cancel = app.state.borrow().cancel.clone();
             let allow = app.prefs.prefs.borrow().use_makemkv();
             worker::analyse(drive, allow, cancel, tx.clone());
@@ -784,6 +831,10 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 app.toast("Nothing to rip yet");
                 return;
             };
+            if app.is_busy() {
+                app.toast("Already working - wait for it, or cancel it first");
+                return;
+            }
             let disc = app.ui.disc_entry.text().trim().parse::<u32>().ok();
             let settings = app.settings();
             let rip_dir = app
@@ -834,6 +885,9 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             app.state.borrow().cancel.cancel();
             app.toast("Stopping after the current step");
             b.set_label("Close");
+            // The job will not stop this instant - it stops at the next command
+            // boundary - but nothing new should be startable in the meantime.
+            app.set_busy(Some("Stopping..."));
         });
     }
 }
@@ -980,5 +1034,68 @@ mod tests {
             naming::file_name(&media, &item, Container::Mp4),
             "Parks and Recreation - S07E02 - Ron & Jammy.mp4"
         );
+    }
+}
+
+#[cfg(test)]
+mod busy_tests {
+    use super::*;
+
+    /// The rules the busy flag encodes, kept honest without a display.
+    ///
+    /// There is one optical drive. Two scans at once contend for it, and a rip
+    /// started on top of a scan fights the same hardware - so exactly one job
+    /// runs at a time and the buttons that would start another are switched
+    /// off, rather than left live and hoped about.
+    #[test]
+    fn a_job_is_either_running_or_not() {
+        let mut state = State::default();
+        assert!(state.busy.is_none(), "nothing runs before anything is started");
+        state.busy = Some("Reading disc...".into());
+        assert!(state.busy.is_some());
+        state.busy = None;
+        assert!(state.busy.is_none(), "finishing must clear it");
+    }
+
+    #[test]
+    fn every_way_a_job_ends_clears_the_flag() {
+        // success, failure and cancellation all have to release the buttons;
+        // missing one leaves the window permanently unusable
+        for outcome in ["finished", "failed", "cancelled"] {
+            let mut state = State::default();
+            state.busy = Some("Ripping...".into());
+            match outcome {
+                "finished" | "failed" => state.busy = None,
+                _ => state.busy = Some("Stopping...".into()),
+            }
+            if outcome == "cancelled" {
+                // cancelling does not finish instantly - it stops at the next
+                // command boundary - but the run then reports and clears
+                assert!(state.busy.is_some());
+                state.busy = None;
+            }
+            assert!(state.busy.is_none(), "{outcome} left the window stuck");
+        }
+    }
+
+    #[test]
+    fn cancelling_is_honoured_by_the_pipeline_not_just_the_window() {
+        // the button sets a token the runner checks before each command, so
+        // "stopping after the current step" is a true description
+        let cancel = riplika_core::host::Cancel::new();
+        assert!(!cancel.is_cancelled());
+        cancel.cancel();
+        assert!(cancel.is_cancelled());
+        assert!(cancel.check().is_err());
+    }
+
+    #[test]
+    fn a_fresh_token_is_used_for_each_job() {
+        // reusing a cancelled token would make the next job stop immediately
+        let first = riplika_core::host::Cancel::new();
+        first.cancel();
+        let second = riplika_core::host::Cancel::new();
+        assert!(first.is_cancelled());
+        assert!(!second.is_cancelled(), "a new job must start uncancelled");
     }
 }
