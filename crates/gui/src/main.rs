@@ -138,6 +138,9 @@ struct Ui {
 }
 
 struct App {
+    /// For work the window starts on its own, rather than in response to a
+    /// button that was given a sender when it was wired.
+    tx: RefCell<Option<std::sync::mpsc::Sender<Msg>>>,
     /// A handle back to itself, so a widget callback can reach the window
     /// without keeping it alive and leaking it.
     me: RefCell<std::rc::Weak<App>>,
@@ -250,6 +253,7 @@ fn build(app: &adw::Application) {
         .build();
 
     let app_state = Rc::new(App {
+        tx: RefCell::new(None),
         me: RefCell::new(std::rc::Weak::new()),
         ui,
         state: RefCell::new(State::default()),
@@ -306,9 +310,24 @@ fn build_ui() -> Ui {
         .css_classes(vec!["flat".to_string()])
         .build();
 
+    let drive_secondary = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(12)
+        .halign(gtk::Align::Center)
+        .build();
+    drive_secondary.append(&refresh);
+    // Swapping discs is what you do most on this page, and reaching for the
+    // tray button on an external drive is not always possible.
+    let eject = gtk::Button::builder()
+        .label("Eject")
+        .name("eject")
+        .css_classes(vec!["flat".to_string()])
+        .build();
+    drive_secondary.append(&eject);
+
     drive_controls.append(&drive_group);
     drive_controls.append(&drive_next);
-    drive_controls.append(&refresh);
+    drive_controls.append(&drive_secondary);
     drive_page.set_child(Some(&drive_controls));
     nav.add(&page(Step::Drive.tag(), "Riplika", &drive_page));
 
@@ -513,8 +532,28 @@ fn build_ui() -> Ui {
     let res_body = body();
     let results_status = adw::StatusPage::builder().title("Done").build();
     let results = adw::PreferencesGroup::builder().title("Files").build();
+    // The disc is finished with, and the next one is the point.
+    let results_actions = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(12)
+        .halign(gtk::Align::Center)
+        .margin_top(12)
+        .build();
+    let eject_done = gtk::Button::builder()
+        .label("Eject")
+        .name("eject")
+        .css_classes(vec!["pill".to_string()])
+        .build();
+    let another = gtk::Button::builder()
+        .label("Rip another disc")
+        .name("another")
+        .css_classes(vec!["pill".to_string(), "suggested-action".to_string()])
+        .build();
+    results_actions.append(&eject_done);
+    results_actions.append(&another);
     res_body.append(&results_status);
     res_body.append(&results);
+    res_body.append(&results_actions);
     nav.add(&page(Step::Results.tag(), "Results", &res_body));
 
     Ui {
@@ -888,6 +927,10 @@ impl App {
         self.me.borrow().clone()
     }
 
+    fn sender(&self) -> std::sync::mpsc::Sender<Msg> {
+        self.tx.borrow().clone().expect("wired before use")
+    }
+
     fn show_report(&self, r: &Report) {
         while let Some(c) = self.ui.results.first_child() {
             self.ui.results.remove(&c);
@@ -990,6 +1033,23 @@ impl App {
     fn handle(&self, msg: Msg) {
         match msg {
             Msg::Drives(d) => self.show_drives(&d),
+            Msg::Ejected => {
+                // Everything known about the disc referred to the one that has
+                // just come out, so it goes rather than being left to look
+                // current beside an empty tray.
+                {
+                    let mut state = self.state.borrow_mut();
+                    state.scan = None;
+                    state.candidates.clear();
+                    state.selected = None;
+                    state.chosen = None;
+                    state.items.clear();
+                }
+                self.show_choice();
+                self.toast("Drive open");
+                self.go(Step::Drive);
+                worker::list_drives(true, self.sender());
+            }
             Msg::Scanned(scan) => {
                 let guess = riplika_core::identify::label::parse(&scan.label);
                 if let Some(d) = guess.disc {
@@ -1103,6 +1163,7 @@ fn choose_folder<F: Fn(PathBuf) + 'static>(window: &adw::ApplicationWindow, titl
 fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
     let channel = worker::Channel::default();
     let tx = channel.sender();
+    *app.tx.borrow_mut() = Some(tx.clone());
 
     app.refresh_paths();
     worker::list_drives(app.prefs.prefs.borrow().use_makemkv(), tx.clone());
@@ -1286,6 +1347,39 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 }
                 app2.refresh_paths();
             });
+        });
+    }
+
+    // Eject, from wherever it is offered ------------------------------------
+    for button in find_buttons(&app.ui.output_dir, "eject") {
+        let app = Rc::clone(app);
+        let tx = tx.clone();
+        button.connect_clicked(move |_| {
+            if app.is_busy() {
+                app.toast("Not while the drive is being read");
+                return;
+            }
+            let device = app
+                .state
+                .borrow()
+                .drive
+                .as_ref()
+                .map(|d| d.device.clone());
+            match device {
+                Some(device) => {
+                    app.toast("Opening the drive");
+                    worker::eject(device, tx.clone());
+                }
+                None => app.toast("No drive to open"),
+            }
+        });
+    }
+    for button in find_buttons(&app.ui.output_dir, "another") {
+        let app = Rc::clone(app);
+        let tx = tx.clone();
+        button.connect_clicked(move |_| {
+            app.go(Step::Drive);
+            worker::list_drives(true, tx.clone());
         });
     }
 

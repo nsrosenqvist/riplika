@@ -8,7 +8,7 @@
 //! able to intervene between them - to correct a wrong identification, or to
 //! change the quality after seeing how many episodes there are.
 
-use riplika_core::host::{Cancel, RealFs, RealRunner};
+use riplika_core::host::{Cancel, RealFs, RealRunner, Runner};
 use riplika_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, UreqHttp, Wikidata};
 use riplika_core::job::{Event, Pipeline, Ports, Report};
 use riplika_core::media::FfProbe;
@@ -20,6 +20,8 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 /// What a worker sends back to the window.
 pub enum Msg {
     Drives(Vec<Drive>),
+    /// The drive opened, so what was known about the disc no longer holds.
+    Ejected,
     Scanned(Box<DiscScan>),
     Candidates(Vec<Candidate>),
     Organised(Vec<Item>),
@@ -138,6 +140,31 @@ pub fn analyse(drive: Drive, allow_makemkv: bool, cancel: Cancel, tx: Sender<Msg
                 Ok(())
             })(),
         );
+    });
+}
+
+/// Open the drive.
+///
+/// On a thread, because a drive still reading will not answer until it stops -
+/// and the window must not stop with it.
+pub fn eject(device: String, tx: Sender<Msg>) {
+    std::thread::spawn(move || {
+        let real = Real::new(Cancel::new());
+        let cmd = riplika_core::rip::eject_command(std::path::Path::new(&device));
+        match real.runner.run(&cmd) {
+            Ok(out) if out.ok() => {
+                let _ = tx.send(Msg::Ejected);
+            }
+            Ok(out) => {
+                let _ = tx.send(Msg::Failed(format!(
+                    "could not open the drive: {}",
+                    out.last_error()
+                )));
+            }
+            Err(e) => {
+                let _ = tx.send(Msg::Failed(format!("could not open the drive: {e}")));
+            }
+        }
     });
 }
 

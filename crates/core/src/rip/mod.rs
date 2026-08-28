@@ -4,10 +4,26 @@ pub mod dvd;
 pub mod iso;
 pub mod makemkv;
 
-use crate::host::Runner;
+use crate::host::{Command, Runner};
 use crate::model::{DiscScan, DiscTitle, Drive};
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
+
+/// Open the drive.
+///
+/// A separate command rather than an ioctl of our own: `eject` already knows
+/// the several ways a tray can be persuaded to open, and which one a slot-load
+/// or an external enclosure needs.
+pub fn eject_command(device: &Path) -> Command {
+    Command::new("eject").path(device)
+}
+
+/// How long to wait for a tray before giving up on it.
+///
+/// A drive still finishing a read will not answer at all - the request queues
+/// behind it, and on a wedged drive it never returns. Waiting forever would
+/// hang whoever asked, so the wait is bounded and the failure is reported.
+pub const EJECT_TIMEOUT_SECONDS: u64 = 20;
 
 /// Titles shorter than this are menu loops and transitions, not content.
 pub const DEFAULT_MIN_LENGTH_SECONDS: u32 = 120;
@@ -484,5 +500,24 @@ TINFO:0,27,0,"title_t00.mkv"
         // the rip went through makemkvcon, not ffmpeg
         assert!(r.calls_to("makemkvcon").len() > 1);
         assert!(r.calls_to("ffmpeg").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod eject_tests {
+    use super::*;
+
+    #[test]
+    fn ejecting_names_the_device() {
+        let c = eject_command(Path::new("/dev/sr0"));
+        assert_eq!(c.program, "eject");
+        assert_eq!(c.args, vec!["/dev/sr0"]);
+    }
+
+    #[test]
+    fn the_wait_is_bounded() {
+        // A drive still finishing a read does not answer, and on a wedged one
+        // it never will. Waiting forever would hang whoever asked.
+        assert!(EJECT_TIMEOUT_SECONDS > 0 && EJECT_TIMEOUT_SECONDS <= 60);
     }
 }
