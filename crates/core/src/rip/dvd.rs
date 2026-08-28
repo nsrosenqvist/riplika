@@ -587,7 +587,19 @@ impl super::Ripper for DvdVideo<'_> {
         drive: &Drive,
         progress: &mut dyn FnMut(f32, Option<&str>),
     ) -> Result<DiscScan> {
-        self.scan_checked(drive, progress).map(|(s, _)| s)
+        let (scan, health) = self.scan_checked(drive, progress)?;
+        // Used on its own there is no fallback to hand the disc to, so an
+        // untrustworthy scan has to be an error. Returning it would hand back a
+        // disc with its episodes missing and nothing to say they were ever
+        // there - which is the failure this health check exists to prevent, and
+        // it was only being applied when a fallback happened to be configured.
+        if !health.is_trustworthy() {
+            return Err(Error(format!(
+                "{}. MakeMKV works around this - use --reader auto.",
+                health.complaint()
+            )));
+        }
+        Ok(scan)
     }
 
     fn rip(
@@ -1295,5 +1307,44 @@ mod cancel_tests {
         assert!(!runner.cancelled());
         cancel.cancel();
         assert!(runner.cancelled());
+    }
+}
+
+#[cfg(test)]
+mod health_enforcement_tests {
+    use super::*;
+    use crate::host::FakeRunner;
+    use crate::rip::Ripper;
+
+    const CSS_FAILURE: &str =
+        "libdvdnav: Error cracking CSS key for /VIDEO_TS/VTS_06_1.VOB (0x000651ea)";
+
+    fn drive() -> Drive {
+        Drive {
+            id: "/dev/riplika-no-such-device".into(),
+            device: "/dev/riplika-no-such-device".into(),
+            name: "d".into(),
+            disc_label: Some("DISC".into()),
+        }
+    }
+
+    #[test]
+    fn a_partial_scan_is_refused_rather_than_returned() {
+        // Used on its own there is nothing to fall back to, so handing back
+        // what could be read means handing back a disc with its episodes
+        // missing and nothing to say they existed. On a real disc that came out
+        // as twenty-three short extras and no episodes at all.
+        let r = FakeRunner::new().fail("ffprobe", CSS_FAILURE);
+        let d = DvdVideo { runner: &r, max_title: 8 };
+        let e = d.scan(&drive(), &mut |_, _| {}).unwrap_err();
+        assert!(e.0.contains("decrypt"), "{}", e.0);
+        assert!(e.0.contains("--reader auto"), "must say what to do: {}", e.0);
+    }
+
+    #[test]
+    fn a_clean_scan_still_comes_back_normally() {
+        let r = FakeRunner::new().on("-title 1 ", tests::EPISODE);
+        let d = DvdVideo { runner: &r, max_title: 3 };
+        assert_eq!(d.scan(&drive(), &mut |_, _| {}).unwrap().titles.len(), 1);
     }
 }

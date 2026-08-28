@@ -125,6 +125,7 @@ struct Ui {
     stage_label: gtk::Label,
     progress: gtk::ProgressBar,
     log: gtk::TextView,
+    log_scroll: gtk::ScrolledWindow,
     cancel_button: gtk::Button,
     results: adw::PreferencesGroup,
     results_status: adw::StatusPage,
@@ -432,8 +433,14 @@ fn build_ui() -> Ui {
         .build();
     prog_body.append(&stage_label);
     prog_body.append(&progress);
-    prog_body.append(&log_scroll);
+    // Directly under the bar: it is the page's only action, and putting it
+    // below the log made its position depend on how much had been logged.
     prog_body.append(&cancel_button);
+    // Hidden until there is something in it. A scan logs nothing at all, and an
+    // empty card between the progress bar and the button is furniture for
+    // content that may never arrive.
+    log_scroll.set_visible(false);
+    prog_body.append(&log_scroll);
     // While a scan is running there are three short things on this page, and
     // pinned to the top of a tall window they look stranded. Centred, the page
     // reads as one thing happening. It still grows downwards normally once the
@@ -473,6 +480,7 @@ fn build_ui() -> Ui {
         stage_label,
         progress,
         log,
+        log_scroll,
         cancel_button,
         results,
         results_status,
@@ -525,6 +533,7 @@ impl App {
     }
 
     fn log_line(&self, text: &str) {
+        self.ui.log_scroll.set_visible(true);
         let buffer = self.ui.log.buffer();
         let mut end = buffer.end_iter();
         if buffer.char_count() > 0 {
@@ -823,6 +832,12 @@ impl App {
         )));
     }
 
+    /// Empty the log, so a second disc does not begin with the first one's.
+    fn clear_log(&self) {
+        self.ui.log.buffer().set_text("");
+        self.ui.log_scroll.set_visible(false);
+    }
+
     /// Say what the disc turned out to hold, before reading it.
     ///
     /// Knowing that a disc is seven episodes and thirty pieces of bonus
@@ -1021,6 +1036,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 return;
             }
             app.ui.stage_label.set_label("Scanning disc");
+            app.clear_log();
             app.set_busy(Some("Reading disc..."));
             // A scan takes minutes and there is nothing to abandon it with on
             // this page, so show the progress page, which has the cancel button.
