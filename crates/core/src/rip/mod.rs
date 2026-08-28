@@ -9,6 +9,83 @@ use crate::model::{DiscScan, DiscTitle, Drive};
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
 
+/// Which optical device is mounted at a given path.
+///
+/// The desktop hands an application a *mount point* when a disc is inserted -
+/// `/run/media/someone/PARKS_AND_RECREATION` - because that is what it knows
+/// about. Everything here works from the device, so the two have to be
+/// connected, and the kernel's mount table is what connects them.
+pub fn device_mounted_at(mounts: &str, mount_point: &Path) -> Option<PathBuf> {
+    let wanted = mount_point.to_string_lossy();
+    for line in mounts.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(device), Some(at)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        // /proc/mounts escapes spaces and the like as octal
+        let at = unescape_mount(at);
+        if at == wanted && device.starts_with("/dev/") {
+            return Some(PathBuf::from(device));
+        }
+    }
+    None
+}
+
+/// Undo the octal escaping the kernel uses in its mount table.
+fn unescape_mount(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    let bytes: Vec<char> = path.chars().collect();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == '\\' && i + 3 < bytes.len() {
+            let digits: String = bytes[i + 1..i + 4].iter().collect();
+            if let Ok(code) = u8::from_str_radix(&digits, 8) {
+                out.push(code as char);
+                i += 4;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
+/// Work out which drive the desktop is pointing at.
+///
+/// Accepts what a `.desktop` file's `%u` actually delivers: a `file://` URI, a
+/// plain mount point, or a device node if something passes one directly.
+pub fn drive_from_argument(argument: &str, mounts: &str) -> Option<PathBuf> {
+    let path = argument
+        .strip_prefix("file://")
+        .map(percent_decode)
+        .unwrap_or_else(|| argument.to_string());
+    let path = PathBuf::from(path.trim_end_matches('/'));
+
+    if path.to_string_lossy().starts_with("/dev/") {
+        return Some(path);
+    }
+    device_mounted_at(mounts, &path)
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Open the drive.
 ///
 /// A separate command rather than an ioctl of our own: `eject` already knows
@@ -519,5 +596,68 @@ mod eject_tests {
         // A drive still finishing a read does not answer, and on a wedged one
         // it never will. Waiting forever would hang whoever asked.
         assert!(EJECT_TIMEOUT_SECONDS > 0 && EJECT_TIMEOUT_SECONDS <= 60);
+    }
+}
+
+#[cfg(test)]
+mod handler_tests {
+    use super::*;
+
+    /// The kernel's mount table, as it looks with a DVD in the drive.
+    const MOUNTS: &str = "\
+/dev/nvme0n1p6 / ext4 rw,relatime 0 0
+/dev/sr0 /run/media/niklas/PARKS_AND_RECREATION udf ro,nosuid,nodev,relatime 0 0
+tmpfs /tmp tmpfs rw,nosuid,nodev 0 0";
+
+    #[test]
+    fn a_mount_point_leads_back_to_its_device() {
+        // the desktop hands over a mount point, and everything here works from
+        // the device
+        assert_eq!(
+            device_mounted_at(MOUNTS, Path::new("/run/media/niklas/PARKS_AND_RECREATION")),
+            Some(PathBuf::from("/dev/sr0"))
+        );
+        assert_eq!(device_mounted_at(MOUNTS, Path::new("/nowhere")), None);
+    }
+
+    #[test]
+    fn a_uri_is_what_a_desktop_file_actually_delivers() {
+        assert_eq!(
+            drive_from_argument("file:///run/media/niklas/PARKS_AND_RECREATION", MOUNTS),
+            Some(PathBuf::from("/dev/sr0"))
+        );
+    }
+
+    #[test]
+    fn a_label_with_a_space_survives_both_escapings() {
+        // the URI percent-encodes it and the mount table escapes it in octal,
+        // and they are not the same encoding
+        let mounts = "/dev/sr0 /run/media/niklas/THE\\040BIG\\040LEBOWSKI udf ro 0 0";
+        assert_eq!(
+            drive_from_argument("file:///run/media/niklas/THE%20BIG%20LEBOWSKI", mounts),
+            Some(PathBuf::from("/dev/sr0"))
+        );
+    }
+
+    #[test]
+    fn a_device_passed_directly_is_taken_as_given() {
+        assert_eq!(
+            drive_from_argument("/dev/sr0", ""),
+            Some(PathBuf::from("/dev/sr0"))
+        );
+    }
+
+    #[test]
+    fn a_trailing_slash_does_not_prevent_a_match() {
+        assert_eq!(
+            drive_from_argument("file:///run/media/niklas/PARKS_AND_RECREATION/", MOUNTS),
+            Some(PathBuf::from("/dev/sr0"))
+        );
+    }
+
+    #[test]
+    fn something_that_is_not_a_disc_matches_nothing() {
+        assert_eq!(drive_from_argument("file:///home/niklas/notes.txt", MOUNTS), None);
+        assert_eq!(drive_from_argument("", MOUNTS), None);
     }
 }

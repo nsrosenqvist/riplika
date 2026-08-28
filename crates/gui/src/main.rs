@@ -16,7 +16,7 @@ use riplika_core::lang::{self, LanguageSet};
 use riplika_core::prefs::Preferences;
 use riplika_core::model::*;
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 use worker::Msg;
@@ -76,6 +76,8 @@ struct State {
     query: String,
     /// Turns progress into a time remaining.
     eta: riplika_core::job::Eta,
+    /// The disc the desktop handed us, if it launched us for one.
+    handed: Option<String>,
     /// A catalogue search is in flight, so its result should be announced.
     searching: bool,
     /// What is running, if anything.
@@ -100,6 +102,7 @@ impl Default for State {
             busy: None,
             query: String::new(),
             eta: riplika_core::job::Eta::new(),
+            handed: None,
             searching: false,
         }
     }
@@ -151,9 +154,14 @@ struct App {
 
 
 fn main() -> glib::ExitCode {
+    // What the desktop passes when a disc is inserted: the mount point of the
+    // volume it just mounted, as a file:// URI. Read before GTK sees it, since
+    // it is not an option GTK knows.
+    let handed: Option<String> = std::env::args().nth(1).filter(|a| !a.starts_with('-'));
+
     let app = adw::Application::builder().application_id(APP_ID).build();
-    app.connect_activate(build);
-    app.run()
+    app.connect_activate(move |app| build(app, handed.clone()));
+    app.run_with_args::<&str>(&[])
 }
 
 fn quality_at(row: &adw::ComboRow) -> Quality {
@@ -265,7 +273,7 @@ fn body() -> gtk::Box {
         .build()
 }
 
-fn build(app: &adw::Application) {
+fn build(app: &adw::Application, handed: Option<String>) {
     let ui = build_ui();
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -284,6 +292,7 @@ fn build(app: &adw::Application) {
     });
 
     *app_state.me.borrow_mut() = Rc::downgrade(&app_state);
+    app_state.state.borrow_mut().handed = handed;
     wire(&app_state, &window);
     window.present();
 }
@@ -841,9 +850,18 @@ impl App {
         // A chooser offering one option is not a choice worth showing.
         self.ui.drive_group.set_visible(drives.len() > 1);
 
-        // Prefer a drive with something in it: on a machine with two, the one
-        // holding a disc is what was meant.
-        let pick = drives.iter().position(Drive::has_disc).unwrap_or(0);
+        // If the desktop launched us for a particular disc, that is the one
+        // meant - on a machine with two drives it is the only way to know.
+        let handed = self.state.borrow().handed.clone().and_then(|arg| {
+            let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+            riplika_core::rip::drive_from_argument(&arg, &mounts)
+        });
+        let pick = handed
+            .and_then(|device| drives.iter().position(|d| Path::new(&d.device) == device))
+            // Otherwise prefer a drive with something in it: on a machine with
+            // two, the one holding a disc is what was meant.
+            .or_else(|| drives.iter().position(Drive::has_disc))
+            .unwrap_or(0);
         if !drives.is_empty() {
             self.ui.drive_combo.set_selected(pick as u32);
         }

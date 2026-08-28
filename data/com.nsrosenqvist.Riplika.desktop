@@ -3,9 +3,13 @@ Type=Application
 Name=Riplika
 GenericName=Disc Ripper
 Comment=Turn a disc into a tagged, subtitled library
-Exec=riplika-gui
+Exec=riplika-gui %u
 Icon=com.nsrosenqvist.Riplika
 Terminal=false
 Categories=AudioVideo;Video;
+# What the desktop offers this application for when a disc is inserted. The
+# shell hands over the mount point, so the application has to work back from
+# that to a device.
+MimeType=x-content/video-dvd;x-content/video-bluray;x-content/video-vcd;x-content/video-svcd;
 Keywords=DVD;Blu-ray;disc;rip;subtitles;transcode;
 StartupNotify=true
