@@ -573,12 +573,11 @@ impl App {
         // One rule for whether analysing is possible, applied from both places.
         self.refresh_drive_page();
         self.ui.identify_next.set_sensitive(idle && has_candidate);
-        for name in ["refresh", "search"] {
+        for name in ["start", "refresh", "search"] {
             for b in find_buttons(&self.ui.output_dir, name) {
                 b.set_sensitive(idle);
             }
         }
-        // Start has a second condition of its own.
         self.refresh_settings_page();
     }
 
@@ -634,42 +633,35 @@ impl App {
     /// first, so reading them top to bottom gives the preference order, and the
     /// first one ends up the default track.
     fn chosen_languages(&self) -> LanguageSet {
-        LanguageSet(
-            self.ui
-                .language_rows
-                .borrow()
-                .iter()
+        let rows = self.ui.language_rows.borrow();
+        if rows.is_empty() {
+            // The disc offers no language tracks, so there is nothing to say
+            // about them - not the same as choosing none.
+            return LanguageSet::Everything;
+        }
+        LanguageSet::Only(
+            rows.iter()
                 .filter(|(_, row)| row.is_active())
                 .map(|(code, _)| lang::parse(code))
                 .collect(),
         )
     }
 
-    /// Is the language choice usable?
+    /// Say what unticking everything will actually produce.
     ///
-    /// An empty set means "no filter" to the pipeline, so unticking everything
-    /// would keep every language rather than none - the opposite of what
-    /// unticking looks like it does. A disc with no language tracks at all is
-    /// a different matter and is fine.
-    fn languages_chosen(&self) -> bool {
-        let rows = self.ui.language_rows.borrow();
-        rows.is_empty() || rows.iter().any(|(_, r)| r.is_active())
-    }
-
-    /// Re-read the rip page from its own controls.
+    /// It is a legitimate choice - video with the disc's own soundtrack and no
+    /// subtitles - so it is honoured rather than refused. It is also unusual
+    /// enough to be worth confirming out loud.
     fn refresh_settings_page(&self) {
-        let ok = self.languages_chosen();
-        for b in find_buttons(&self.ui.output_dir, "start") {
-            b.set_sensitive(ok && !self.is_busy());
-        }
-        self.ui.language_group.set_description(Some(if ok {
+        let rows = self.ui.language_rows.borrow();
+        let none_ticked = !rows.is_empty() && !rows.iter().any(|(_, r)| r.is_active());
+        drop(rows);
+        self.ui.language_group.set_description(Some(if none_ticked {
+            "None chosen: no subtitles, and the disc's first audio track kept \
+             so the result is not silent."
+        } else {
             "What this disc carries. Your preferred languages start ticked; \
              the first becomes the default track."
-        } else {
-            // Say what is wrong where the problem is, rather than only grey out
-            // a button at the other end of the page.
-            "Choose at least one language. Unticking them all would keep every \
-             language, not none."
         }));
     }
 
@@ -1262,10 +1254,6 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             };
             if app.is_busy() {
                 app.toast("Already working - wait for it, or cancel it first");
-                return;
-            }
-            if !app.languages_chosen() {
-                app.toast("Choose at least one language");
                 return;
             }
             let disc = app.ui.disc_entry.text().trim().parse::<u32>().ok();

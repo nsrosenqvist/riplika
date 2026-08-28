@@ -107,7 +107,7 @@ where
     let summary = |p: &Preferences| {
         let names: Vec<String> = p
             .languages()
-            .0
+            .wanted()
             .iter()
             .map(|l| l.name.clone())
             .collect();

@@ -86,28 +86,49 @@ pub fn all() -> Vec<Language> {
     TABLE.iter().map(|(n, _, _)| parse(n)).collect()
 }
 
-/// The languages a user asked to keep, **in preference order**.
+/// What the user asked to keep.
 ///
-/// Order is meaningful, not cosmetic: the first language listed ends up first
-/// in the output file and gets the default flag, so `swedish,english` really
-/// does make a player open on Swedish.
+/// Two distinct things, and conflating them is a trap: "I did not say" and "I
+/// said none" look the same as an empty list but must not behave the same. A
+/// command line with no `--languages` has no preference; a window where every
+/// language has been unticked has a very definite one, and answering it by
+/// keeping everything is the opposite of what unticking looks like it does.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct LanguageSet(pub Vec<Language>);
+pub enum LanguageSet {
+    /// No preference: keep whatever the disc carries.
+    #[default]
+    Everything,
+    /// Exactly these, in this order. Empty means none.
+    Only(Vec<Language>),
+}
 
 impl LanguageSet {
-    /// Parse a `english,swedish` style list. Empty means "keep everything".
+    /// Parse a `english,swedish` style list. Nothing said means no preference.
     pub fn parse(spec: &str) -> Self {
-        LanguageSet(
-            spec.split([',', ';'])
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(parse)
-                .collect(),
-        )
+        let wanted: Vec<Language> = spec
+            .split([',', ';'])
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(parse)
+            .collect();
+        if wanted.is_empty() {
+            LanguageSet::Everything
+        } else {
+            LanguageSet::Only(wanted)
+        }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+    /// The languages named, if any were.
+    pub fn wanted(&self) -> &[Language] {
+        match self {
+            LanguageSet::Everything => &[],
+            LanguageSet::Only(v) => v,
+        }
+    }
+
+    /// Was no preference expressed at all?
+    pub fn is_everything(&self) -> bool {
+        matches!(self, LanguageSet::Everything)
     }
 
     /// Pick which of `tags` to keep, returning indices in preference order.
@@ -116,11 +137,11 @@ impl LanguageSet {
     /// English tracks stay in their original relative order rather than the
     /// first one being chosen twice.
     pub fn select(&self, tags: &[String]) -> Vec<usize> {
-        if self.is_empty() {
+        let LanguageSet::Only(wanted) = self else {
             return (0..tags.len()).collect();
-        }
+        };
         let mut keep = Vec::new();
-        for want in &self.0 {
+        for want in wanted {
             for (i, tag) in tags.iter().enumerate() {
                 if !keep.contains(&i) && want.matches(tag) {
                     keep.push(i);
@@ -132,13 +153,17 @@ impl LanguageSet {
 
     /// Which tracks to keep, with the fallbacks each stream type needs.
     ///
-    /// A file with no audio is broken, so an audio filter that matches nothing
-    /// keeps everything. Missing subtitles are survivable and a wrong-language
-    /// subtitle is worse than none, so that filter is honoured exactly.
+    /// Subtitles are honoured exactly, including down to none: a subtitle in a
+    /// language you cannot read is worse than no subtitle.
+    ///
+    /// Audio cannot be, because a video with no sound is a broken rip rather
+    /// than a spare one. When nothing matches, the disc's first track is kept -
+    /// one track, not all of them, so asking for Japanese on a disc that has
+    /// none does not silently hand back Spanish as well as English.
     pub fn select_with_fallback(&self, tags: &[String], kind: crate::model::TrackKind) -> Vec<usize> {
         let keep = self.select(tags);
-        if keep.is_empty() && kind == crate::model::TrackKind::Audio {
-            return (0..tags.len()).collect();
+        if keep.is_empty() && kind == crate::model::TrackKind::Audio && !tags.is_empty() {
+            return vec![0];
         }
         keep
     }
@@ -146,8 +171,14 @@ impl LanguageSet {
 
 impl fmt::Display for LanguageSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let names: Vec<&str> = self.0.iter().map(|l| l.name.as_str()).collect();
-        f.write_str(&names.join(", "))
+        match self {
+            LanguageSet::Everything => f.write_str("every language"),
+            LanguageSet::Only(v) if v.is_empty() => f.write_str("none"),
+            LanguageSet::Only(v) => {
+                let names: Vec<&str> = v.iter().map(|l| l.name.as_str()).collect();
+                f.write_str(&names.join(", "))
+            }
+        }
     }
 }
 
@@ -201,17 +232,39 @@ mod tests {
     }
 
     #[test]
-    fn empty_set_keeps_everything() {
+    fn saying_nothing_keeps_everything() {
+        // a command line with no --languages has no preference
         let set = LanguageSet::parse("");
+        assert!(set.is_everything());
         assert_eq!(set.select(&tags(&["eng", "swe"])), vec![0, 1]);
+    }
+
+    #[test]
+    fn saying_none_is_not_the_same_as_saying_nothing() {
+        // The trap this replaces: both were an empty list, so unticking every
+        // language in the window kept every language - the opposite of what it
+        // looks like it does.
+        let none = LanguageSet::Only(Vec::new());
+        assert!(!none.is_everything());
+        assert!(none.select(&tags(&["eng", "swe"])).is_empty());
+    }
+
+    #[test]
+    fn choosing_no_language_leaves_no_subtitles_but_is_not_silent() {
+        // a video with no sound is a broken rip rather than a spare one
+        let none = LanguageSet::Only(Vec::new());
+        let t = tags(&["eng", "swe"]);
+        assert!(none.select_with_fallback(&t, TrackKind::Subtitle).is_empty());
+        assert_eq!(none.select_with_fallback(&t, TrackKind::Audio), vec![0]);
     }
 
     #[test]
     fn audio_falls_back_but_subtitles_do_not() {
         let set = LanguageSet::parse("japanese");
         let t = tags(&["eng", "swe"]);
-        // no audio at all is a broken file, so keep what there is
-        assert_eq!(set.select_with_fallback(&t, TrackKind::Audio), vec![0, 1]);
+        // one track, not all of them: asking for Japanese on a disc that has
+        // none should not quietly hand back Spanish as well as English
+        assert_eq!(set.select_with_fallback(&t, TrackKind::Audio), vec![0]);
         // a subtitle in a language you cannot read is worse than none
         assert!(set.select_with_fallback(&t, TrackKind::Subtitle).is_empty());
     }
@@ -219,7 +272,7 @@ mod tests {
     #[test]
     fn separators_and_spacing_are_forgiving() {
         assert_eq!(
-            LanguageSet::parse(" english ; swedish , ").0.len(),
+            LanguageSet::parse(" english ; swedish , ").wanted().len(),
             2
         );
     }

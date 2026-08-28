@@ -98,7 +98,7 @@ impl Preferences {
     }
 
     pub fn languages(&self) -> LanguageSet {
-        LanguageSet(self.preferred_languages.iter().map(|c| lang::parse(c)).collect())
+        LanguageSet::Only(self.preferred_languages.iter().map(|c| lang::parse(c)).collect())
     }
 
     /// Which of `available` to tick, in preference order, then the rest.
@@ -110,7 +110,7 @@ impl Preferences {
         let wanted = self.languages();
         let mut out: Vec<(String, bool)> = Vec::new();
         // preferred ones first, in preference order
-        for want in &wanted.0 {
+        for want in wanted.wanted() {
             for a in available {
                 if want.matches(a) && !out.iter().any(|(x, _)| x == a) {
                     out.push((a.clone(), true));
