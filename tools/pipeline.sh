@@ -15,12 +15,22 @@
 # Wordlists are looked up as <words-dir>/<code>.txt, e.g. words/swe.txt. Set the
 # directory with RIPPER_WORDS; without a match the language falls back to
 # structural rules, which is fine but less accurate.
+#
+# Once a track has been recognised its bitmap is redundant, and a client that
+# selects a bitmap track forces the server to burn it into the picture and
+# re-encode. So the bitmaps are dropped; --keep-bitmap-subs retains them. A
+# track whose recognition failed keeps its bitmap either way - dropping it
+# would lose that language entirely.
 set -u
 RIP="$1"; OUT="$2"; MAP="$3"; TABLE="$4"; SEASON="$5"; TOTAL="$6"
 shift 6
 VQ="${1:-medium}"; [ $# -gt 0 ] && shift
 AQ="${1:-high}";   [ $# -gt 0 ] && shift
-ENC_ARGS=("$@")          # e.g. --dual-audio --languages english,swedish
+ENC_ARGS=()              # e.g. --dual-audio --languages english,swedish
+KEEP_BITMAP=0
+for _a in "$@"; do
+  if [ "$_a" = "--keep-bitmap-subs" ]; then KEEP_BITMAP=1; else ENC_ARGS+=("$_a"); fi
+done
 HERE="$(dirname "$0")"
 RIPPER="$HERE/../target/release/ripper"
 WORDS="${RIPPER_WORDS:-$HERE/../work/words}"
@@ -52,6 +62,7 @@ while IFS='|' read -r stem label part title date ext <&3; do
       | sed 's/,*$//')
   srts=()
   srtlangs=()
+  failed=()
   for i in "${!sublangs[@]}"; do
     code="${sublangs[$i]}"
     [ -z "$code" ] && code="und"
@@ -74,7 +85,8 @@ while IFS='|' read -r stem label part title date ext <&3; do
         echo "    subs $code: $cues cues, $note"
       fi
     else
-      echo "    subs $code: recognition failed, leaving the bitmap track only"
+      echo "    subs $code: recognition failed, keeping its bitmap track"
+      failed+=("$i")
       rm -f "$out"
     fi
   done
@@ -90,8 +102,17 @@ while IFS='|' read -r stem label part title date ext <&3; do
       [ "$n" = 0 ] && dispo+=(-disposition:s:0 default) || dispo+=(-disposition:s:$n 0)
     done
     nsrt=${#srts[@]}
-    nbmp=$(ffprobe -v error -select_streams s -show_entries stream=index -of csv=p=0 "$tmp" | grep -c . || true)
-    maps+=(-map 0:s)
+    if [ "$KEEP_BITMAP" = 1 ]; then
+      maps+=(-map 0:s)
+      nbmp=$(ffprobe -v error -select_streams s -show_entries stream=index \
+              -of csv=p=0 "$tmp" | grep -c . || true)
+    else
+      # only the tracks recognition could not handle
+      nbmp=0
+      for i in ${failed[@]+"${failed[@]}"}; do
+        maps+=(-map "0:s:$i"); nbmp=$((nbmp + 1))
+      done
+    fi
     for ((b = 0; b < nbmp; b++)); do dispo+=(-disposition:s:$((nsrt + b)) 0); done
 
     if ffmpeg -v error -y -nostdin -i "$tmp" "${ins[@]}" \
