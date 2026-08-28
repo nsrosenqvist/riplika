@@ -106,6 +106,25 @@ enum Cmd {
         #[command(flatten)]
         output: Output,
     },
+    /// Recover a damaged disc into an image, a sector at a time.
+    ///
+    /// Reads the easy data first and works on the damage afterwards, keeping a
+    /// map so it can be stopped, the disc cleaned, and resumed.
+    Rescue {
+        /// Device, e.g. /dev/sr0.
+        device: PathBuf,
+        /// Where the image goes. A .map file is written beside it.
+        image: PathBuf,
+        /// Video title set to rescue. Omit for the whole disc.
+        #[arg(long)]
+        vts: Option<u8>,
+        /// Program chains within that title set, e.g. 2-8. Omit for all.
+        #[arg(long)]
+        chains: Option<String>,
+        /// Show what would be read and stop.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Process an already-ripped directory, skipping the disc.
     Process {
         dir: PathBuf,
@@ -248,6 +267,9 @@ fn dispatch() -> Result<(), String> {
             dry_run,
             output.settings()?,
         ),
+        Cmd::Rescue { device, image, vts, chains, dry_run } => {
+            run::rescue(&device, &image, vts, chains.as_deref(), dry_run)
+        }
         Cmd::Process { dir, title, season, disc, dry_run, output } => run::process(
             &dir,
             title.as_deref(),

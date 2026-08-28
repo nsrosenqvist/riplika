@@ -288,6 +288,29 @@ pub fn inspect_stderr(stderr: &str, health: &mut ScanHealth) {
     }
 }
 
+/// What to suggest when a title cannot be read at all.
+///
+/// Deliberately a suggestion rather than an automatic escalation. A sector
+/// rescue can take hours and wants the disc cleaned first, so it is a decision
+/// rather than something to start on someone's behalf - but they should not
+/// have to go and find out that it exists.
+pub fn rescue_advice(device: &Path, title: u32) -> String {
+    let vts = super::iso::device_reader(device)
+        .and_then(|mut r| super::iso::title_table(&mut r))
+        .ok()
+        .and_then(|table| table.iter().find(|t| t.number == title).map(|t| t.vts));
+    match vts {
+        Some(vts) => format!(
+            "Try recovering it: riplika rescue {} disc.iso --vts {vts}",
+            device.display()
+        ),
+        None => format!(
+            "Try recovering it: riplika rescue {} disc.iso",
+            device.display()
+        ),
+    }
+}
+
 /// A [`Ripper`](super::Ripper) that needs no proprietary software.
 pub struct DvdVideo<'a> {
     pub runner: &'a dyn Runner,
@@ -455,8 +478,9 @@ impl DvdVideo<'_> {
         let (parts, lost) = self.salvage(device, title, dest, report)?;
         if parts.is_empty() {
             return Err(Error(format!(
-                "unreadable ({})",
-                trouble.join("; ")
+                "unreadable ({}). {}",
+                trouble.join("; "),
+                rescue_advice(device, title.id)
             )));
         }
         self.concatenate(&parts, dest)?;
@@ -1043,5 +1067,20 @@ mod tolerance_tests {
         assert!(e.0.contains("unreadable"), "{}", e.0);
         // and it says what it tried, so the failure is diagnosable
         assert!(e.0.contains("key"), "{}", e.0);
+    }
+}
+
+#[cfg(test)]
+mod advice_tests {
+    use super::*;
+
+    #[test]
+    fn a_title_that_cannot_be_read_points_at_the_rescue_command() {
+        // the rescue takes hours and wants the disc cleaned first, so it is a
+        // suggestion rather than something started on the user's behalf - but
+        // they should not have to discover it exists
+        let advice = rescue_advice(Path::new("/dev/riplika-no-such-device"), 41);
+        assert!(advice.contains("riplika rescue"), "{advice}");
+        assert!(advice.contains("/dev/riplika-no-such-device"), "{advice}");
     }
 }

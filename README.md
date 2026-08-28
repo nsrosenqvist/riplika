@@ -190,12 +190,74 @@ That is a coarse version of what `ddrescue` does. The granularity is chapters
 because that is the smallest unit the demuxer can be asked for; MakeMKV works at
 the sector level and loses correspondingly less.
 
-### What cannot be reimplemented without a lot more work
+### Rescuing a damaged disc
 
-- **Sector-level recovery.** Retrying individual sectors, and reading around a
-  bad one, needs control of the read path - which means binding libdvdcss
-  directly rather than driving ffmpeg. The API is small enough that this is
-  possible; it is just not done.
+`riplika rescue` is GNU ddrescue's algorithm applied to a DVD. Its central
+insight is not obvious and is worth stating: **read the easy data first**. A
+failing disc may not survive an hour of retries, and every unreadable sector
+costs seconds while the drive retries internally - so working on the damage
+before the good 99% is secured is a way to end up with nothing.
+
+```sh
+# the seven episodes only - 5.24 GB of an 8.24 GB disc
+riplika rescue /dev/sr0 disc.iso --vts 11 --chains 2-8
+
+# everything
+riplika rescue /dev/sr0 disc.iso
+```
+
+Four passes, narrowing each time:
+
+| pass | reads | purpose |
+|---|---|---|
+| copy | 128 sectors | sweep up everything easy; on error, skip well ahead |
+| trim | 8 sectors | approach the damage from both ends to find its real extent |
+| scrape | 1 sector | read what is left individually |
+| retry | 1 sector | go round the remaining bad sectors again - drives are not deterministic |
+
+**It decrypts as it reads.** A raw image of a CSS disc is encrypted, and
+decrypting it afterwards means cracking the keys - which failed for six video
+title sets of the disc this was built against. Reading through libdvdcss uses
+the drive's key exchange while the drive is still in front of it, and
+`DVDCSS_READ_DECRYPT` clears the scrambling bits, so the image needs no keys.
+libdvdcss is loaded at runtime, so everything else still works without it.
+
+**It reads only what you ask for.** The video title set IFOs give each program
+chain's cell extents, so a rescue can cover the episodes and skip the menus. The
+play-alls share the episodes' sectors, so they cost nothing:
+
+```
+chain  1:  43m01   1.57 GB     <- play-all
+chain  2:  21m30   0.79 GB     <- episode
+...
+chain  9: 107m42   3.67 GB     <- play-all
+episodes (chains 2-8): 1 run, 5.24 GB
+```
+
+Verified end to end against a real disc: rescuing one episode reads 0.79 GB,
+writes a 752 MB sparse image spanning the disc's full 7.7 GB address space, and
+that image demuxes to the right title - `mpeg2video`, `ac3` English,
+`dvd_subtitle` English and Spanish, 1290.73 s against the disc\'s 21m30.
+
+**It is resumable.** A map file is written beside the image in ddrescue's own
+format, recording the state of every sector. Stop it, clean the disc, run it
+again: only what is still missing is attempted. That is the difference between
+a scratched disc being a lost cause and being a second attempt.
+
+**What is not encrypted must not be decrypted.** `DVDCSS_READ_DECRYPT`
+descrambles whatever it is handed, and a DVD sector's payload starts at byte
+128 - so decrypting the volume descriptors leaves their first 128 bytes intact
+and turns the rest into noise. The image then still mounts as a filesystem and
+still will not open as a DVD, which is a genuinely confusing way to fail. Only
+the video objects are read with decryption.
+
+**Holes become padding, not zeros.** Unrecoverable sectors are filled with MPEG
+program-stream padding packets, which a demuxer skips. Zeros where a packet
+header belongs make it treat the rest of the stream as corrupt, so the choice is
+between losing a moment and losing the remainder of the file.
+
+### What is still not reimplemented
+
 - **Making the drive try harder.** MakeMKV sets the drive's read-retry
   behaviour over raw SCSI (`MODE SELECT`), which often turns an unreadable
   sector into a slow one. Doable through `SG_IO`, untestable here, and easy to
@@ -206,9 +268,10 @@ the sector level and loses correspondingly less.
 - **AACS and BD+.** Not a fault-tolerance question - there is simply no free
   implementation with keys. See above.
 
-Because of the first two, a badly damaged disc is still MakeMKV's job. What is
-reimplemented covers the common cases: a region mismatch, a transient read
-failure, and a single bad patch in an otherwise sound disc.
+MakeMKV remains better on a disc whose damage is deliberate rather than
+accidental, and it asks the drive to try harder than we know how to. For
+ordinary damage - a scratch, a smudge, a disc that reads on the third attempt -
+the rescue path now covers it.
 
 ### Two things that make the free DVD path work
 

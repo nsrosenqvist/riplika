@@ -582,3 +582,154 @@ mod tests {
         assert_eq!(f.drives().unwrap().len(), 1);
     }
 }
+
+/// Parse a chain selection like `2-8` or `1,3,5`.
+fn parse_chains(spec: &str) -> Result<Vec<u32>, String> {
+    let mut out = Vec::new();
+    for part in spec.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        match part.split_once('-') {
+            Some((a, b)) => {
+                let (a, b) = (
+                    a.trim().parse::<u32>().map_err(|_| format!("bad chain {part:?}"))?,
+                    b.trim().parse::<u32>().map_err(|_| format!("bad chain {part:?}"))?,
+                );
+                if b < a {
+                    return Err(format!("bad chain range {part:?}"));
+                }
+                out.extend(a..=b);
+            }
+            None => out.push(part.parse().map_err(|_| format!("bad chain {part:?}"))?),
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    Ok(out)
+}
+
+pub fn rescue(
+    device: &Path,
+    image: &Path,
+    vts: Option<u8>,
+    chains: Option<&str>,
+    dry_run: bool,
+) -> Result<(), String> {
+    use riplika_core::rescue;
+    use riplika_core::rip::iso;
+
+    if !rescue::dvdcss::available() {
+        return Err("libdvdcss is not installed, so a damaged disc cannot be rescued".into());
+    }
+
+    // Work out which sectors are wanted. Rescuing a whole disc reads a lot that
+    // is never watched; rescuing the chains you want skips the menus, the
+    // duplicated play-alls and anything else you did not ask for.
+    let (ranges, plain, what) = match vts {
+        Some(vts) => {
+            let mut read = iso::device_reader(device).map_err(|e| e.to_string())?;
+            let set = iso::title_set(&mut read, vts).map_err(|e| e.to_string())?;
+            let wanted = match chains {
+                Some(spec) => parse_chains(spec)?,
+                None => set.chains.iter().map(|c| c.number).collect(),
+            };
+            let mut ranges = Vec::new();
+            for n in &wanted {
+                match set.chains.iter().find(|c| c.number == *n) {
+                    Some(c) => {
+                        println!(
+                            "  chain {:>2}: {:>3}m{:02}  {:.2} GB",
+                            c.number,
+                            c.seconds / 60,
+                            c.seconds % 60,
+                            c.sectors() as f64 * rescue::SECTOR as f64 / 1e9
+                        );
+                        ranges.extend(set.absolute(c));
+                    }
+                    None => return Err(format!("VTS {vts} has no chain {n}")),
+                }
+            }
+            // Without the descriptors and IFOs the image is data with nothing
+            // to navigate it; they are a few megabytes, so always included.
+            let mut r = iso::device_reader(device).map_err(|e| e.to_string())?;
+            let meta = iso::metadata_ranges(&mut r).map_err(|e| e.to_string())?;
+            ranges.extend(meta.iter().copied());
+            (iso::merge_ranges(&ranges), meta, format!("VTS {vts}"))
+        }
+        None => {
+            let size = std::fs::metadata(device)
+                .map(|m| m.len())
+                .map_err(|e| format!("{}: {e}", device.display()))?;
+            let sectors = size / rescue::SECTOR as u64;
+            if sectors == 0 {
+                return Err(format!("{}: cannot tell how large the disc is", device.display()));
+            }
+            let mut r = iso::device_reader(device).map_err(|e| e.to_string())?;
+            let meta = iso::metadata_ranges(&mut r).unwrap_or_default();
+            (vec![(0, sectors)], meta, "the whole disc".to_string())
+        }
+    };
+
+    let total: u64 = ranges.iter().map(|(a, b)| b - a).sum();
+    println!(
+        "rescuing {what}: {} run(s), {:.2} GB to read -> {}",
+        ranges.len(),
+        total as f64 * rescue::SECTOR as f64 / 1e9,
+        image.display()
+    );
+    if dry_run {
+        return Ok(());
+    }
+
+    let map_path = image.with_extension("map");
+    let mut last = String::new();
+    let map = rescue::rescue_ranges(device, &ranges, &plain, image, &map_path, &mut |p| {
+        use std::io::Write;
+        let line = format!(
+            "\r\x1b[K  {:<9} {:>5.1}%  {:.2} GB recovered, {} bad sectors",
+            p.pass,
+            p.fraction * 100.0,
+            p.recovered_sectors as f64 * rescue::SECTOR as f64 / 1e9,
+            p.bad_sectors
+        );
+        if line != last {
+            print!("{line}");
+            let _ = std::io::stdout().flush();
+            last = line;
+        }
+    })
+    .map_err(|e| e.to_string())?;
+
+    println!("\n{}", map.summary(rescue::SECTOR as u64));
+    println!("map: {}", map_path.display());
+    if map.count(rescue::map::State::Bad) > 0 {
+        println!(
+            "unrecoverable sectors were filled with padding, so the image is \
+             still demuxable; clean the disc and run this again to retry them"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod rescue_tests {
+    use super::*;
+
+    #[test]
+    fn chain_selections_parse_in_the_forms_a_person_types() {
+        assert_eq!(parse_chains("2-8").unwrap(), vec![2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(parse_chains("1,3,5").unwrap(), vec![1, 3, 5]);
+        assert_eq!(parse_chains("2-4,9").unwrap(), vec![2, 3, 4, 9]);
+        assert_eq!(parse_chains(" 7 ").unwrap(), vec![7]);
+    }
+
+    #[test]
+    fn duplicates_and_overlaps_collapse() {
+        assert_eq!(parse_chains("2-4,3-5").unwrap(), vec![2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn nonsense_is_rejected_rather_than_silently_read_as_nothing() {
+        assert!(parse_chains("eight").is_err());
+        assert!(parse_chains("8-2").is_err());
+        assert!(parse_chains("2-").is_err());
+    }
+}

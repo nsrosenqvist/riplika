@@ -26,6 +26,7 @@ pub mod media;
 pub mod model;
 pub mod naming;
 pub mod prefs;
+pub mod rescue;
 pub mod rip;
 pub mod subs;
 pub mod transcode;

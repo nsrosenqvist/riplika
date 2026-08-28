@@ -1002,6 +1002,7 @@ name = "riplika-core"
 version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
+ "libc",
  "png",
  "serde",
  "serde_json",
