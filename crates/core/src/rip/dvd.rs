@@ -606,12 +606,21 @@ impl super::Ripper for DvdVideo<'_> {
             let base = n as f32 / titles.len() as f32;
             let span = 1.0 / titles.len() as f32;
 
+            // Stopping is not damage. Without this, cancelling a rip records
+            // every remaining title as unreadable and keeps going through them.
+            if self.runner.cancelled() {
+                return Err(Error("cancelled".into()));
+            }
             let mut report = |p: f32, m: &str| progress(base + p * span, Some(m));
             match self.rip_one(&device, title, &out_path, &mut report) {
                 Ok(()) => outcome.written.push(out_path),
                 // A disc is mostly menus and transitions, and one of them being
                 // unreadable is not a reason to abandon the episodes. The
                 // failure is carried out so the caller can say so.
+                Err(_) if self.runner.cancelled() => {
+                    let _ = std::fs::remove_file(&out_path);
+                    return Err(Error("cancelled".into()));
+                }
                 Err(e) => {
                     let _ = std::fs::remove_file(&out_path);
                     outcome.failed.push((title.id, e.0));
@@ -1213,5 +1222,78 @@ mod scan_progress_tests {
         })
         .unwrap();
         assert!(messages.iter().any(|m| m.contains("title 1")), "{messages:?}");
+    }
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::*;
+    use crate::host::Output;
+    use crate::rip::Ripper;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    fn drive() -> Drive {
+        Drive {
+            id: "/dev/riplika-no-such-device".into(),
+            device: "/dev/riplika-no-such-device".into(),
+            name: "d".into(),
+            disc_label: Some("X".into()),
+        }
+    }
+
+    /// A runner that is cancelled after the first title, as pressing Cancel does.
+    struct CancelledAfterOne {
+        stopped: AtomicBool,
+        attempts: AtomicUsize,
+    }
+
+    impl Runner for CancelledAfterOne {
+        fn cancelled(&self) -> bool {
+            self.stopped.load(Ordering::SeqCst)
+        }
+        fn run(&self, _: &Command) -> Result<Output> {
+            if self.cancelled() {
+                return Err(Error("cancelled".into()));
+            }
+            Ok(Output::default())
+        }
+        fn stream(&self, _: &Command, _: &mut dyn FnMut(&str)) -> Result<Output> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            self.stopped.store(true, Ordering::SeqCst);
+            Err(Error("cancelled".into()))
+        }
+    }
+
+    #[test]
+    fn cancelling_stops_rather_than_marking_everything_unreadable() {
+        // Treating a cancelled command as a bad title recorded every remaining
+        // title as damaged and kept going through all of them - twenty
+        // warnings and a "nothing could be read from the disc" for a rip the
+        // user had simply stopped.
+        let runner = CancelledAfterOne {
+            stopped: AtomicBool::new(false),
+            attempts: AtomicUsize::new(0),
+        };
+        let d = DvdVideo::new(&runner);
+        let titles: Vec<DiscTitle> = (2..=20)
+            .map(|n| parse_title(tests::EPISODE, n).unwrap())
+            .collect();
+        let dir = std::env::temp_dir().join(format!("riplika-cancel-{}", std::process::id()));
+        let result = d.rip(&drive(), &titles, &dir, &mut |_, _| {});
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let e = result.unwrap_err();
+        assert_eq!(e.0, "cancelled", "cancelling is not a disc fault");
+        // and it stopped rather than working through the other eighteen
+        assert!(runner.attempts.load(Ordering::SeqCst) <= 2, "kept trying after cancel");
+    }
+
+    #[test]
+    fn a_cancelled_runner_reports_itself_as_such() {
+        let cancel = crate::host::Cancel::new();
+        let runner = crate::host::RealRunner::new(cancel.clone());
+        assert!(!runner.cancelled());
+        cancel.cancel();
+        assert!(runner.cancelled());
     }
 }

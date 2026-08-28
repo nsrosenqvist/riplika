@@ -124,7 +124,7 @@ struct Ui {
     disc_entry: adw::EntryRow,
     stage_label: gtk::Label,
     progress: gtk::ProgressBar,
-    log: gtk::ListBox,
+    log: gtk::TextView,
     cancel_button: gtk::Button,
     results: adw::PreferencesGroup,
     results_status: adw::StatusPage,
@@ -405,9 +405,25 @@ fn build_ui() -> Ui {
         .build();
     stage_label.add_css_class("title-2");
     let progress = gtk::ProgressBar::builder().show_text(true).build();
-    let log = gtk::ListBox::builder()
-        .selection_mode(gtk::SelectionMode::None)
-        .css_classes(vec!["boxed-list".to_string()])
+    // A list row per line is enormous furniture for one line of text, and a
+    // long run produces hundreds. This is a log; it should look like one and
+    // stay out of the way of the thing that matters, which is the progress bar.
+    let log = gtk::TextView::builder()
+        .editable(false)
+        .cursor_visible(false)
+        .monospace(true)
+        .top_margin(8)
+        .bottom_margin(8)
+        .left_margin(10)
+        .right_margin(10)
+        .wrap_mode(gtk::WrapMode::WordChar)
+        .build();
+    log.add_css_class("dim-label");
+    let log_scroll = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .height_request(180)
+        .child(&log)
+        .css_classes(vec!["card".to_string()])
         .build();
     let cancel_button = gtk::Button::builder()
         .label("Cancel")
@@ -416,7 +432,7 @@ fn build_ui() -> Ui {
         .build();
     prog_body.append(&stage_label);
     prog_body.append(&progress);
-    prog_body.append(&log);
+    prog_body.append(&log_scroll);
     prog_body.append(&cancel_button);
     // While a scan is running there are three short things on this page, and
     // pinned to the top of a tall window they look stranded. Centred, the page
@@ -509,15 +525,28 @@ impl App {
     }
 
     fn log_line(&self, text: &str) {
-        let row = adw::ActionRow::builder().title(text).build();
-        self.ui.log.append(&row);
-        // Keep the list short: a full disc emits thousands of lines, and a
-        // list box that long makes the window crawl.
-        while self.ui.log.row_at_index(60).is_some() {
-            if let Some(first) = self.ui.log.row_at_index(0) {
-                self.ui.log.remove(&first);
+        let buffer = self.ui.log.buffer();
+        let mut end = buffer.end_iter();
+        if buffer.char_count() > 0 {
+            buffer.insert(&mut end, "\n");
+        }
+        buffer.insert(&mut end, text);
+
+        // A full disc produces hundreds of lines and only the recent ones are
+        // worth keeping on screen; the whole run is in the report at the end.
+        const KEEP: i32 = 400;
+        let excess = buffer.line_count() - KEEP;
+        if excess > 0 {
+            let start = buffer.start_iter();
+            if let Some(cut) = buffer.iter_at_line(excess) {
+                let mut start = start;
+                let mut cut = cut;
+                buffer.delete(&mut start, &mut cut);
             }
         }
+        // Follow the tail, which is where anything new appears.
+        let mut end = buffer.end_iter();
+        self.ui.log.scroll_to_iter(&mut end, 0.0, false, 0.0, 0.0);
     }
 
     /// Which languages are ticked, in the order they are shown.
@@ -794,23 +823,47 @@ impl App {
         )));
     }
 
-    /// Show the plan while it runs, so the naming can be checked early rather
-    /// than after an hour of encoding.
+    /// Say what the disc turned out to hold, before reading it.
+    ///
+    /// Knowing that a disc is seven episodes and thirty pieces of bonus
+    /// material - rather than "47 titles" - is the difference between watching
+    /// a progress bar and knowing what is being made.
     fn show_plan(&self, items: &[Item]) {
-        for i in items {
-            match (&i.role, &i.destination) {
-                (Role::PlayAll, _) => {
-                    self.log_line(&format!(
-                        "{}: play-all, not written",
-                        i.source.file_name().unwrap_or_default().to_string_lossy()
-                    ));
-                }
-                (_, Some(d)) => self.log_line(&format!(
-                    "{} -> {}",
+        let count = |f: fn(&Role) -> bool| items.iter().filter(|i| f(&i.role)).count();
+        let episodes = count(|r| matches!(r, Role::Episode { .. }));
+        let cuts = count(|r| matches!(r, Role::ExtendedCut { .. }));
+        let features = count(|r| matches!(r, Role::Feature));
+        let extras = count(|r| matches!(r, Role::Extra));
+        let play_alls = count(|r| matches!(r, Role::PlayAll));
+
+        let mut parts = Vec::new();
+        if episodes > 0 {
+            parts.push(format!("{episodes} episodes"));
+        }
+        if features > 0 {
+            parts.push(format!("{features} feature"));
+        }
+        if cuts > 0 {
+            parts.push(format!("{cuts} extended cuts"));
+        }
+        if extras > 0 {
+            parts.push(format!("{extras} extras"));
+        }
+        if !parts.is_empty() {
+            self.log_line(&format!("This disc holds {}", parts.join(", ")));
+        }
+        if play_alls > 0 {
+            self.log_line(&format!(
+                "{play_alls} play-all title(s) will be skipped - the same video again"
+            ));
+        }
+        for i in items.iter().filter(|i| matches!(i.role, Role::Episode { .. })) {
+            if let Some(d) = &i.destination {
+                self.log_line(&format!(
+                    "  {}  {}",
                     hms(i.duration),
                     d.file_name().unwrap_or_default().to_string_lossy()
-                )),
-                _ => {}
+                ));
             }
         }
         self.state.borrow_mut().items = items.to_vec();

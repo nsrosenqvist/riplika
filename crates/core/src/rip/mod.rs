@@ -130,6 +130,9 @@ impl Ripper for MakeMkv<'_> {
             let base = n as f32 / titles.len() as f32;
             let span = 1.0 / titles.len() as f32;
 
+            if self.runner.cancelled() {
+                return Err(Error("cancelled".into()));
+            }
             let mut message = None;
             let cmd =
                 makemkv::rip_command(&drive.id, Some(title.id), dest, self.min_length_seconds);
@@ -146,6 +149,9 @@ impl Ripper for MakeMkv<'_> {
 
             // A disc has menu stubs and the odd damaged extra; one of them
             // failing is not a reason to abandon the rest of the disc.
+            if self.runner.cancelled() {
+                return Err(Error("cancelled".into()));
+            }
             if let Some(msg) = makemkv::parse_error(&out.stdout) {
                 outcome.failed.push((title.id, msg));
                 continue;

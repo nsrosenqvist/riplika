@@ -187,7 +187,21 @@ pub fn run(
         report(
             &tx,
             (|| {
-                let files = p.rip(&scan, &rip_dir, &mut events)?;
+                // Work out which titles are actually wanted before reading
+                // them: a play-all replays episodes that are on the disc
+                // individually, so reading it reads the same video twice.
+                let plan = p.preview(&scan, &media, disc, &rip_dir);
+                let titles = p.titles_to_rip(&scan, plan.as_deref());
+                if let Some(items) = &plan {
+                    let _ = tx.send(Msg::Organised(items.clone()));
+                }
+                if titles.len() < scan.titles.len() {
+                    events(Event::Warning(format!(
+                        "skipping {} play-all title(s), already covered by the episodes",
+                        scan.titles.len() - titles.len()
+                    )));
+                }
+                let files = p.rip(&scan, &titles, &rip_dir, &mut events)?;
                 let items = p.organise(&files, &media, disc, &mut events)?;
                 let _ = tx.send(Msg::Organised(items.clone()));
                 let report = p.produce(&items, &media, &mut events)?;

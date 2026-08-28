@@ -181,6 +181,15 @@ pub trait Runner: Send + Sync {
         Ok(out)
     }
 
+    /// Has the user asked for this to stop?
+    ///
+    /// A cancelled command fails like any other, and a caller that treats a
+    /// failure as damage will faithfully record every remaining item as broken
+    /// and carry on trying. Asking lets it tell the two apart.
+    fn cancelled(&self) -> bool {
+        false
+    }
+
     /// Run, and turn a non-zero exit into an error.
     fn require(&self, cmd: &Command) -> Result<Output> {
         let out = self.run(cmd)?;
@@ -220,6 +229,10 @@ impl RealRunner {
 }
 
 impl Runner for RealRunner {
+    fn cancelled(&self) -> bool {
+        self.cancel.is_cancelled()
+    }
+
     fn run(&self, cmd: &Command) -> Result<Output> {
         self.cancel.check()?;
         let out = self

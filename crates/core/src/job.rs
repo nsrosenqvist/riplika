@@ -160,8 +160,44 @@ impl<'a> Pipeline<'a> {
         identify::search(self.ports.catalogue, query, season)
     }
 
+    /// Which titles are worth reading.
+    ///
+    /// A play-all replays episodes that are also on the disc individually, so
+    /// reading it means reading the same video a second time. On a Parks and
+    /// Recreation disc the two play-alls are two and a half hours of video that
+    /// is already being read as seven episodes.
+    ///
+    /// This is only possible when the scan reported chapter durations, since
+    /// those are what identify a play-all. Without them every title is read,
+    /// because guessing which to skip risks skipping an episode.
+    pub fn titles_to_rip(&self, scan: &DiscScan, plan: Option<&[Item]>) -> Vec<DiscTitle> {
+        let Some(plan) = plan else {
+            return scan.titles.clone();
+        };
+        let redundant: Vec<String> = plan
+            .iter()
+            .filter(|i| !i.role.is_output())
+            .filter_map(|i| {
+                i.source
+                    .file_name()
+                    .map(|f| f.to_string_lossy().into_owned())
+            })
+            .collect();
+        scan.titles
+            .iter()
+            .filter(|t| !redundant.contains(&t.output_name))
+            .cloned()
+            .collect()
+    }
+
     /// Stage one: read the disc.
-    pub fn rip(&self, scan: &DiscScan, dest: &Path, events: Events) -> Result<Vec<PathBuf>> {
+    pub fn rip(
+        &self,
+        scan: &DiscScan,
+        titles: &[DiscTitle],
+        dest: &Path,
+        events: Events,
+    ) -> Result<Vec<PathBuf>> {
         events(Event::Stage(Stage::Rip));
         self.ports.fs.create_dir_all(dest)?;
         let outcome = {
@@ -174,7 +210,7 @@ impl<'a> Pipeline<'a> {
             };
             self.ports
                 .ripper
-                .rip(&scan.drive, &scan.titles, dest, &mut report)?
+                .rip(&scan.drive, titles, dest, &mut report)?
         };
 
         // Titles that could not be read are reported, not thrown: a disc is
@@ -595,7 +631,16 @@ impl<'a> Pipeline<'a> {
             }
         };
         let disc = identify::label::parse(&scan.label).disc;
-        let files = self.rip(&scan, rip_dir, events)?;
+        // Work out what is worth reading before reading it.
+        let plan = self.preview(&scan, &media, disc, rip_dir);
+        let titles = self.titles_to_rip(&scan, plan.as_deref());
+        if titles.len() < scan.titles.len() {
+            events(Event::Warning(format!(
+                "skipping {} play-all title(s), whose content is on the disc already",
+                scan.titles.len() - titles.len()
+            )));
+        }
+        let files = self.rip(&scan, &titles, rip_dir, events)?;
         let items = self.organise(&files, &media, disc, events)?;
         self.produce(&items, &media, events)
     }
@@ -732,7 +777,7 @@ mod tests {
         let mut sink = |e: Event| events.push(e);
         let scan = p.scan(&fake_disc().drive, &mut sink).unwrap();
         let media = p.identify(&scan, &mut sink).remove(0).media;
-        let files = p.rip(&scan, Path::new("/rip"), &mut sink).unwrap();
+        let files = p.rip(&scan, &scan.titles, Path::new("/rip"), &mut sink).unwrap();
         let items = p.organise(&files, &media, Some(1), &mut sink).unwrap();
         let report = p.produce(&items, &media, &mut sink).unwrap();
         (items, report, events)
@@ -858,7 +903,7 @@ mod tests {
         let mut sink = |_: Event| {};
         let scan = p.scan(&fake_disc().drive, &mut sink).unwrap();
         let media = p.identify(&scan, &mut sink).remove(0).media;
-        let files = p.rip(&scan, Path::new("/rip"), &mut sink).unwrap();
+        let files = p.rip(&scan, &scan.titles, Path::new("/rip"), &mut sink).unwrap();
         let items = p.organise(&files, &media, Some(1), &mut sink).unwrap();
         let report = p.produce(&items, &media, &mut sink).unwrap();
         assert_eq!(report.produced.len(), 1);
@@ -916,7 +961,7 @@ mod tests {
         let mut sink = |_: Event| {};
         let scan = p.scan(&fake_disc().drive, &mut sink).unwrap();
         let media = p.identify(&scan, &mut sink).remove(0).media;
-        let files = p.rip(&scan, Path::new("/rip"), &mut sink).unwrap();
+        let files = p.rip(&scan, &scan.titles, Path::new("/rip"), &mut sink).unwrap();
         cancel.cancel();
         assert!(p.organise(&files, &media, Some(1), &mut sink).is_err());
     }
@@ -1127,5 +1172,116 @@ mod preview_tests {
             JobSettings::default(),
         );
         assert!(p.preview(&scan, &season7(), Some(1), Path::new("/rip")).is_none());
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    use crate::host::{Cancel, FakeFs, FakeRunner};
+    use crate::identify::catalogue::{FakeHttp, TvMaze};
+    use crate::media::FakeProber;
+    use crate::rip::FakeRipper;
+
+    const SEARCH: &str = r#"[{"score":0.94,"show":{"id":1633,"name":"Parks and Recreation","premiered":"2009-04-09"}}]"#;
+    const EPISODES: &str = r#"[
+      {"name":"2017","season":7,"number":1,"airdate":"2015-01-13","runtime":30},
+      {"name":"Ron and Jammy","season":7,"number":2,"airdate":"2015-01-13","runtime":30}
+    ]"#;
+
+    fn title(id: u32, duration: Millis, chapters: &[Millis]) -> DiscTitle {
+        DiscTitle {
+            id,
+            duration,
+            chapter_count: chapters.len(),
+            chapters: chapters.to_vec(),
+            size_bytes: 0,
+            output_name: format!("title_t{id:02}.mkv"),
+            tracks: vec![],
+        }
+    }
+
+    /// Two episodes and the play-all that is both of them again.
+    fn scan() -> DiscScan {
+        DiscScan {
+            drive: Drive {
+                id: "disc:0".into(),
+                device: "/dev/sr0".into(),
+                name: "d".into(),
+                disc_label: Some("PARKS_AND_RECREATION_S7D1".into()),
+            },
+            label: "PARKS_AND_RECREATION_S7D1".into(),
+            titles: vec![
+                title(0, 2_550_000, &[600_000, 675_000, 600_000, 675_000]),
+                title(1, 1_275_000, &[600_000, 675_000]),
+                title(2, 1_275_000, &[600_000, 675_000]),
+            ],
+        }
+    }
+
+    fn media() -> Media {
+        Media::Series {
+            title: "Parks and Recreation".into(),
+            year: Some(2009),
+            season: 7,
+            provider_id: Some("1633".into()),
+        }
+    }
+
+    #[test]
+    fn a_play_all_is_not_read_because_its_content_is_read_anyway() {
+        // On the disc this was built against, the two play-alls are two and a
+        // half hours of video that is already being read as seven episodes.
+        let runner = FakeRunner::new();
+        let prober = FakeProber::new();
+        let ripper = FakeRipper::new(scan());
+        let http = FakeHttp::new().on("/search/shows", SEARCH).on("/episodes", EPISODES);
+        let cat = TvMaze { http: &http };
+        let fs = FakeFs::new();
+        let p = Pipeline::new(
+            Ports {
+                runner: &runner,
+                prober: &prober,
+                ripper: &ripper,
+                catalogue: &cat,
+                fs: &fs,
+                cancel: Cancel::new(),
+            },
+            JobSettings::default(),
+        );
+        let s = scan();
+        let plan = p.preview(&s, &media(), Some(1), Path::new("/rip")).unwrap();
+        let titles = p.titles_to_rip(&s, Some(&plan));
+
+        assert_eq!(titles.len(), 2, "only the episodes");
+        assert!(
+            !titles.iter().any(|t| t.output_name == "title_t00.mkv"),
+            "the play-all was read anyway"
+        );
+    }
+
+    #[test]
+    fn without_chapter_durations_everything_is_read() {
+        // MakeMKV reports no chapter durations, so nothing can be identified as
+        // redundant - and guessing risks skipping an episode.
+        let runner = FakeRunner::new();
+        let prober = FakeProber::new();
+        let ripper = FakeRipper::new(scan());
+        let http = FakeHttp::new();
+        let cat = TvMaze { http: &http };
+        let fs = FakeFs::new();
+        let p = Pipeline::new(
+            Ports {
+                runner: &runner,
+                prober: &prober,
+                ripper: &ripper,
+                catalogue: &cat,
+                fs: &fs,
+                cancel: Cancel::new(),
+            },
+            JobSettings::default(),
+        );
+        let s = scan();
+        assert_eq!(p.titles_to_rip(&s, None).len(), s.titles.len());
     }
 }

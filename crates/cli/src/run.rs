@@ -384,7 +384,19 @@ pub fn rip(
         return Ok(());
     }
 
-    let files = pipeline.rip(&scan, rip_dir, &mut events).map_err(|e| e.to_string())?;
+    // Decide what is worth reading before reading it: a play-all is the same
+    // video a second time.
+    let plan = pipeline.preview(&scan, &media, disc, rip_dir);
+    let titles = pipeline.titles_to_rip(&scan, plan.as_deref());
+    if titles.len() < scan.titles.len() {
+        println!(
+            "  skipping {} play-all title(s), already covered by the episodes",
+            scan.titles.len() - titles.len()
+        );
+    }
+    let files = pipeline
+        .rip(&scan, &titles, rip_dir, &mut events)
+        .map_err(|e| e.to_string())?;
     let items = pipeline
         .organise(&files, &media, disc, &mut events)
         .map_err(|e| e.to_string())?;
