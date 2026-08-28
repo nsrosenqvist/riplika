@@ -42,21 +42,28 @@ finish-args:
 
 modules:
   # --- disc reading -------------------------------------------------------
+  # VideoLAN moved these three to meson; flatpak-builder assumes autotools.
   - name: libdvdcss
+    buildsystem: meson
     sources:
       - type: archive
         url: https://download.videolan.org/pub/videolan/libdvdcss/1.6.0/libdvdcss-1.6.0.tar.xz
         sha256: 7ea556c846b7bfc32d47b41cae56d1863a6b6d5f706bb162778d6f298490977c
 
   - name: libdvdread
+    buildsystem: meson
     config-opts:
-      - --with-libdvdcss
+      # Linked, not dlopened. libdvdread falls back to loading libdvdcss by
+      # name at runtime, which inside a sandbox depends on it being on the
+      # loader path - linking removes the question.
+      - -Dlibdvdcss=enabled
     sources:
       - type: archive
         url: https://download.videolan.org/pub/videolan/libdvdread/7.1.1/libdvdread-7.1.1.tar.xz
         sha256: a0d47876548bec806774bbf8dbf20bb19ba139464383156b32eb8e59915b90a9
 
   - name: libdvdnav
+    buildsystem: meson
     sources:
       - type: archive
         url: https://download.videolan.org/pub/videolan/libdvdnav/7.0.0/libdvdnav-7.0.0.tar.xz

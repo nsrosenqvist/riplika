@@ -1,2 +1,4 @@
 target
 work/
+.flatpak-builder/
+build/
