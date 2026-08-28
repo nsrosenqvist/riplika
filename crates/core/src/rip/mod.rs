@@ -247,6 +247,9 @@ TINFO:0,27,0,"title_t00.mkv"
 /// corrupt sectors some copy protections write. Both failures are quiet - the
 /// scan succeeds and simply returns fewer titles - so they are detected rather
 /// than waited for.
+/// Somewhere to send an explanation of why a fallback happened.
+pub type Notify<'a> = Box<dyn Fn(&str) + Send + Sync + 'a>;
+
 pub struct Auto<'a> {
     pub free: dvd::DvdVideo<'a>,
     /// `None` when MakeMKV is not installed, or the user has turned it off.
@@ -254,7 +257,7 @@ pub struct Auto<'a> {
     /// Set once a scan has decided; `rip` must use whoever could read it.
     used_fallback: std::sync::atomic::AtomicBool,
     /// Told why a fallback happened, for the log or the progress list.
-    pub notify: Option<Box<dyn Fn(&str) + Send + Sync + 'a>>,
+    pub notify: Option<Notify<'a>>,
 }
 
 impl<'a> Auto<'a> {

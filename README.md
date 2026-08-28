@@ -151,6 +151,65 @@ With `--reader dvd` there is no fallback, so it stops with the same complaint
 rather than pretending. Keep MakeMKV installed; the free path just means it is
 not on the critical path for an ordinary DVD.
 
+### What of MakeMKV's fault tolerance is reimplemented
+
+Some of it, and the parts that are reachable are worth having. What follows is
+what the free reader now does; the honest ceiling is in the next section.
+
+**Every decryption method, not just one.** libdvdcss has three, and they are
+answers to different problems rather than alternatives:
+
+| method | what it does | what defeats it |
+|---|---|---|
+| `key` | asks the drive to do the CSS handshake | an RPC-2 drive whose region does not match the disc |
+| `disc` | cracks the disc key without the drive | discs resistant to cracking |
+| `title` | cracks each title key from the data | slowest; same resistance |
+
+Only the first needs the drive's cooperation, so `disc` is what reads a Region 1
+disc in a drive set to Region 2 - the case a mixed-region shelf runs into. Each
+is tried in turn, and a failing attempt is abandoned after a single probe, so
+the cost of trying is small. The one that worked is recorded.
+
+**Checking the length of what came back.** This is the most valuable of the
+three, because the failure it catches is silent. A damaged sector does not
+usually make ffmpeg fail - it makes it stop, exit zero, and leave a file that
+plays and is merely missing its ending. Every ripped title is measured against
+the duration the scan reported, and anything more than 2% short is treated as
+damage rather than accepted.
+
+**Salvaging a title a chapter at a time.** When every method stops early, the
+title is read again chapter by chapter and whatever survives is joined back
+together, so one scratch costs one chapter rather than the whole episode:
+
+```
+title 41 is damaged; salvaging by chapter
+title 41 recovered without chapter 3
+```
+
+That is a coarse version of what `ddrescue` does. The granularity is chapters
+because that is the smallest unit the demuxer can be asked for; MakeMKV works at
+the sector level and loses correspondingly less.
+
+### What cannot be reimplemented without a lot more work
+
+- **Sector-level recovery.** Retrying individual sectors, and reading around a
+  bad one, needs control of the read path - which means binding libdvdcss
+  directly rather than driving ffmpeg. The API is small enough that this is
+  possible; it is just not done.
+- **Making the drive try harder.** MakeMKV sets the drive's read-retry
+  behaviour over raw SCSI (`MODE SELECT`), which often turns an unreadable
+  sector into a slow one. Doable through `SG_IO`, untestable here, and easy to
+  get wrong in ways that hang a drive.
+- **Protection-specific workarounds.** Arccos and RipGuard deliberately write
+  unreadable sectors and bogus structures. Handling them means recognising each
+  scheme, which is reverse engineering per title, and is MakeMKV's real moat.
+- **AACS and BD+.** Not a fault-tolerance question - there is simply no free
+  implementation with keys. See above.
+
+Because of the first two, a badly damaged disc is still MakeMKV's job. What is
+reimplemented covers the common cases: a region mismatch, a transient read
+failure, and a single bad patch in an otherwise sound disc.
+
 ### Two things that make the free DVD path work
 
 Both were found by running it against a real disc, and both fail in the same
