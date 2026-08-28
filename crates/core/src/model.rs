@@ -196,6 +196,41 @@ impl Media {
         }
     }
 
+    /// The work itself, without the season.
+    ///
+    /// A catalogue search returns *shows*; which season a disc holds is a
+    /// separate question about the disc. Showing a season beside a search hit
+    /// implies the search found one, and then contradicts whatever the user
+    /// sets the season to.
+    pub fn describe_work(&self) -> String {
+        match self {
+            Media::Series { title, year, .. } | Media::Movie { title, year, .. } => match year {
+                Some(y) => format!("{title} ({y})"),
+                None => title.clone(),
+            },
+        }
+    }
+
+    /// The same work, for a given season.
+    pub fn with_season(&self, season: u32) -> Media {
+        match self {
+            Media::Series { title, year, provider_id, .. } => Media::Series {
+                title: title.clone(),
+                year: *year,
+                season,
+                provider_id: provider_id.clone(),
+            },
+            other => other.clone(),
+        }
+    }
+
+    pub fn season(&self) -> Option<u32> {
+        match self {
+            Media::Series { season, .. } => Some(*season),
+            Media::Movie { .. } => None,
+        }
+    }
+
     /// One-line description for a GUI row.
     pub fn describe(&self) -> String {
         match self {
@@ -467,5 +502,42 @@ mod tests {
         assert_eq!(Quality::parse("HIGH"), Some(Quality::High));
         assert_eq!(Quality::parse(" med "), Some(Quality::Medium));
         assert_eq!(Quality::parse("lossless"), None);
+    }
+}
+
+#[cfg(test)]
+mod season_tests {
+    use super::*;
+
+    fn show() -> Media {
+        Media::Series {
+            title: "Parks and Recreation".into(),
+            year: Some(2009),
+            season: 1,
+            provider_id: Some("1633".into()),
+        }
+    }
+
+    #[test]
+    fn a_search_hit_is_described_without_a_season() {
+        // the search found a show; which season the disc holds is a separate
+        // question, and implying otherwise contradicts whatever season is set
+        assert_eq!(show().describe_work(), "Parks and Recreation (2009)");
+    }
+
+    #[test]
+    fn the_season_can_be_changed_without_a_new_search() {
+        let s6 = show().with_season(6);
+        assert_eq!(s6.season(), Some(6));
+        assert_eq!(s6.title(), "Parks and Recreation");
+        // the catalogue id survives, so episode titles still resolve
+        assert_eq!(s6.provider_id().as_deref(), Some("1633"));
+    }
+
+    #[test]
+    fn a_film_has_no_season_to_set() {
+        let m = Media::Movie { title: "Lebowski".into(), year: Some(1998), provider_id: None };
+        assert_eq!(m.season(), None);
+        assert_eq!(m.with_season(6), m, "setting a season on a film changes nothing");
     }
 }

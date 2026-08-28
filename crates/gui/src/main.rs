@@ -52,6 +52,8 @@ struct State {
     chosen: Option<Media>,
     items: Vec<Item>,
     cancel: riplika_core::host::Cancel,
+    /// A catalogue search is in flight, so its result should be announced.
+    searching: bool,
     /// What is running, if anything.
     ///
     /// One drive, one job: a second scan started while the first is reading
@@ -71,6 +73,7 @@ impl Default for State {
             items: Vec::new(),
             cancel: riplika_core::host::Cancel::new(),
             busy: None,
+            searching: false,
         }
     }
 }
@@ -242,6 +245,12 @@ fn build_ui() -> Ui {
     nav.add(&page(Step::Drive.tag(), "Riplika", &drive_page));
 
     // --- step two: what is it? -------------------------------------------
+    //
+    // Two questions that were being asked as one. A catalogue search finds a
+    // *show*; which season and disc you are holding is a separate matter that
+    // no search can answer. Putting the season inside "search instead" implied
+    // it was a query term, so setting it looked like it did nothing - and the
+    // answer then arrived silently, in a list further up the page.
     let id_body = body();
     let id_group = adw::PreferencesGroup::builder()
         .title("Identified as")
@@ -253,23 +262,27 @@ fn build_ui() -> Ui {
         .build();
     id_group.add(&candidate_list);
 
-    let search_group = adw::PreferencesGroup::builder().title("Search instead").build();
+    // Applies to whichever show is selected above; changing it needs no search.
+    let detail_group = adw::PreferencesGroup::builder()
+        .title("This disc")
+        .description("Which part of the show it holds. The disc number decides where episode numbering starts.")
+        .build();
+    let season_entry = adw::EntryRow::builder().title("Season").build();
+    let disc_entry = adw::EntryRow::builder().title("Disc").build();
+    detail_group.add(&season_entry);
+    detail_group.add(&disc_entry);
+
+    let search_group = adw::PreferencesGroup::builder()
+        .title("Wrong show?")
+        .description("Search the catalogues by name")
+        .build();
     let search_entry = adw::EntryRow::builder().title("Title").build();
-    let season_entry = adw::EntryRow::builder().title("Season (blank for a film)").build();
     let search_button = gtk::Button::builder()
         .label("Search")
         .name("search")
         .halign(gtk::Align::End)
         .build();
     search_group.add(&search_entry);
-    search_group.add(&season_entry);
-
-    let disc_group = adw::PreferencesGroup::builder()
-        .title("Disc number")
-        .description("Sets where episode numbering starts; read from the label when it says")
-        .build();
-    let disc_entry = adw::EntryRow::builder().title("Disc").build();
-    disc_group.add(&disc_entry);
 
     let identify_next = gtk::Button::builder()
         .label("Continue")
@@ -278,9 +291,9 @@ fn build_ui() -> Ui {
         .halign(gtk::Align::End)
         .build();
     id_body.append(&id_group);
+    id_body.append(&detail_group);
     id_body.append(&search_group);
     id_body.append(&search_button);
-    id_body.append(&disc_group);
     id_body.append(&identify_next);
     nav.add(&page(Step::Identify.tag(), "What is this?", &id_body));
 
@@ -594,13 +607,29 @@ impl App {
         self.ui.drive_next.set_sensitive(ready && !self.is_busy());
     }
 
+    /// Say that a search is under way, where its answer will appear.
+    ///
+    /// The result lands in the candidate list, so that is where the waiting
+    /// belongs. Feedback beside the button the user just pressed would still
+    /// leave them watching the wrong part of the window.
+    fn show_searching(&self) {
+        while let Some(r) = self.ui.candidate_list.row_at_index(0) {
+            self.ui.candidate_list.remove(&r);
+        }
+        let row = adw::ActionRow::builder().title("Searching...").build();
+        let spinner = gtk::Spinner::builder().spinning(true).build();
+        row.add_suffix(&spinner);
+        self.ui.candidate_list.append(&row);
+        self.ui.identify_next.set_sensitive(false);
+    }
+
     fn show_candidates(&self, cands: &[Candidate]) {
         while let Some(r) = self.ui.candidate_list.row_at_index(0) {
             self.ui.candidate_list.remove(&r);
         }
         for c in cands {
             let row = adw::ActionRow::builder()
-                .title(c.media.describe())
+                .title(c.media.describe_work())
                 .subtitle(c.reasons.join("\n"))
                 .build();
             let pct = gtk::Label::new(Some(&format!("{:.0}%", c.confidence * 100.0)));
@@ -689,9 +718,15 @@ impl App {
         match msg {
             Msg::Drives(d) => self.show_drives(&d),
             Msg::Scanned(scan) => {
-                let disc = riplika_core::identify::label::parse(&scan.label).disc;
-                if let Some(d) = disc {
+                let guess = riplika_core::identify::label::parse(&scan.label);
+                if let Some(d) = guess.disc {
                     self.ui.disc_entry.set_text(&d.to_string());
+                }
+                // Only when the label actually said. Filling it with a guess
+                // the label did not make is how "season 1" ends up looking
+                // like a decision rather than a default.
+                if let Some(n) = guess.season {
+                    self.ui.season_entry.set_text(&n.to_string());
                 }
                 self.ui.search_entry.set_text(
                     &riplika_core::identify::label::parse(&scan.label).title,
@@ -701,6 +736,17 @@ impl App {
             }
             Msg::Candidates(c) => {
                 self.set_busy(None);
+                let searched = self.state.borrow().searching;
+                self.state.borrow_mut().searching = false;
+                if searched {
+                    // The answer appears in a list the user may not be looking
+                    // at, so say what happened as well as showing it.
+                    self.toast(&match c.len() {
+                        0 => "Nothing found".to_string(),
+                        1 => "1 match".to_string(),
+                        n => format!("{n} matches"),
+                    });
+                }
                 self.show_candidates(&c);
                 if self.ui.nav.visible_page().map(|p| p.tag().unwrap_or_default().to_string())
                     != Some(Step::Identify.tag().into())
@@ -846,24 +892,71 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             let chosen = i.and_then(|i| app.state.borrow().candidates.get(i).cloned());
             match chosen {
                 Some(c) => {
-                    app.state.borrow_mut().chosen = Some(c.media);
+                    // The search found a show; the season comes from this page.
+                    let season = app.ui.season_entry.text().trim().parse::<u32>().ok();
+                    let media = match season {
+                        Some(n) => c.media.with_season(n),
+                        None => c.media,
+                    };
+                    app.state.borrow_mut().chosen = Some(media);
                     app.go(Step::Settings);
                 }
                 None => app.toast("Choose what this disc is, or search for it"),
             }
         });
     }
-    if let Some(search) = find_button(&app.ui.identify_next, "search") {
+    {
         let app = Rc::clone(app);
         let tx = tx.clone();
-        search.connect_clicked(move |_| {
+        let run_search = move |app: &Rc<App>, tx: &std::sync::mpsc::Sender<Msg>| {
             let q = app.ui.search_entry.text().to_string();
             if q.trim().is_empty() {
-                app.toast("Type something to search for");
+                app.toast("Type a title to search for");
                 return;
             }
-            let season = app.ui.season_entry.text().trim().parse::<u32>().ok();
+            // A season is not a search term - it is a fact about the disc - so
+            // it is not sent, and setting it needs no search at all.
+            let season = app.ui.season_entry.text().trim().parse::<u32>().ok().or(Some(1));
+            app.state.borrow_mut().searching = true;
+            app.show_searching();
             worker::search(q, season, tx.clone());
+        };
+
+        for button in find_buttons(&app.ui.identify_next, "search") {
+            let app = Rc::clone(&app);
+            let tx = tx.clone();
+            let run = run_search.clone();
+            button.connect_clicked(move |_| run(&app, &tx));
+        }
+        // Pressing Return in the field is what a person will try first.
+        let app2 = Rc::clone(&app);
+        let tx2 = tx.clone();
+        let run = run_search.clone();
+        app.ui.search_entry.connect_entry_activated(move |_| run(&app2, &tx2));
+    }
+
+
+    {
+        // Setting the season is a real change even though nothing re-queries,
+        // so it says so rather than looking inert - which is exactly how it
+        // looked when it lived inside the search group.
+        let app = Rc::clone(app);
+        let entry = app.ui.season_entry.clone();
+        entry.connect_changed(move |e| {
+            let selected = app
+                .ui
+                .candidate_list
+                .selected_row()
+                .map(|r| r.index() as usize)
+                .and_then(|i| app.state.borrow().candidates.get(i).cloned());
+            if let (Some(c), Ok(n)) = (selected, e.text().trim().parse::<u32>()) {
+                app.ui.identify_next.set_label(&format!(
+                    "Continue with season {n} of {}",
+                    c.media.title()
+                ));
+            } else {
+                app.ui.identify_next.set_label("Continue");
+            }
         });
     }
 
@@ -1217,5 +1310,61 @@ mod drive_page_tests {
         // the rule the page applies to the dropdown's visibility
         assert!(![drive("/dev/sr0", Some("A"))].len() > 1);
         assert!([drive("/dev/sr0", Some("A")), drive("/dev/sr1", None)].len() > 1);
+    }
+}
+
+#[cfg(test)]
+mod identify_page_tests {
+    use super::*;
+
+    fn show(season: u32) -> Media {
+        Media::Series {
+            title: "Parks and Recreation".into(),
+            year: Some(2009),
+            season,
+            provider_id: Some("1633".into()),
+        }
+    }
+
+    #[test]
+    fn a_candidate_is_shown_as_a_work_not_a_season() {
+        // The catalogue found a show. Labelling the row "season 1" claims the
+        // search determined something it did not, and then contradicts whatever
+        // season the user sets.
+        assert_eq!(show(1).describe_work(), "Parks and Recreation (2009)");
+        assert!(!show(1).describe_work().contains("season"));
+    }
+
+    #[test]
+    fn changing_the_season_needs_no_new_search() {
+        // This was the confusion: the season sat in the search group, so
+        // setting it looked like it should search, and looked inert when it
+        // did not.
+        let chosen = show(1).with_season(6);
+        assert_eq!(chosen.season(), Some(6));
+        assert_eq!(chosen.provider_id().as_deref(), Some("1633"));
+    }
+
+    #[test]
+    fn a_season_that_is_not_a_number_leaves_the_choice_alone() {
+        let parsed = "six".trim().parse::<u32>().ok();
+        let media = match parsed {
+            Some(n) => show(1).with_season(n),
+            None => show(1),
+        };
+        assert_eq!(media.season(), Some(1));
+    }
+
+    #[test]
+    fn a_search_result_count_is_worth_announcing() {
+        // the answer lands in a list the user may not be watching
+        let phrase = |n: usize| match n {
+            0 => "Nothing found".to_string(),
+            1 => "1 match".to_string(),
+            n => format!("{n} matches"),
+        };
+        assert_eq!(phrase(0), "Nothing found");
+        assert_eq!(phrase(1), "1 match");
+        assert_eq!(phrase(4), "4 matches");
     }
 }
