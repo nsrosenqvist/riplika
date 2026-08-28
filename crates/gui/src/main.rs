@@ -198,6 +198,14 @@ fn labelled_button(icon: &str, label: &str, name: &str) -> gtk::Button {
     button
 }
 
+/// Change a labelled button's text, whichever kind it is.
+fn set_button_label(button: &gtk::Button, label: &str) {
+    match button.child().and_downcast::<adw::ButtonContent>() {
+        Some(content) => content.set_label(label),
+        None => button.set_label(label),
+    }
+}
+
 fn page(tag: &str, title: &str, child: &impl IsA<gtk::Widget>) -> adw::NavigationPage {
     page_clamped(tag, title, child, CONTENT_WIDTH)
 }
@@ -498,11 +506,13 @@ fn build_ui() -> Ui {
         .child(&log)
         .css_classes(vec!["card".to_string()])
         .build();
-    let cancel_button = gtk::Button::builder()
-        .label("Cancel")
-        .css_classes(vec!["pill".to_string(), "destructive-action".to_string()])
-        .halign(gtk::Align::Center)
-        .build();
+    // Stopping work is not a dialog's "Cancel", and the icon says which of the
+    // two this is - the same word means "discard what I typed" three pages
+    // back.
+    let cancel_button = labelled_button("process-stop-symbolic", "Cancel", "cancel");
+    cancel_button.add_css_class("pill");
+    cancel_button.add_css_class("destructive-action");
+    cancel_button.set_halign(gtk::Align::Center);
     // The heading, the bar and the button read as a column and are held to a
     // narrow measure. The log is lines of text and wants the room, so it sits
     // outside that clamp at the page's full width.
@@ -1100,7 +1110,7 @@ impl App {
                 self.set_busy(None);
                 self.toast(&e);
                 self.log_line(&format!("failed: {e}"));
-                self.ui.cancel_button.set_label("Close");
+                set_button_label(&self.ui.cancel_button, "Close");
             }
         }
     }
@@ -1222,7 +1232,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             // A scan takes minutes and there is nothing to abandon it with on
             // this page, so show the progress page, which has the cancel button.
             app.state.borrow_mut().cancel = riplika_core::host::Cancel::new();
-            app.ui.cancel_button.set_label("Cancel");
+            set_button_label(&app.ui.cancel_button, "Cancel");
             app.go(Step::Progress);
             let cancel = app.state.borrow().cancel.clone();
             let allow = app.prefs.prefs.borrow().use_makemkv();
@@ -1330,7 +1340,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             // A fresh token, so a cancelled run does not poison the next one.
             app.state.borrow_mut().cancel = riplika_core::host::Cancel::new();
             let cancel = app.state.borrow().cancel.clone();
-            app.ui.cancel_button.set_label("Cancel");
+            set_button_label(&app.ui.cancel_button, "Cancel");
             app.go(Step::Progress);
             let allow = app.prefs.prefs.borrow().use_makemkv();
             worker::run(scan, media, disc, rip_dir, settings, allow, cancel, tx.clone());
@@ -1391,7 +1401,12 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
     {
         let app = Rc::clone(app);
         app.clone().ui.cancel_button.connect_clicked(move |b| {
-            if b.label().map(|l| l == "Close").unwrap_or(false) {
+            let closing = b
+                .child()
+                .and_downcast::<adw::ButtonContent>()
+                .map(|c| c.label() == "Close")
+                .unwrap_or(false);
+            if closing {
                 // Back to the start rather than popping: after a finished or
                 // abandoned job the choices are stale, and the drive page is
                 // where a second disc begins.
@@ -1400,7 +1415,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             }
             app.state.borrow().cancel.cancel();
             app.toast("Stopping after the current step");
-            b.set_label("Close");
+            set_button_label(b, "Close");
             // The job will not stop this instant - it stops at the next command
             // boundary - but nothing new should be startable in the meantime.
             app.set_busy(Some("Stopping..."));
@@ -1913,5 +1928,38 @@ mod language_choice_tests {
             !offered_but_unticked.iter().any(|(_, on)| *on),
             "a disc with tracks and none ticked must be refused"
         );
+    }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    /// Which buttons carry an icon, and why the rest do not.
+    ///
+    /// An icon earns its place on a button that is *skimmed past* - you are
+    /// looking for the eject glyph, not reading the word. On the one action a
+    /// page exists for it competes instead, and a misleading icon is worse than
+    /// none at all.
+    #[test]
+    fn the_icons_chosen_say_what_the_buttons_do() {
+        let decided: &[(&str, Option<&str>, &str)] = &[
+            ("Look again", Some("view-refresh-symbolic"), "skimmed for"),
+            ("Eject", Some("media-eject-symbolic"), "skimmed for"),
+            ("Rip another disc", Some("media-optical-symbolic"), "skimmed for"),
+            ("Cancel", Some("process-stop-symbolic"), "stopping work, not discarding a form"),
+            // A play triangle in an application that also handles video reads
+            // as "play this", which is worse than no icon.
+            ("Start", None, "no icon means starting a rip rather than playback"),
+            // go-next-symbolic already means "open the show picker" on that
+            // same page, and one glyph cannot mean two things.
+            ("Continue", None, "the chevron is taken"),
+            ("Analyse disc", None, "the hero action of a status page"),
+        ];
+        for (label, icon, why) in decided {
+            assert!(!why.is_empty(), "{label} needs a reason either way");
+            if let Some(i) = icon {
+                assert!(i.ends_with("-symbolic"), "{label}: {i} is not a symbolic icon");
+            }
+        }
+        assert_eq!(decided.iter().filter(|(_, i, _)| i.is_some()).count(), 4);
     }
 }
