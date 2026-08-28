@@ -77,17 +77,21 @@ def main():
         d, c = probe(os.path.join(a.directory, f))
         info[f] = {"duration": d, "chapters": c}
 
-    # a play-all repeats other titles back to back, so its chapter list is their
-    # chapter lists concatenated
+    # A play-all repeats other titles back to back, so its chapter list is
+    # their chapter lists concatenated. Do not gate this on duration: a
+    # two-episode play-all is only 43 minutes, well inside the range a single
+    # extended episode can occupy.
     parts = {f: v for f, v in info.items()
              if a.min_episode <= v["duration"] <= a.max_episode and v["chapters"]}
     playalls = {}
     for f, v in info.items():
-        if v["duration"] <= a.max_episode or not v["chapters"]:
+        if not v["chapters"]:
             continue
         seq, rest = [], list(v["chapters"])
         while rest:
             for g, pv in parts.items():
+                if g == f:
+                    continue  # a title trivially decomposes into itself
                 n = len(pv["chapters"])
                 if n and rest[:n] == pv["chapters"]:
                     seq.append(g)
@@ -95,11 +99,20 @@ def main():
                     break
             else:
                 break
-        if seq and not rest:
+        # needs at least two distinct parts, and must not just be itself
+        if len(seq) >= 2 and not rest and f not in seq:
             playalls[f] = seq
 
+    # Order play-alls by DVD title number, which follows the disc layout;
+    # ordering by duration would put a five-episode run before the two-episode
+    # premiere that precedes it on the disc.
+    def tnum(name):
+        import re as _re
+        m = _re.search(r"_t(\d+)", name)
+        return int(m.group(1)) if m else 9999
+
     ordered, seen = [], set()
-    for pa in sorted(playalls, key=lambda p: -info[p]["duration"]):
+    for pa in sorted(playalls, key=tnum):
         for g in playalls[pa]:
             if g not in seen:
                 ordered.append(g)
