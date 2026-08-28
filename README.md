@@ -218,6 +218,32 @@ python3 flatpak-cargo-generator.py Cargo.lock -o packaging/cargo-sources.json
 flatpak-builder --install --user build packaging/com.nsrosenqvist.Riplika.yml
 ```
 
+## Preferences
+
+The window keeps settings in `$XDG_CONFIG_HOME/riplika/preferences.json`, not
+GSettings - a schema has to be compiled into a system directory before the
+application will start, which is a poor trade for a dozen values. A missing or
+corrupt file falls back to defaults rather than refusing to launch; losing
+preferences should cost a re-tick, not a launch.
+
+The split is between policy and per-disc choice. Preferences hold what is true
+of the whole library - preferred languages, whether commentary is wanted, where
+the glyph table lives. The rip page holds what differs between discs: quality,
+the output folder, and which of *this* disc's languages to take.
+
+**Preferred languages** decide what starts ticked. The rip page lists the
+languages the disc actually carries - taken from the scan, so there is nothing
+to spell - with the preferred ones ticked and moved to the top. Order is the
+order you switch them on, and the first one becomes the default track. A
+language you want that is not on the disc simply does not appear; a language on
+the disc that you have not asked for is still offered, just unticked.
+
+**The MakeMKV fallback** can only be switched on if `makemkvcon` is installed.
+When it is missing the row is insensitive and says so, rather than being a live
+control whose promise would be broken forty minutes into a disc. The choice is
+honoured by both front ends through `rip::Auto`, so the window and the command
+line cannot drift apart about when MakeMKV gets involved.
+
 ## Identification
 
 A DVD carries no usable identifier, and there is no database keyed by disc.

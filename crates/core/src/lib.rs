@@ -25,6 +25,7 @@ pub mod lang;
 pub mod media;
 pub mod model;
 pub mod naming;
+pub mod prefs;
 pub mod rip;
 pub mod subs;
 pub mod transcode;

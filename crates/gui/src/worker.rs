@@ -13,7 +13,7 @@ use riplika_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, Ure
 use riplika_core::job::{Event, Pipeline, Ports, Report};
 use riplika_core::media::FfProbe;
 use riplika_core::model::{Candidate, DiscScan, Drive, Item, JobSettings, Media};
-use riplika_core::rip::MakeMkv;
+use riplika_core::rip::Auto;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
@@ -78,10 +78,10 @@ fn report(tx: &Sender<Msg>, r: riplika_core::Result<()>) {
 }
 
 /// List the drives.
-pub fn list_drives(tx: Sender<Msg>) {
+pub fn list_drives(allow_makemkv: bool, tx: Sender<Msg>) {
     std::thread::spawn(move || {
         let real = Real::new(Cancel::new());
-        let mk = MakeMkv::new(&real.runner);
+        let mk = Auto::new(&real.runner, allow_makemkv);
         match riplika_core::rip::Ripper::drives(&mk) {
             Ok(d) => {
                 let _ = tx.send(Msg::Drives(d));
@@ -94,10 +94,14 @@ pub fn list_drives(tx: Sender<Msg>) {
 }
 
 /// Read the disc and work out what it is.
-pub fn analyse(drive: Drive, cancel: Cancel, tx: Sender<Msg>) {
+pub fn analyse(drive: Drive, allow_makemkv: bool, cancel: Cancel, tx: Sender<Msg>) {
     std::thread::spawn(move || {
         let real = Real::new(cancel.clone());
-        let mk = MakeMkv::new(&real.runner);
+        let notify = tx.clone();
+        let mk = Auto::new(&real.runner, allow_makemkv)
+            .on_fallback(move |m| {
+                let _ = notify.send(Msg::Event(Event::Warning(m.to_string())));
+            });
         let prober = FfProbe(&real.runner);
         let cat = real.catalogues();
         let p = Pipeline::new(
@@ -145,18 +149,24 @@ pub fn search(query: String, season: Option<u32>, tx: Sender<Msg>) {
 }
 
 /// Rip, sort out and produce - the long one.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     scan: DiscScan,
     media: Media,
     disc: Option<u32>,
     rip_dir: PathBuf,
     settings: JobSettings,
+    allow_makemkv: bool,
     cancel: Cancel,
     tx: Sender<Msg>,
 ) {
     std::thread::spawn(move || {
         let real = Real::new(cancel.clone());
-        let mk = MakeMkv::new(&real.runner);
+        let notify = tx.clone();
+        let mk = Auto::new(&real.runner, allow_makemkv)
+            .on_fallback(move |m| {
+                let _ = notify.send(Msg::Event(Event::Warning(m.to_string())));
+            });
         let prober = FfProbe(&real.runner);
         let cat = real.catalogues();
         let p = Pipeline::new(

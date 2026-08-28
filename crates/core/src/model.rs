@@ -106,6 +106,34 @@ pub struct DiscScan {
 }
 
 impl DiscScan {
+    /// Every language on the disc, in the order first encountered.
+    ///
+    /// This is what the rip settings offer to choose from: showing the user the
+    /// languages that are actually there beats a text field they have to guess
+    /// the spelling for.
+    pub fn languages(&self, kind: TrackKind) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for t in &self.titles {
+            for track in t.tracks.iter().filter(|x| x.kind == kind) {
+                if !out.contains(&track.language) {
+                    out.push(track.language.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// Audio and subtitle languages together, which is what the filter covers.
+    pub fn all_languages(&self) -> Vec<String> {
+        let mut out = self.languages(TrackKind::Audio);
+        for l in self.languages(TrackKind::Subtitle) {
+            if !out.contains(&l) {
+                out.push(l);
+            }
+        }
+        out
+    }
+
     /// Durations of the titles worth considering, sorted - a rough fingerprint
     /// that survives being ripped and re-probed.
     pub fn duration_fingerprint(&self, min: Millis) -> Vec<Millis> {

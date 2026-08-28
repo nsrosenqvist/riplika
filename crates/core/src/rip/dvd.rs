@@ -349,12 +349,11 @@ impl super::Ripper for DvdVideo<'_> {
 
             let cmd = rip_command(&device, title.id, &out_path);
             let out = self.runner.stream(&cmd, &mut |line| {
-                if let Some(us) = line.strip_prefix("out_time_us=") {
-                    if let Ok(us) = us.trim().parse::<u64>() {
+                if let Some(us) = line.strip_prefix("out_time_us=")
+                    && let Ok(us) = us.trim().parse::<u64>() {
                         let done = (us / 1000) as f32 / title.duration.max(1) as f32;
                         progress(base + done.clamp(0.0, 1.0) * span, Some(&label));
                     }
-                }
             })?;
 
             if !out.ok() {
@@ -380,7 +379,7 @@ impl super::Ripper for DvdVideo<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::host::FakeRunner;
     use crate::rip::Ripper;

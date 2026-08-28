@@ -392,6 +392,54 @@ impl Runner for FakeRunner {
     }
 }
 
+/// Look for an executable along a `PATH`-style list.
+///
+/// Split out from [`which`] so it can be tested: the interesting cases are a
+/// name that exists but is not executable, and an empty entry meaning the
+/// current directory, and neither is comfortable to arrange for real.
+pub fn search_path(
+    path_var: &str,
+    program: &str,
+    is_executable: &dyn Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    // An absolute or relative path is used as given, not searched for.
+    if program.contains('/') {
+        let p = PathBuf::from(program);
+        return is_executable(&p).then_some(p);
+    }
+    for dir in path_var.split(':') {
+        // POSIX says an empty entry means the current directory
+        let dir = if dir.is_empty() { "." } else { dir };
+        let candidate = Path::new(dir).join(program);
+        if is_executable(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Is this program installed?
+///
+/// Used to decide whether an option can be offered at all: a MakeMKV fallback
+/// that is switched on but not installed is a promise the application cannot
+/// keep, and it would only be discovered forty minutes into a disc.
+pub fn which(program: &str) -> Option<PathBuf> {
+    let path = std::env::var("PATH").unwrap_or_default();
+    search_path(&path, program, &|p| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::metadata(p)
+                .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+                .unwrap_or(false)
+        }
+        #[cfg(not(unix))]
+        {
+            p.is_file()
+        }
+    })
+}
+
 /// A filesystem, so planners and the job runner can be tested without touching
 /// disk. Only the handful of operations the pipeline actually needs.
 pub trait Fs: Send + Sync {
@@ -595,6 +643,47 @@ mod tests {
         let r = RealRunner::new(c.clone());
         c.cancel();
         assert!(r.run(&Command::new("true")).is_err());
+    }
+
+    #[test]
+    fn a_program_is_found_along_the_path() {
+        let exists = |p: &Path| p == Path::new("/usr/bin/makemkvcon");
+        assert_eq!(
+            search_path("/bin:/usr/bin", "makemkvcon", &exists),
+            Some(PathBuf::from("/usr/bin/makemkvcon"))
+        );
+        assert_eq!(search_path("/bin", "makemkvcon", &exists), None);
+    }
+
+    #[test]
+    fn an_empty_path_entry_means_the_current_directory() {
+        let exists = |p: &Path| p == Path::new("./tool");
+        assert_eq!(search_path("/bin::/usr/bin", "tool", &exists), Some(PathBuf::from("./tool")));
+    }
+
+    #[test]
+    fn a_program_given_as_a_path_is_not_searched_for() {
+        let exists = |p: &Path| p == Path::new("/opt/makemkv/bin/makemkvcon");
+        assert_eq!(
+            search_path("/bin", "/opt/makemkv/bin/makemkvcon", &exists),
+            Some(PathBuf::from("/opt/makemkv/bin/makemkvcon"))
+        );
+        assert_eq!(search_path("/bin", "/nope", &exists), None);
+    }
+
+    #[test]
+    fn the_first_match_along_the_path_wins() {
+        let exists = |_: &Path| true;
+        assert_eq!(
+            search_path("/first:/second", "x", &exists),
+            Some(PathBuf::from("/first/x"))
+        );
+    }
+
+    #[test]
+    fn a_real_lookup_finds_something_that_is_certainly_installed() {
+        assert!(which("sh").is_some());
+        assert!(which("definitely-not-a-real-program-xyzzy").is_none());
     }
 
     #[test]

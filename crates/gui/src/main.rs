@@ -5,12 +5,14 @@
 //! that justifies a window at all - identification is a guess, and a guess is
 //! only safe if it is easy to overrule.
 
+mod prefs_dialog;
 mod worker;
 
 use adw::prelude::*;
 use gtk::glib;
 use riplika_core::job::{Event, Report};
-use riplika_core::lang::LanguageSet;
+use riplika_core::lang::{self, LanguageSet};
+use riplika_core::prefs::Preferences;
 use riplika_core::model::*;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -79,14 +81,9 @@ struct Ui {
     video: adw::ComboRow,
     audio: adw::ComboRow,
     container: adw::ComboRow,
-    languages: adw::EntryRow,
+    language_group: adw::PreferencesGroup,
+    language_rows: RefCell<Vec<(String, adw::SwitchRow)>>,
     output_dir: adw::ActionRow,
-    rip_dir: adw::ActionRow,
-    table_row: adw::ActionRow,
-    words_row: adw::ActionRow,
-    dual_audio: adw::SwitchRow,
-    keep_bitmaps: adw::SwitchRow,
-    keep_commentary: adw::SwitchRow,
     disc_entry: adw::EntryRow,
     stage_label: gtk::Label,
     progress: gtk::ProgressBar,
@@ -99,29 +96,9 @@ struct Ui {
 struct App {
     ui: Ui,
     state: RefCell<State>,
-    settings: RefCell<Paths>,
+    prefs: Rc<prefs_dialog::Store>,
 }
 
-/// Directory choices, which live outside the widget tree because a file dialog
-/// answers asynchronously.
-struct Paths {
-    output: PathBuf,
-    rip: PathBuf,
-    table: Option<PathBuf>,
-    words: Option<PathBuf>,
-}
-
-impl Default for Paths {
-    fn default() -> Self {
-        let home = glib::home_dir();
-        Paths {
-            output: home.join("Videos"),
-            rip: std::env::temp_dir().join("riplika-rip"),
-            table: None,
-            words: None,
-        }
-    }
-}
 
 fn main() -> glib::ExitCode {
     let app = adw::Application::builder().application_id(APP_ID).build();
@@ -148,7 +125,16 @@ fn hms(ms: u64) -> String {
 
 fn page(tag: &str, title: &str, child: &impl IsA<gtk::Widget>) -> adw::NavigationPage {
     let view = adw::ToolbarView::new();
-    view.add_top_bar(&adw::HeaderBar::new());
+    let header = adw::HeaderBar::new();
+    // Reachable from every step: the languages you prefer are most obviously
+    // wrong at the moment the rip page shows them ticked the wrong way.
+    let prefs_button = gtk::Button::builder()
+        .icon_name("emblem-system-symbolic")
+        .tooltip_text("Preferences")
+        .name("preferences")
+        .build();
+    header.pack_end(&prefs_button);
+    view.add_top_bar(&header);
     let scroll = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
@@ -188,7 +174,7 @@ fn build(app: &adw::Application) {
     let app_state = Rc::new(App {
         ui,
         state: RefCell::new(State::default()),
-        settings: RefCell::new(Paths::default()),
+        prefs: Rc::new(prefs_dialog::Store::new(Preferences::load())),
     });
 
     wire(&app_state, &window);
@@ -299,39 +285,17 @@ fn build_ui() -> Ui {
     quality.add(&audio);
     quality.add(&container);
 
-    let tracks = adw::PreferencesGroup::builder()
-        .title("Tracks")
-        .description("Languages in preference order; the first becomes the default track. Blank keeps everything.")
+    // Built once the disc has been scanned, from the languages actually on it.
+    // Offering a text field instead means guessing at spellings and finding out
+    // afterwards that nothing matched.
+    let language_group = adw::PreferencesGroup::builder()
+        .title("Languages")
+        .description("What this disc carries. Your preferred languages start ticked; the first becomes the default track.")
         .build();
-    let languages = adw::EntryRow::builder().title("Languages").build();
-    languages.set_text("english,swedish");
-    let dual_audio = adw::SwitchRow::builder()
-        .title("Add a stereo AAC track")
-        .subtitle("So browser clients do not make the server transcode")
-        .build();
-    let keep_bitmaps = adw::SwitchRow::builder()
-        .title("Keep VobSub bitmaps")
-        .subtitle("Redundant once recognised, and selecting one forces a burn-in re-encode")
-        .build();
-    let keep_commentary = adw::SwitchRow::builder().title("Keep commentary tracks").build();
-    tracks.add(&languages);
-    tracks.add(&dual_audio);
-    tracks.add(&keep_bitmaps);
-    tracks.add(&keep_commentary);
 
-    let folders = adw::PreferencesGroup::builder().title("Folders").build();
-    let output_dir = adw::ActionRow::builder().title("Output").activatable(true).build();
-    let rip_dir = adw::ActionRow::builder().title("Working folder").activatable(true).build();
-    let table_row = adw::ActionRow::builder()
-        .title("Glyph table")
-        .subtitle("Needed to turn subtitles into text")
-        .activatable(true)
-        .build();
-    let words_row = adw::ActionRow::builder().title("Wordlists").activatable(true).build();
+    let folders = adw::PreferencesGroup::builder().title("Output").build();
+    let output_dir = adw::ActionRow::builder().title("Folder").activatable(true).build();
     folders.add(&output_dir);
-    folders.add(&rip_dir);
-    folders.add(&table_row);
-    folders.add(&words_row);
 
     let start = gtk::Button::builder()
         .label("Start")
@@ -340,7 +304,7 @@ fn build_ui() -> Ui {
         .halign(gtk::Align::End)
         .build();
     set_body.append(&quality);
-    set_body.append(&tracks);
+    set_body.append(&language_group);
     set_body.append(&folders);
     set_body.append(&start);
     nav.add(&page(Step::Settings.tag(), "Settings", &set_body));
@@ -385,14 +349,9 @@ fn build_ui() -> Ui {
         video,
         audio,
         container,
-        languages,
+        language_group,
+        language_rows: RefCell::new(Vec::new()),
         output_dir,
-        rip_dir,
-        table_row,
-        words_row,
-        dual_audio,
-        keep_bitmaps,
-        keep_commentary,
         disc_entry,
         stage_label,
         progress,
@@ -424,42 +383,91 @@ impl App {
         }
     }
 
+    /// Which languages are ticked, in the order they are shown.
+    ///
+    /// Order is the point: the rows are laid out with the preferred languages
+    /// first, so reading them top to bottom gives the preference order, and the
+    /// first one ends up the default track.
+    fn chosen_languages(&self) -> LanguageSet {
+        LanguageSet(
+            self.ui
+                .language_rows
+                .borrow()
+                .iter()
+                .filter(|(_, row)| row.is_active())
+                .map(|(code, _)| lang::parse(code))
+                .collect(),
+        )
+    }
+
     fn settings(&self) -> JobSettings {
-        let p = self.settings.borrow();
-        JobSettings {
-            output_dir: p.output.clone(),
-            video: quality_at(&self.ui.video),
-            audio: quality_at(&self.ui.audio),
-            container: if self.ui.container.selected() == 1 {
-                Container::Mkv
-            } else {
-                Container::Mp4
-            },
-            languages: LanguageSet::parse(&self.ui.languages.text()),
-            dual_audio: self.ui.dual_audio.is_active(),
-            keep_bitmap_subs: self.ui.keep_bitmaps.is_active(),
-            drop_commentary: !self.ui.keep_commentary.is_active(),
-            words_dir: p.words.clone(),
-            glyph_table: p.table.clone(),
+        let prefs = self.prefs.prefs.borrow();
+        let output = prefs
+            .output_dir
+            .clone()
+            .unwrap_or_else(|| glib::home_dir().join("Videos"));
+        let mut s = prefs.to_settings(output, self.chosen_languages());
+        // the rip page can override the persisted quality for this disc
+        s.video = quality_at(&self.ui.video);
+        s.audio = quality_at(&self.ui.audio);
+        s.container = if self.ui.container.selected() == 1 {
+            Container::Mkv
+        } else {
+            Container::Mp4
+        };
+        s
+    }
+
+    /// Rebuild the language switches for the disc that was just scanned.
+    fn show_languages(&self, available: &[String]) {
+        for (_, row) in self.ui.language_rows.borrow().iter() {
+            self.ui.language_group.remove(row);
+        }
+        self.ui.language_rows.borrow_mut().clear();
+
+        if available.is_empty() {
+            let row = adw::SwitchRow::builder()
+                .title("No language tracks found")
+                .sensitive(false)
+                .build();
+            self.ui.language_group.add(&row);
+            return;
+        }
+        for (code, wanted) in self.prefs.prefs.borrow().preselect(available) {
+            let language = lang::parse(&code);
+            let row = adw::SwitchRow::builder()
+                .title(&language.name)
+                // The code is worth showing: a disc may tag the same language
+                // two ways, and this is what distinguishes the rows.
+                .subtitle(&code)
+                .build();
+            row.set_active(wanted);
+            self.ui.language_group.add(&row);
+            self.ui.language_rows.borrow_mut().push((code, row));
         }
     }
 
     fn refresh_paths(&self) {
-        let p = self.settings.borrow();
-        self.ui.output_dir.set_subtitle(&p.output.to_string_lossy());
-        self.ui.rip_dir.set_subtitle(&p.rip.to_string_lossy());
-        self.ui.table_row.set_subtitle(
-            &p.table
-                .as_ref()
-                .map(|x| x.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "none - subtitles stay as bitmaps".into()),
-        );
-        self.ui.words_row.set_subtitle(
-            &p.words
-                .as_ref()
-                .map(|x| x.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "none".into()),
-        );
+        let prefs = self.prefs.prefs.borrow();
+        let output = prefs
+            .output_dir
+            .clone()
+            .unwrap_or_else(|| glib::home_dir().join("Videos"));
+        self.ui.output_dir.set_subtitle(&output.to_string_lossy());
+        self.ui.video.set_selected(match prefs.video {
+            Quality::High => 0,
+            Quality::Medium => 1,
+            Quality::Low => 2,
+        });
+        self.ui.audio.set_selected(match prefs.audio {
+            Quality::High => 0,
+            Quality::Medium => 1,
+            Quality::Low => 2,
+        });
+        self.ui.container.set_selected(match prefs.container {
+            Container::Mp4 => 0,
+            Container::Mkv => 1,
+        });
     }
 
     fn show_drives(&self, drives: &[Drive]) {
@@ -595,6 +603,7 @@ impl App {
                 self.ui.search_entry.set_text(
                     &riplika_core::identify::label::parse(&scan.label).title,
                 );
+                self.show_languages(&scan.all_languages());
                 self.state.borrow_mut().scan = Some(*scan);
             }
             Msg::Candidates(c) => {
@@ -665,22 +674,12 @@ fn choose_folder<F: Fn(PathBuf) + 'static>(window: &adw::ApplicationWindow, titl
     });
 }
 
-fn choose_file<F: Fn(PathBuf) + 'static>(window: &adw::ApplicationWindow, title: &str, then: F) {
-    let dialog = gtk::FileDialog::builder().title(title).build();
-    dialog.open(Some(window), gtk::gio::Cancellable::NONE, move |res| {
-        if let Ok(file) = res
-            && let Some(p) = file.path() {
-                then(p);
-            }
-    });
-}
-
 fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
     let channel = worker::Channel::default();
     let tx = channel.sender();
 
     app.refresh_paths();
-    worker::list_drives(tx.clone());
+    worker::list_drives(app.prefs.prefs.borrow().use_makemkv(), tx.clone());
 
     // Drain the worker channel on the main loop. Polling rather than an async
     // channel because the pipeline is plain blocking code on plain threads,
@@ -708,7 +707,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
     }
     if let Some(refresh) = find_button(&app.ui.drive_next, "refresh") {
         let tx = tx.clone();
-        refresh.connect_clicked(move |_| worker::list_drives(tx.clone()));
+        refresh.connect_clicked(move |_| worker::list_drives(true, tx.clone()));
     }
     {
         let app = Rc::clone(app);
@@ -722,7 +721,8 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             app.ui.stage_label.set_label("Scanning disc");
             app.toast("Reading the disc - this takes a minute");
             let cancel = app.state.borrow().cancel.clone();
-            worker::analyse(drive, cancel, tx.clone());
+            let allow = app.prefs.prefs.borrow().use_makemkv();
+            worker::analyse(drive, allow, cancel, tx.clone());
         });
     }
 
@@ -766,45 +766,13 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
         app.clone().ui.output_dir.connect_activated(move |_| {
             let app2 = Rc::clone(&app);
             choose_folder(&window, "Output folder", move |p| {
-                app2.settings.borrow_mut().output = p;
+                app2.prefs.prefs.borrow_mut().output_dir = Some(p);
+                app2.prefs.save();
                 app2.refresh_paths();
             });
         });
     }
-    {
-        let app = Rc::clone(app);
-        let window = window.clone();
-        app.clone().ui.rip_dir.connect_activated(move |_| {
-            let app2 = Rc::clone(&app);
-            choose_folder(&window, "Working folder", move |p| {
-                app2.settings.borrow_mut().rip = p;
-                app2.refresh_paths();
-            });
-        });
-    }
-    {
-        let app = Rc::clone(app);
-        let window = window.clone();
-        app.clone().ui.table_row.connect_activated(move |_| {
-            let app2 = Rc::clone(&app);
-            choose_file(&window, "Glyph table", move |p| {
-                app2.settings.borrow_mut().table = Some(p);
-                app2.refresh_paths();
-            });
-        });
-    }
-    {
-        let app = Rc::clone(app);
-        let window = window.clone();
-        app.clone().ui.words_row.connect_activated(move |_| {
-            let app2 = Rc::clone(&app);
-            choose_folder(&window, "Wordlists", move |p| {
-                app2.settings.borrow_mut().words = Some(p);
-                app2.refresh_paths();
-            });
-        });
-    }
-    if let Some(start) = find_button(&app.ui.dual_audio, "start") {
+    if let Some(start) = find_button(&app.ui.output_dir, "start") {
         let app = Rc::clone(app);
         let tx = tx.clone();
         start.connect_clicked(move |_| {
@@ -818,7 +786,13 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             };
             let disc = app.ui.disc_entry.text().trim().parse::<u32>().ok();
             let settings = app.settings();
-            let rip_dir = app.settings.borrow().rip.clone();
+            let rip_dir = app
+                .prefs
+                .prefs
+                .borrow()
+                .rip_dir
+                .clone()
+                .unwrap_or_else(|| std::env::temp_dir().join("riplika-rip"));
             if settings.glyph_table.is_none() {
                 app.toast("No glyph table: subtitles will stay as bitmaps");
             }
@@ -827,7 +801,25 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             let cancel = app.state.borrow().cancel.clone();
             app.ui.cancel_button.set_label("Cancel");
             app.go(Step::Progress);
-            worker::run(scan, media, disc, rip_dir, settings, cancel, tx.clone());
+            let allow = app.prefs.prefs.borrow().use_makemkv();
+            worker::run(scan, media, disc, rip_dir, settings, allow, cancel, tx.clone());
+        });
+    }
+
+    // Preferences ----------------------------------------------------------
+    for button in find_buttons(&app.ui.output_dir, "preferences") {
+        let app = Rc::clone(app);
+        let window = window.clone();
+        button.connect_clicked(move |_| {
+            let app2 = Rc::clone(&app);
+            prefs_dialog::present(&window, Rc::clone(&app.prefs), move || {
+                // Re-tick the rip page from the new preferences, but only while
+                // a disc is loaded and the choice has not been acted on yet.
+                if let Some(scan) = app2.state.borrow().scan.as_ref() {
+                    app2.show_languages(&scan.all_languages());
+                }
+                app2.refresh_paths();
+            });
         });
     }
 
@@ -844,6 +836,31 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             b.set_label("Close");
         });
     }
+}
+
+/// Every button with this name in the window.
+///
+/// The preferences button is repeated once per page, so a single lookup would
+/// wire up whichever happened to be found first and leave the rest dead.
+fn find_buttons(anchor: &impl IsA<gtk::Widget>, name: &str) -> Vec<gtk::Button> {
+    let mut root: gtk::Widget = anchor.clone().upcast();
+    while let Some(p) = root.parent() {
+        root = p;
+    }
+    fn walk(w: &gtk::Widget, name: &str, out: &mut Vec<gtk::Button>) {
+        if w.widget_name() == name
+            && let Ok(b) = w.clone().downcast::<gtk::Button>() {
+                out.push(b);
+            }
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            walk(&c, name, out);
+            child = c.next_sibling();
+        }
+    }
+    let mut out = Vec::new();
+    walk(&root, name, &mut out);
+    out
 }
 
 /// Find a button by name anywhere in the window.
@@ -907,10 +924,37 @@ mod tests {
     }
 
     #[test]
-    fn the_default_output_folder_is_not_the_working_folder() {
+    fn preferred_languages_decide_what_starts_ticked() {
+        // the rip page offers what the disc has; preferences decide the ticks
+        let prefs = Preferences {
+            preferred_languages: vec!["swe".into(), "eng".into()],
+            ..Preferences::default()
+        };
+        let on_disc: Vec<String> = ["eng", "spa", "swe"].iter().map(|s| s.to_string()).collect();
+        let rows = prefs.preselect(&on_disc);
+        // preferred ones first and ticked, in preference order
+        assert_eq!(rows[0], ("swe".to_string(), true));
+        assert_eq!(rows[1], ("eng".to_string(), true));
+        assert_eq!(rows[2], ("spa".to_string(), false));
+    }
+
+    #[test]
+    fn the_makemkv_option_cannot_be_switched_on_when_it_is_absent() {
+        // an option that cannot be honoured must not look as though it can
+        let prefs = Preferences { makemkv_fallback: true, ..Preferences::default() };
+        assert_eq!(prefs.use_makemkv(), Preferences::makemkv_available());
+    }
+
+    #[test]
+    fn the_rip_folder_defaults_somewhere_other_than_the_library() {
         // ripping into the library would leave raw titles among the episodes
-        let p = Paths::default();
-        assert_ne!(p.output, p.rip);
+        let prefs = Preferences::default();
+        let output = prefs.output_dir.clone().unwrap_or_else(|| glib::home_dir().join("Videos"));
+        let rip = prefs
+            .rip_dir
+            .clone()
+            .unwrap_or_else(|| std::env::temp_dir().join("riplika-rip"));
+        assert_ne!(output, rip);
     }
 
     use riplika_core::naming;

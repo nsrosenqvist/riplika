@@ -234,3 +234,190 @@ TINFO:0,27,0,"title_t00.mkv"
         assert!(seen.windows(2).all(|w| w[0] <= w[1]), "{seen:?}");
     }
 }
+
+/// The free reader, with MakeMKV held in reserve.
+///
+/// Which program reads a disc is a decision both front ends have to make the
+/// same way, so it lives here rather than in either of them.
+///
+/// The reserve matters. libdvdcss does a player-key exchange with the drive,
+/// which an RPC-2 drive can refuse when the disc's region does not match the
+/// one region the drive is set to; and libdvdread gives up on unreadable
+/// sectors where MakeMKV retries, which covers scratches and the deliberately
+/// corrupt sectors some copy protections write. Both failures are quiet - the
+/// scan succeeds and simply returns fewer titles - so they are detected rather
+/// than waited for.
+pub struct Auto<'a> {
+    pub free: dvd::DvdVideo<'a>,
+    /// `None` when MakeMKV is not installed, or the user has turned it off.
+    pub makemkv: Option<MakeMkv<'a>>,
+    /// Set once a scan has decided; `rip` must use whoever could read it.
+    used_fallback: std::sync::atomic::AtomicBool,
+    /// Told why a fallback happened, for the log or the progress list.
+    pub notify: Option<Box<dyn Fn(&str) + Send + Sync + 'a>>,
+}
+
+impl<'a> Auto<'a> {
+    pub fn new(runner: &'a dyn Runner, allow_makemkv: bool) -> Self {
+        Auto {
+            free: dvd::DvdVideo::new(runner),
+            makemkv: allow_makemkv.then(|| MakeMkv::new(runner)),
+            used_fallback: std::sync::atomic::AtomicBool::new(false),
+            notify: None,
+        }
+    }
+
+    pub fn on_fallback(mut self, f: impl Fn(&str) + Send + Sync + 'a) -> Self {
+        self.notify = Some(Box::new(f));
+        self
+    }
+
+    fn say(&self, message: &str) {
+        if let Some(n) = &self.notify {
+            n(message);
+        }
+    }
+
+    fn fell_back(&self) -> bool {
+        self.used_fallback.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn take_fallback(&self) -> Option<&MakeMkv<'a>> {
+        self.used_fallback
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.makemkv.as_ref()
+    }
+
+    /// Whoever read the disc must also rip it: the two disagree about title
+    /// numbering, so ripping "title 41" with the wrong one is a different
+    /// programme entirely.
+    fn reader(&self) -> &dyn Ripper {
+        if self.fell_back()
+            && let Some(m) = &self.makemkv {
+                return m;
+            }
+        &self.free
+    }
+}
+
+impl Ripper for Auto<'_> {
+    fn drives(&self) -> Result<Vec<Drive>> {
+        // MakeMKV names Blu-rays, which are UDF and carry no ISO 9660 label, so
+        // when it is available its listing is the more informative one.
+        if let Some(m) = &self.makemkv
+            && let Ok(d) = m.drives()
+                && !d.is_empty() {
+                    return Ok(d);
+                }
+        self.free.drives()
+    }
+
+    fn scan(&self, drive: &Drive) -> Result<DiscScan> {
+        match self.free.scan_checked(drive) {
+            Ok((scan, health)) if health.is_trustworthy() => Ok(scan),
+            Ok((_, health)) => match self.take_fallback() {
+                Some(m) => {
+                    self.say(&format!(
+                        "the free reader could not read this disc fully ({}); using MakeMKV",
+                        health.complaint()
+                    ));
+                    m.scan(drive)
+                }
+                None => Err(Error(format!(
+                    "{}. MakeMKV works around this; enable it in preferences.",
+                    health.complaint()
+                ))),
+            },
+            Err(e) => match self.take_fallback() {
+                Some(m) => {
+                    self.say(&format!("the free reader failed ({e}); using MakeMKV"));
+                    m.scan(drive)
+                }
+                None => Err(e),
+            },
+        }
+    }
+
+    fn rip(
+        &self,
+        drive: &Drive,
+        titles: &[DiscTitle],
+        dest: &Path,
+        progress: &mut dyn FnMut(f32, Option<&str>),
+    ) -> Result<Vec<PathBuf>> {
+        self.reader().rip(drive, titles, dest, progress)
+    }
+}
+
+#[cfg(test)]
+mod auto_tests {
+    use super::*;
+    use crate::host::FakeRunner;
+
+    const CSS_FAILURE: &str =
+        "libdvdnav: Error cracking CSS key for /VIDEO_TS/VTS_06_1.VOB (0x000651ea)";
+
+    const MAKEMKV_INFO: &str = r#"DRV:0,2,999,12,"Some Drive","DISC","/dev/sr0"
+TINFO:0,9,0,"0:21:29"
+TINFO:0,27,0,"title_t00.mkv"
+"#;
+
+    fn drive() -> Drive {
+        Drive {
+            id: "disc:0".into(),
+            device: "/dev/sr0".into(),
+            name: "drive".into(),
+            disc_label: Some("DISC".into()),
+        }
+    }
+
+    #[test]
+    fn a_disc_the_free_reader_cannot_decrypt_goes_to_makemkv() {
+        let r = FakeRunner::new()
+            .fail("ffprobe", CSS_FAILURE)
+            .on("makemkvcon", MAKEMKV_INFO);
+        let told = std::sync::Mutex::new(Vec::new());
+        let a = Auto::new(&r, true).on_fallback(|m| told.lock().unwrap().push(m.to_string()));
+        let scan = a.scan(&drive()).unwrap();
+        assert_eq!(scan.titles.len(), 1);
+        assert!(told.lock().unwrap()[0].contains("MakeMKV"), "{:?}", told);
+    }
+
+    #[test]
+    fn without_the_fallback_it_says_what_would_fix_it() {
+        // silently returning a season with no episodes is the failure to avoid
+        let r = FakeRunner::new().fail("ffprobe", CSS_FAILURE);
+        let a = Auto::new(&r, false);
+        let e = a.scan(&drive()).unwrap_err();
+        assert!(e.0.contains("preferences"), "{}", e.0);
+        assert!(e.0.contains("decrypt"), "{}", e.0);
+    }
+
+    #[test]
+    fn a_healthy_disc_never_reaches_makemkv() {
+        let r = FakeRunner::new()
+            .on("-title 1 ", crate::rip::dvd::tests::EPISODE)
+            .on("makemkvcon", MAKEMKV_INFO);
+        let mut a = Auto::new(&r, true);
+        a.free.max_title = 2;
+        a.scan(&drive()).unwrap();
+        assert!(r.calls_to("makemkvcon").is_empty());
+    }
+
+    #[test]
+    fn whoever_scanned_the_disc_also_rips_it() {
+        // the two number titles differently, so ripping "title 41" with the
+        // wrong one is a different programme entirely
+        let r = FakeRunner::new()
+            .fail("ffprobe", CSS_FAILURE)
+            .on("makemkvcon", MAKEMKV_INFO);
+        let a = Auto::new(&r, true);
+        let scan = a.scan(&drive()).unwrap();
+        let dir = std::env::temp_dir().join("riplika-auto-test");
+        let _ = a.rip(&drive(), &scan.titles, &dir, &mut |_, _| {});
+        let _ = std::fs::remove_dir_all(&dir);
+        // the rip went through makemkvcon, not ffmpeg
+        assert!(r.calls_to("makemkvcon").len() > 1);
+        assert!(r.calls_to("ffmpeg").is_empty());
+    }
+}

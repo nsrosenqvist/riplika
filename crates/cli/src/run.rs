@@ -10,7 +10,8 @@ use riplika_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, Ure
 use riplika_core::job::{Event, Pipeline, Ports, Report, Stage};
 use riplika_core::media::FfProbe;
 use riplika_core::model::{Candidate, Drive, JobSettings, Item, Media, Role};
-use riplika_core::rip::{dvd::DvdVideo, MakeMkv, Ripper};
+use riplika_core::prefs::Preferences;
+use riplika_core::rip::{dvd::DvdVideo, Auto, MakeMkv, Ripper};
 use riplika_core::subs;
 use std::path::{Path, PathBuf};
 
@@ -53,107 +54,6 @@ impl Real {
     }
 }
 
-/// Choose the disc reader.
-///
-/// `dvd` needs nothing proprietary but reads DVDs only; `makemkv` also reads
-/// Blu-ray, where libaacs ships no keys and there is no free equivalent. `auto`
-/// prefers the free one and falls back.
-enum Reader<'a> {
-    Dvd(DvdVideo<'a>),
-    MakeMkv(MakeMkv<'a>),
-    /// The free reader, with MakeMKV held in reserve.
-    ///
-    /// libdvdcss does the player-key exchange with the drive, which an RPC-2
-    /// drive can refuse when the disc's region does not match the one the drive
-    /// is set to - and a drive can only be set to one region. MakeMKV talks to
-    /// the drive itself and does not care. It also retries unreadable sectors,
-    /// where libdvdread gives up, so scratched discs and the deliberately
-    /// corrupt sectors some copy protections write are its territory too.
-    ///
-    /// Losing that silently would be the worst outcome, so a scan that shows
-    /// any sign of trouble is handed straight over.
-    Auto(DvdVideo<'a>, MakeMkv<'a>),
-}
-
-impl<'a> Reader<'a> {
-    fn choose(which: &str, runner: &'a riplika_core::host::RealRunner) -> Result<Self, String> {
-        match which.trim().to_ascii_lowercase().as_str() {
-            "dvd" | "dvdvideo" | "ffmpeg" => Ok(Reader::Dvd(DvdVideo::new(runner))),
-            "makemkv" => Ok(Reader::MakeMkv(MakeMkv::new(runner))),
-            "auto" => {
-                // A DVD has a VIDEO_TS directory; anything else needs MakeMKV.
-                let dvd = DvdVideo::new(runner);
-                let is_dvd = dvd
-                    .drives()
-                    .map(|ds| {
-                        ds.iter().any(|d| {
-                            riplika_core::rip::iso::device_reader(std::path::Path::new(&d.device))
-                                .and_then(|mut r| riplika_core::rip::iso::title_table(&mut r))
-                                .is_ok()
-                        })
-                    })
-                    .unwrap_or(false);
-                Ok(if is_dvd {
-                    Reader::Auto(dvd, MakeMkv::new(runner))
-                } else {
-                    Reader::MakeMkv(MakeMkv::new(runner))
-                })
-            }
-            other => Err(format!(
-                "unknown reader {other:?}; use auto, dvd or makemkv"
-            )),
-        }
-    }
-
-    fn as_ripper(&self) -> &dyn Ripper {
-        match self {
-            Reader::Dvd(d) | Reader::Auto(d, _) => d,
-            Reader::MakeMkv(m) => m,
-        }
-    }
-
-    fn name(&self) -> &'static str {
-        match self {
-            Reader::Dvd(_) => "ffmpeg dvdvideo",
-            Reader::MakeMkv(_) => "makemkv",
-            Reader::Auto(..) => "ffmpeg dvdvideo (makemkv in reserve)",
-        }
-    }
-
-    /// Scan, falling back to MakeMKV if the free path cannot be trusted.
-    fn scan_disc(&self, drive: &Drive) -> Result<riplika_core::model::DiscScan, String> {
-        let (dvd, fallback) = match self {
-            Reader::MakeMkv(m) => return m.scan(drive).map_err(|e| e.to_string()),
-            Reader::Dvd(d) => (d, None),
-            Reader::Auto(d, m) => (d, Some(m)),
-        };
-        match dvd.scan_checked(drive) {
-            Ok((scan, health)) if health.is_trustworthy() => Ok(scan),
-            Ok((_, health)) => {
-                eprintln!("  the free reader could not read this disc fully:");
-                eprintln!("    {}", health.complaint());
-                match fallback {
-                    Some(m) => {
-                        eprintln!("  handing it to makemkv, which works around this");
-                        m.scan(drive).map_err(|e| e.to_string())
-                    }
-                    None => Err(format!(
-                        "{} - retry without --reader dvd to use makemkv",
-                        health.complaint()
-                    )),
-                }
-            }
-            Err(e) => match fallback {
-                Some(m) => {
-                    eprintln!("  the free reader failed ({e}); handing it to makemkv");
-                    m.scan(drive).map_err(|e| e.to_string())
-                }
-                None => Err(e.to_string()),
-            },
-        }
-    }
-}
-
 fn pick_drive(ripper: &dyn Ripper, want: Option<&str>) -> Result<Drive, String> {
     let drives = ripper.drives().map_err(|e| e.to_string())?;
     if drives.is_empty() {
@@ -184,11 +84,34 @@ fn pick_drive(ripper: &dyn Ripper, want: Option<&str>) -> Result<Drive, String> 
     }
 }
 
-pub fn drives(reader: &str) -> Result<(), String> {
+/// Build the disc reader named on the command line.
+///
+/// Shared with the window through `rip::Auto`, so the two cannot drift apart
+/// about when MakeMKV gets involved.
+fn reader<'a>(
+    which: &str,
+    runner: &'a riplika_core::host::RealRunner,
+) -> Result<Box<dyn Ripper + 'a>, String> {
+    match which.trim().to_ascii_lowercase().as_str() {
+        "dvd" | "dvdvideo" | "ffmpeg" => Ok(Box::new(DvdVideo::new(runner))),
+        "makemkv" => {
+            if !Preferences::makemkv_available() {
+                return Err("makemkvcon is not installed".into());
+            }
+            Ok(Box::new(MakeMkv::new(runner)))
+        }
+        "auto" => Ok(Box::new(
+            Auto::new(runner, Preferences::makemkv_available())
+                .on_fallback(|m| eprintln!("  {m}")),
+        )),
+        other => Err(format!("unknown reader {other:?}; use auto, dvd or makemkv")),
+    }
+}
+
+pub fn drives(which: &str) -> Result<(), String> {
     let real = Real::new();
-    let r = Reader::choose(reader, &real.runner)?;
-    eprintln!("reader: {}", r.name());
-    for d in r.as_ripper().drives().map_err(|e| e.to_string())? {
+    let r = reader(which, &real.runner)?;
+    for d in r.drives().map_err(|e| e.to_string())? {
         println!(
             "{:8} {:12} {:32} {}",
             d.id,
@@ -200,12 +123,11 @@ pub fn drives(reader: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn scan(drive: Option<&str>, reader: &str) -> Result<(), String> {
+pub fn scan(drive: Option<&str>, which: &str) -> Result<(), String> {
     let real = Real::new();
-    let r = Reader::choose(reader, &real.runner)?;
-    eprintln!("reader: {}", r.name());
-    let d = pick_drive(r.as_ripper(), drive)?;
-    let scan = r.scan_disc(&d)?;
+    let r = reader(which, &real.runner)?;
+    let d = pick_drive(r.as_ref(), drive)?;
+    let scan = r.scan(&d).map_err(|e| e.to_string())?;
     println!("{}  ({} titles)\n", scan.label, scan.titles.len());
     for t in &scan.titles {
         let audio = t.tracks.iter().filter(|x| x.kind == riplika_core::model::TrackKind::Audio).count();
