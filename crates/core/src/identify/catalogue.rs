@@ -31,6 +31,12 @@ pub struct CatalogueHit {
     pub media: Media,
     /// The catalogue's own confidence in the match, 0.0 to 1.0.
     pub score: f32,
+    /// What the work is, in a line - who broadcast it, what kind of thing it
+    /// is, and when it ran.
+    ///
+    /// This is what tells nine similarly-named shows apart. A search for "Bear
+    /// Grylls" returns a dozen titles that differ mainly by broadcaster.
+    pub detail: Option<String>,
 }
 
 /// A source of titles and episode lists.
@@ -71,6 +77,39 @@ fn year_of(date: Option<&str>) -> Option<u32> {
     date?.get(..4)?.parse().ok()
 }
 
+/// A line describing a show, for telling similar ones apart.
+///
+/// Ordered by how much each part narrows things down: the broadcaster first,
+/// since that is what separates a dozen shows sharing a presenter's name, then
+/// what kind of programme it is, then when it ran.
+pub fn describe_show(
+    network: Option<&str>,
+    kind: Option<&str>,
+    premiered: Option<&str>,
+    ended: Option<&str>,
+    status: Option<&str>,
+) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(n) = network.filter(|n| !n.is_empty()) {
+        parts.push(n.to_string());
+    }
+    if let Some(k) = kind.filter(|k| !k.is_empty()) {
+        parts.push(k.to_string());
+    }
+    match (year_of(premiered), year_of(ended)) {
+        // A range only earns its place when it spans more than the year
+        // already shown beside the title.
+        (Some(from), Some(to)) if to > from => parts.push(format!("{from}-{to}")),
+        (Some(_), None) if status == Some("Running") => parts.push("ongoing".into()),
+        _ => {}
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" \u{b7} "))
+    }
+}
+
 /// Parse `/search/shows` output.
 pub fn parse_tvmaze_search(json: &str, season: Option<u32>) -> Result<Vec<CatalogueHit>> {
     let v: serde_json::Value =
@@ -79,10 +118,17 @@ pub fn parse_tvmaze_search(json: &str, season: Option<u32>) -> Result<Vec<Catalo
     for hit in v.as_array().unwrap_or(&vec![]) {
         let Some(show) = hit.get("show") else { continue };
         let Some(name) = show.get("name").and_then(|n| n.as_str()) else { continue };
+        let text = |k: &str| show.get(k).and_then(|x| x.as_str());
+        // A show is on a broadcast network or a streaming service, never both.
+        let network = show
+            .get("network")
+            .or_else(|| show.get("webChannel"))
+            .and_then(|n| n.get("name"))
+            .and_then(|n| n.as_str());
         out.push(CatalogueHit {
             media: Media::Series {
                 title: name.to_string(),
-                year: year_of(show.get("premiered").and_then(|p| p.as_str())),
+                year: year_of(text("premiered")),
                 season: season.unwrap_or(1),
                 provider_id: show.get("id").map(|i| i.to_string()),
             },
@@ -91,6 +137,13 @@ pub fn parse_tvmaze_search(json: &str, season: Option<u32>) -> Result<Vec<Catalo
                 .and_then(|s| s.as_f64())
                 .unwrap_or(0.0)
                 .clamp(0.0, 1.0) as f32,
+            detail: describe_show(
+                network,
+                text("type"),
+                text("premiered"),
+                text("ended"),
+                text("status"),
+            ),
         });
     }
     Ok(out)
@@ -197,7 +250,15 @@ pub fn parse_tmdb_search(json: &str, kind: MediaKind, season: Option<u32>) -> Re
         if media.title().is_empty() {
             continue;
         }
-        out.push(CatalogueHit { media, score });
+        // TMDB's search results carry no broadcaster, so this is thinner
+        let detail = describe_show(
+            r.get("original_language").and_then(|l| l.as_str()),
+            None,
+            r.get("first_air_date").or_else(|| r.get("release_date")).and_then(|d| d.as_str()),
+            None,
+            None,
+        );
+        out.push(CatalogueHit { media, score, detail });
     }
     Ok(out)
 }
@@ -469,6 +530,7 @@ mod tests {
                 Ok(vec![CatalogueHit {
                     media: Media::Movie { title: self.0.into(), year: None, provider_id: None },
                     score: self.1,
+                    detail: None,
                 }])
             }
             fn episodes(&self, _: &str, _: u32) -> Result<Vec<Episode>> { Ok(vec![]) }
@@ -505,5 +567,77 @@ mod tests {
         }
         let c = Catalogues(vec![Box::new(Broken)]);
         assert!(c.search("x", MediaKind::Series, None).is_err());
+    }
+}
+
+#[cfg(test)]
+mod detail_tests {
+    use super::*;
+
+    /// The real shape of the problem: a search for a presenter's name returns
+    /// a dozen programmes, and what separates them is who broadcast them.
+    const BEAR: &str = r#"[
+      {"score":0.89,"show":{"id":1,"name":"I Survived Bear Grylls","type":"Reality",
+        "premiered":"2023-05-18","ended":null,"status":"To Be Determined",
+        "network":{"name":"TBS"}}},
+      {"score":0.89,"show":{"id":2,"name":"Bear Grylls: Breaking Point","type":"Reality",
+        "premiered":"2015-03-02","ended":"2015-04-06","status":"Ended",
+        "network":{"name":"Discovery"}}},
+      {"score":0.89,"show":{"id":3,"name":"Bear Grylls: Mission Survive","type":"Reality",
+        "premiered":"2015-02-20","ended":"2016-04-07","status":"Ended",
+        "network":{"name":"ITV1"}}},
+      {"score":0.5,"show":{"id":4,"name":"Streamed Thing","type":"Documentary",
+        "premiered":"2020-01-01","status":"Running","webChannel":{"name":"Netflix"}}}
+    ]"#;
+
+    #[test]
+    fn similar_shows_are_told_apart_by_who_broadcast_them() {
+        let hits = parse_tvmaze_search(BEAR, None).unwrap();
+        let details: Vec<&str> = hits.iter().filter_map(|h| h.detail.as_deref()).collect();
+        assert_eq!(details[0], "TBS · Reality");
+        assert_eq!(details[1], "Discovery · Reality");
+        assert_eq!(details[2], "ITV1 · Reality · 2015-2016");
+    }
+
+    #[test]
+    fn a_streaming_service_stands_in_for_a_network() {
+        // a show is on one or the other, never both
+        let hits = parse_tvmaze_search(BEAR, None).unwrap();
+        assert_eq!(hits[3].detail.as_deref(), Some("Netflix · Documentary · ongoing"));
+    }
+
+    #[test]
+    fn a_run_within_one_year_is_left_to_the_title() {
+        // the title already shows the premiere year; "2015-2015" adds nothing
+        let d = describe_show(Some("Discovery"), Some("Reality"), Some("2015-03-02"), Some("2015-04-06"), Some("Ended"));
+        assert_eq!(d.as_deref(), Some("Discovery · Reality"));
+    }
+
+    #[test]
+    fn a_show_with_nothing_known_about_it_gets_no_line() {
+        assert_eq!(describe_show(None, None, None, None, None), None);
+    }
+
+    #[test]
+    fn missing_parts_are_dropped_rather_than_left_blank() {
+        assert_eq!(
+            describe_show(None, Some("Scripted"), Some("2009-04-09"), Some("2015-02-24"), None).as_deref(),
+            Some("Scripted · 2009-2015")
+        );
+        assert_eq!(
+            describe_show(Some("NBC"), None, None, None, None).as_deref(),
+            Some("NBC")
+        );
+    }
+
+    #[test]
+    fn a_search_result_carries_no_reasons_about_this_disc() {
+        // "searched for X" was the same on every row and restated the box the
+        // user had just typed into
+        let http = FakeHttp::new().on("/search/shows", BEAR);
+        let cat = TvMaze { http: &http };
+        let found = crate::identify::search(&cat, "Bear Grylls", None).unwrap();
+        assert!(found.iter().all(|c| c.reasons.is_empty()));
+        assert!(found.iter().all(|c| c.detail.is_some()));
     }
 }

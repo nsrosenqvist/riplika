@@ -95,6 +95,7 @@ pub fn identify(scan: &DiscScan, cat: &dyn Catalogue) -> Result<Vec<Candidate>> 
             media: hit.media,
             confidence: confidence.clamp(0.0, 1.0),
             reasons,
+            detail: hit.detail,
         });
     }
     out.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
@@ -141,7 +142,11 @@ pub fn search(cat: &dyn Catalogue, query: &str, season: Option<u32>) -> Result<V
         .map(|h| Candidate {
             confidence: h.score,
             media: h.media,
-            reasons: vec![format!("searched for {query:?}")],
+            // "searched for X" is the same on every row and restates the box
+            // the user just typed in. What distinguishes these results is what
+            // the works are, not that a search happened.
+            reasons: Vec::new(),
+            detail: h.detail,
         })
         .collect())
 }

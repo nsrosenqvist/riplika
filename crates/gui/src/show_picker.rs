@@ -31,9 +31,15 @@ impl Picker {
         }
         let chooser = std::rc::Rc::new(on_choose);
         for (i, c) in candidates.iter().enumerate() {
+            // What the work is, not that a search happened: the reasons are
+            // evidence about *this disc*, which a search result has none of.
+            let subtitle = c
+                .detail
+                .clone()
+                .unwrap_or_else(|| c.reasons.join("\n"));
             let row = adw::ActionRow::builder()
                 .title(c.media.describe_work())
-                .subtitle(&c.reasons.join("\n"))
+                .subtitle(&subtitle)
                 .activatable(true)
                 .build();
             let pct = gtk::Label::new(Some(&format!("{:.0}%", c.confidence * 100.0)));

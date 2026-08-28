@@ -695,7 +695,14 @@ impl App {
         match selected {
             Some(c) => {
                 self.ui.chosen_row.set_title(&c.media.describe_work());
-                self.ui.chosen_row.set_subtitle(&c.reasons.join("\n"));
+                // Both here: what the work is, and why this disc is thought to
+                // be it. On the identify page the evidence is the point.
+                let mut lines: Vec<String> = Vec::new();
+                if let Some(d) = &c.detail {
+                    lines.push(d.clone());
+                }
+                lines.extend(c.reasons.iter().cloned());
+                self.ui.chosen_row.set_subtitle(&lines.join("\n"));
                 if self.ui.season_entry.text().trim().is_empty()
                     && let Some(n) = c.media.season()
                 {
@@ -1009,25 +1016,6 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
         });
     }
 
-
-    {
-        // Setting the season is a real change even though nothing re-queries,
-        // so it says so rather than looking inert - which is exactly how it
-        // looked when it lived inside the search group.
-        let app = Rc::clone(app);
-        let entry = app.ui.season_entry.clone();
-        entry.connect_changed(move |e| {
-            let selected = app.state.borrow().selected.clone();
-            if let (Some(c), Ok(n)) = (selected, e.text().trim().parse::<u32>()) {
-                app.ui.identify_next.set_label(&format!(
-                    "Continue with season {n} of {}",
-                    c.media.title()
-                ));
-            } else {
-                app.ui.identify_next.set_label("Continue");
-            }
-        });
-    }
 
     // Step three -----------------------------------------------------------
     {
@@ -1452,6 +1440,7 @@ mod picker_tests {
             },
             confidence,
             reasons: vec!["volume label".into()],
+            detail: Some("NBC \u{b7} Scripted \u{b7} 2009-2015".into()),
         }
     }
 

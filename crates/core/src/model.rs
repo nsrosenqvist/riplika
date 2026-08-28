@@ -267,7 +267,13 @@ pub struct Candidate {
     pub media: Media,
     /// 0.0 to 1.0.
     pub confidence: f32,
+    /// Why we think this disc is this work.
     pub reasons: Vec<String>,
+    /// What the work is: broadcaster, kind, years. Separate from the reasons,
+    /// because "who made it" and "why we think it is on this disc" are
+    /// different questions and only one of them is useful when picking between
+    /// nine shows with the same person's name in the title.
+    pub detail: Option<String>,
 }
 
 /// How hard to work on the picture and the sound.
