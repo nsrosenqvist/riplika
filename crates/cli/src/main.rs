@@ -56,6 +56,15 @@ struct Output {
     /// Keep commentary audio tracks.
     #[arg(long)]
     keep_commentary: bool,
+    /// Skip the longer cuts of episodes some discs carry.
+    #[arg(long)]
+    no_extended: bool,
+    /// Skip bonus material: featurettes, deleted scenes, gag reels.
+    ///
+    /// A season disc can carry thirty of these against seven episodes, so this
+    /// is most of the reading as well as most of the files.
+    #[arg(long)]
+    no_extras: bool,
     /// Glyph table for subtitle recognition.
     #[arg(long)]
     table: Option<PathBuf>,
@@ -233,6 +242,8 @@ impl Output {
             languages: riplika_core::lang::LanguageSet::parse(&self.languages),
             dual_audio: self.dual_audio,
             keep_bitmap_subs: self.keep_bitmap_subs,
+            include_extended_cuts: !self.no_extended,
+            include_extras: !self.no_extras,
             drop_commentary: !self.keep_commentary,
             words_dir: self.words.clone(),
             glyph_table: self.table.clone(),

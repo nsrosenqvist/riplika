@@ -43,12 +43,29 @@ pub struct CatalogueHit {
 pub trait Catalogue: Send + Sync {
     fn name(&self) -> &'static str;
 
+    /// Short tag stamped onto the ids this catalogue issues.
+    ///
+    /// Ids are only meaningful to the catalogue that minted them - TVmaze's
+    /// 1633 and TMDB's 1633 are different shows - so an id carries its origin
+    /// and is only ever handed back to the same place.
+    fn prefix(&self) -> &'static str;
+
     /// Look up a title. `season` is a hint for building the returned [`Media`],
     /// not a filter.
     fn search(&self, query: &str, kind: MediaKind, season: Option<u32>) -> Result<Vec<CatalogueHit>>;
 
     /// Episodes of one season, in broadcast order.
     fn episodes(&self, provider_id: &str, season: u32) -> Result<Vec<Episode>>;
+}
+
+/// Take the catalogue tag off an id, refusing one that belongs elsewhere.
+pub fn strip_prefix<'a>(id: &'a str, prefix: &str) -> Result<&'a str> {
+    match id.split_once(':') {
+        Some((p, rest)) if p == prefix => Ok(rest),
+        Some((p, _)) => Err(Error(format!("id belongs to {p}, not {prefix}"))),
+        // Ids minted before they carried a tag; assume they are ours.
+        None => Ok(id),
+    }
 }
 
 /// Percent-encode a query string.
@@ -130,7 +147,7 @@ pub fn parse_tvmaze_search(json: &str, season: Option<u32>) -> Result<Vec<Catalo
                 title: name.to_string(),
                 year: year_of(text("premiered")),
                 season: season.unwrap_or(1),
-                provider_id: show.get("id").map(|i| i.to_string()),
+                provider_id: show.get("id").map(|i| format!("tvmaze:{i}")),
             },
             score: hit
                 .get("score")
@@ -187,6 +204,10 @@ impl Catalogue for TvMaze<'_> {
         "TVmaze"
     }
 
+    fn prefix(&self) -> &'static str {
+        "tvmaze"
+    }
+
     fn search(&self, query: &str, kind: MediaKind, season: Option<u32>) -> Result<Vec<CatalogueHit>> {
         if kind == MediaKind::Movie {
             // TVmaze is television only; saying so beats returning nonsense
@@ -199,9 +220,8 @@ impl Catalogue for TvMaze<'_> {
     }
 
     fn episodes(&self, provider_id: &str, season: u32) -> Result<Vec<Episode>> {
-        let body = self
-            .http
-            .get(&format!("{TVMAZE}/shows/{provider_id}/episodes"))?;
+        let id = strip_prefix(provider_id, self.prefix())?;
+        let body = self.http.get(&format!("{TVMAZE}/shows/{id}/episodes"))?;
         parse_tvmaze_episodes(&body, season)
     }
 }
@@ -232,7 +252,7 @@ pub fn parse_tmdb_search(json: &str, kind: MediaKind, season: Option<u32>) -> Re
     let n = results.len().max(1) as f32;
     let mut out = Vec::new();
     for (i, r) in results.iter().enumerate() {
-        let id = r.get("id").map(|i| i.to_string());
+        let id = r.get("id").map(|i| format!("tmdb:{i}"));
         let score = 1.0 - (i as f32 / n) * 0.5;
         let media = match kind {
             MediaKind::Movie => Media::Movie {
@@ -294,6 +314,10 @@ impl Catalogue for Tmdb<'_> {
         "TMDB"
     }
 
+    fn prefix(&self) -> &'static str {
+        "tmdb"
+    }
+
     fn search(&self, query: &str, kind: MediaKind, season: Option<u32>) -> Result<Vec<CatalogueHit>> {
         let path = match kind {
             MediaKind::Movie => "movie",
@@ -308,8 +332,9 @@ impl Catalogue for Tmdb<'_> {
     }
 
     fn episodes(&self, provider_id: &str, season: u32) -> Result<Vec<Episode>> {
+        let id = strip_prefix(provider_id, self.prefix())?;
         let body = self.http.get(&format!(
-            "https://api.themoviedb.org/3/tv/{provider_id}/season/{season}?api_key={}",
+            "https://api.themoviedb.org/3/tv/{id}/season/{season}?api_key={}",
             self.key
         ))?;
         parse_tmdb_season(&body, season)
@@ -328,29 +353,43 @@ impl Catalogue for Catalogues<'_> {
         "catalogues"
     }
 
+    fn prefix(&self) -> &'static str {
+        ""
+    }
+
+    /// Ask each catalogue in turn and take the first that answers.
+    ///
+    /// In order, not merged: two catalogues that both know a show return it
+    /// twice, and a list offering the same programme twice is a worse answer
+    /// than one. The order is the caller's preference - TMDB first when a key
+    /// is configured, since it is better data and it is what a media server
+    /// will use for the same files.
     fn search(&self, query: &str, kind: MediaKind, season: Option<u32>) -> Result<Vec<CatalogueHit>> {
-        let mut out = Vec::new();
         let mut last_error = None;
         for c in &self.0 {
             match c.search(query, kind, season) {
-                Ok(hits) => out.extend(hits),
+                Ok(hits) if !hits.is_empty() => return Ok(hits),
+                Ok(_) => {}
                 Err(e) => last_error = Some(e),
             }
         }
-        if out.is_empty()
-            && let Some(e) = last_error {
-                return Err(e);
-            }
-        out.sort_by(|a, b| b.score.total_cmp(&a.score));
-        Ok(out)
+        match last_error {
+            Some(e) => Err(e),
+            None => Ok(Vec::new()),
+        }
     }
 
+    /// Ask whoever minted the id.
     fn episodes(&self, provider_id: &str, season: u32) -> Result<Vec<Episode>> {
+        let origin = provider_id.split_once(':').map(|(p, _)| p);
         for c in &self.0 {
-            if let Ok(e) = c.episodes(provider_id, season)
-                && !e.is_empty() {
+            if origin.is_none() || origin == Some(c.prefix()) {
+                if let Ok(e) = c.episodes(provider_id, season)
+                    && !e.is_empty()
+                {
                     return Ok(e);
                 }
+            }
         }
         Ok(Vec::new())
     }
@@ -434,7 +473,7 @@ mod tests {
                 assert_eq!(title, "Parks and Recreation");
                 assert_eq!(*year, Some(2009));
                 assert_eq!(*season, 7);
-                assert_eq!(provider_id.as_deref(), Some("1633"));
+                assert_eq!(provider_id.as_deref(), Some("tvmaze:1633"));
             }
             _ => panic!("expected a series"),
         }
@@ -522,10 +561,14 @@ mod tests {
     }
 
     #[test]
-    fn several_catalogues_merge_and_rank_together() {
+    fn catalogues_are_asked_in_order_and_the_first_answer_wins() {
+        // Not merged: two catalogues that both know a show would return it
+        // twice, and a list offering the same programme twice is a worse
+        // answer than one. The order is the caller's preference.
         struct One(&'static str, f32);
         impl Catalogue for One {
             fn name(&self) -> &'static str { "one" }
+            fn prefix(&self) -> &'static str { "one" }
             fn search(&self, _: &str, _: MediaKind, _: Option<u32>) -> Result<Vec<CatalogueHit>> {
                 Ok(vec![CatalogueHit {
                     media: Media::Movie { title: self.0.into(), year: None, provider_id: None },
@@ -535,9 +578,20 @@ mod tests {
             }
             fn episodes(&self, _: &str, _: u32) -> Result<Vec<Episode>> { Ok(vec![]) }
         }
-        let c = Catalogues(vec![Box::new(One("low", 0.2)), Box::new(One("high", 0.9))]);
+        let c = Catalogues(vec![Box::new(One("preferred", 0.2)), Box::new(One("second", 0.9))]);
         let hits = c.search("x", MediaKind::Movie, None).unwrap();
-        assert_eq!(hits[0].media.title(), "high");
+        assert_eq!(hits.len(), 1, "the second catalogue must not be asked");
+        assert_eq!(hits[0].media.title(), "preferred");
+    }
+
+    #[test]
+    fn an_id_is_only_ever_offered_back_to_whoever_minted_it() {
+        // TVmaze's 1633 and TMDB's 1633 are different shows, so an id carries
+        // its origin and is routed by it.
+        assert_eq!(strip_prefix("tvmaze:1633", "tvmaze").unwrap(), "1633");
+        assert!(strip_prefix("tmdb:1633", "tvmaze").is_err());
+        // ids from before they were tagged are assumed to be ours
+        assert_eq!(strip_prefix("1633", "tvmaze").unwrap(), "1633");
     }
 
     #[test]
@@ -545,6 +599,7 @@ mod tests {
         struct Broken;
         impl Catalogue for Broken {
             fn name(&self) -> &'static str { "broken" }
+            fn prefix(&self) -> &'static str { "broken" }
             fn search(&self, _: &str, _: MediaKind, _: Option<u32>) -> Result<Vec<CatalogueHit>> {
                 Err(Error("network down".into()))
             }
@@ -560,6 +615,7 @@ mod tests {
         struct Broken;
         impl Catalogue for Broken {
             fn name(&self) -> &'static str { "broken" }
+            fn prefix(&self) -> &'static str { "broken" }
             fn search(&self, _: &str, _: MediaKind, _: Option<u32>) -> Result<Vec<CatalogueHit>> {
                 Err(Error("network down".into()))
             }
@@ -639,5 +695,309 @@ mod detail_tests {
         let found = crate::identify::search(&cat, "Bear Grylls", None).unwrap();
         assert!(found.iter().all(|c| c.reasons.is_empty()));
         assert!(found.iter().all(|c| c.detail.is_some()));
+    }
+}
+
+/// Wikidata, which needs no key.
+///
+/// The film gap is real: TVmaze is television only, and TMDB - which is what a
+/// media server uses, and the better answer when a key is configured - needs
+/// one. Wikidata needs nothing, and for a film it carries everything the naming
+/// actually depends on: the title, the year, and the runtime.
+///
+/// The runtime is the valuable part. It is evidence rather than description: a
+/// disc whose longest title runs 117 minutes really is that film, and a name
+/// match alone cannot say so. Search here ranks by how well the label matches,
+/// not by how well known the work is, so `The Big Lebowski: A XXX Parody` comes
+/// back beside the film it parodies and only the runtime tells them apart.
+pub struct Wikidata<'a> {
+    pub http: &'a dyn Http,
+}
+
+const WIKIDATA: &str = "https://www.wikidata.org/w/api.php";
+
+/// `instance of` values that mean "a film".
+const FILM_CLASSES: &[&str] = &[
+    "Q11424",   // film
+    "Q24869",   // feature film
+    "Q506240",  // television film
+    "Q202866",  // animated film
+    "Q226730",  // silent film
+    "Q1054574", // romantic comedy film... and other genre subclasses appear too
+];
+
+impl Wikidata<'_> {
+    pub fn search_url(query: &str) -> String {
+        format!(
+            "{WIKIDATA}?action=wbsearchentities&search={}&language=en&uselang=en\
+             &type=item&format=json&limit=10",
+            encode(query)
+        )
+    }
+
+    pub fn entities_url(ids: &[String]) -> String {
+        format!(
+            "{WIKIDATA}?action=wbgetentities&ids={}&props=claims|labels&languages=en&format=json",
+            ids.join("%7C")
+        )
+    }
+}
+
+/// Candidate ids and their one-line descriptions, from a label search.
+pub fn parse_wikidata_search(json: &str) -> Vec<(String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    v.get("search")
+        .and_then(|s| s.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|i| {
+                    Some((
+                        i.get("id")?.as_str()?.to_string(),
+                        i.get("description")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Turn fetched claims into film hits, dropping anything that is not a film.
+///
+/// A search for a film's title also returns its soundtrack album, its
+/// characters and its novelisation. Checking `instance of` rather than reading
+/// the description keeps those out without guessing from prose.
+pub fn parse_wikidata_entities(
+    json: &str,
+    order: &[String],
+    descriptions: &[(String, String)],
+) -> Vec<CatalogueHit> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    let Some(entities) = v.get("entities").and_then(|e| e.as_object()) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for (rank, qid) in order.iter().enumerate() {
+        let Some(e) = entities.get(qid) else { continue };
+        let claims = e.get("claims");
+        let ids_of = |property: &str| -> Vec<String> {
+            claims
+                .and_then(|c| c.get(property))
+                .and_then(|c| c.as_array())
+                .map(|statements| {
+                    statements
+                        .iter()
+                        .filter_map(|s| {
+                            s.get("mainsnak")?
+                                .get("datavalue")?
+                                .get("value")?
+                                .get("id")?
+                                .as_str()
+                                .map(str::to_string)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let first = |property: &str, field: &str| -> Option<String> {
+            claims?
+                .get(property)?
+                .as_array()?
+                .iter()
+                .find_map(|s| {
+                    s.get("mainsnak")?
+                        .get("datavalue")?
+                        .get("value")?
+                        .get(field)
+                        .map(|x| x.as_str().map(str::to_string).unwrap_or_else(|| x.to_string()))
+                })
+        };
+
+        if !ids_of("P31").iter().any(|c| FILM_CLASSES.contains(&c.as_str())) {
+            continue;
+        }
+        let title = e
+            .get("labels")
+            .and_then(|l| l.get("en"))
+            .and_then(|l| l.get("value"))
+            .and_then(|l| l.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if title.is_empty() {
+            continue;
+        }
+
+        // "+1998-02-26T00:00:00Z"
+        let year = first("P577", "time")
+            .and_then(|t| t.trim_start_matches('+').get(..4).map(str::to_string))
+            .and_then(|y| y.parse::<u32>().ok());
+        let runtime = first("P2047", "amount")
+            .and_then(|a| a.trim_start_matches('+').parse::<f64>().ok())
+            .map(|m| m.round() as u32);
+
+        // Wikidata's own description reads well and already names the director:
+        // "1998 film by Joel Coen, Ethan Coen".
+        let described = descriptions
+            .iter()
+            .find(|(id, _)| id == qid)
+            .map(|(_, d)| d.clone())
+            .filter(|d| !d.is_empty());
+        let detail = match (described, runtime) {
+            (Some(d), Some(m)) => Some(format!("{d} \u{b7} {m} min")),
+            (Some(d), None) => Some(d),
+            (None, Some(m)) => Some(format!("{m} min")),
+            (None, None) => None,
+        };
+
+        out.push(CatalogueHit {
+            media: Media::Movie {
+                title,
+                year,
+                provider_id: Some(format!("wikidata:{qid}")),
+            },
+            // Ranked by the search's own ordering, which is label similarity.
+            // It is not a confidence in the disc; the runtime check is.
+            score: 1.0 - (rank as f32 / order.len().max(1) as f32) * 0.5,
+            detail,
+        });
+    }
+    out
+}
+
+impl Catalogue for Wikidata<'_> {
+    fn name(&self) -> &'static str {
+        "Wikidata"
+    }
+
+    fn prefix(&self) -> &'static str {
+        "wikidata"
+    }
+
+    fn search(&self, query: &str, kind: MediaKind, _season: Option<u32>) -> Result<Vec<CatalogueHit>> {
+        if kind == MediaKind::Series {
+            // Wikidata knows series but rarely their episode lists, and an
+            // episode list is the whole reason a series needs a catalogue.
+            return Ok(Vec::new());
+        }
+        let found = parse_wikidata_search(&self.http.get(&Self::search_url(query))?);
+        if found.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids: Vec<String> = found.iter().map(|(id, _)| id.clone()).collect();
+        let claims = self.http.get(&Self::entities_url(&ids))?;
+        Ok(parse_wikidata_entities(&claims, &ids, &found))
+    }
+
+    fn episodes(&self, _provider_id: &str, _season: u32) -> Result<Vec<Episode>> {
+        Ok(Vec::new())
+    }
+}
+
+#[cfg(test)]
+mod wikidata_tests {
+    use super::*;
+
+    /// What a real search for "The Big Lebowski" returns: the film, its
+    /// soundtrack, a character, and a parody that is also genuinely a film.
+    const SEARCH: &str = r#"{"search":[
+      {"id":"Q337078","label":"The Big Lebowski","description":"1998 film by Joel Coen, Ethan Coen"},
+      {"id":"Q55716932","label":"Jeffrey Lebowski","description":"fictional character"},
+      {"id":"Q16531362","label":"The Big Lebowski","description":"album by various artists"},
+      {"id":"Q2409741","label":"The Big Lebowski: A XXX Parody","description":"2010 Porn movie"}
+    ]}"#;
+
+    const ENTITIES: &str = r#"{"entities":{
+      "Q337078":{"labels":{"en":{"value":"The Big Lebowski"}},"claims":{
+        "P31":[{"mainsnak":{"datavalue":{"value":{"id":"Q11424"}}}}],
+        "P577":[{"mainsnak":{"datavalue":{"value":{"time":"+1998-02-26T00:00:00Z"}}}}],
+        "P2047":[{"mainsnak":{"datavalue":{"value":{"amount":"+117"}}}}]}},
+      "Q55716932":{"labels":{"en":{"value":"Jeffrey Lebowski"}},"claims":{
+        "P31":[{"mainsnak":{"datavalue":{"value":{"id":"Q15632617"}}}}]}},
+      "Q16531362":{"labels":{"en":{"value":"The Big Lebowski"}},"claims":{
+        "P31":[{"mainsnak":{"datavalue":{"value":{"id":"Q482994"}}}}],
+        "P2047":[{"mainsnak":{"datavalue":{"value":{"amount":"+3111"}}}}]}},
+      "Q2409741":{"labels":{"en":{"value":"The Big Lebowski: A XXX Parody"}},"claims":{
+        "P31":[{"mainsnak":{"datavalue":{"value":{"id":"Q11424"}}}}],
+        "P577":[{"mainsnak":{"datavalue":{"value":{"time":"+2010-01-01T00:00:00Z"}}}}],
+        "P2047":[{"mainsnak":{"datavalue":{"value":{"amount":"+155"}}}}]}}
+    }}"#;
+
+    fn hits() -> Vec<CatalogueHit> {
+        let found = parse_wikidata_search(SEARCH);
+        let ids: Vec<String> = found.iter().map(|(i, _)| i.clone()).collect();
+        parse_wikidata_entities(ENTITIES, &ids, &found)
+    }
+
+    #[test]
+    fn a_film_comes_back_with_its_year() {
+        let h = hits();
+        assert_eq!(h[0].media.title(), "The Big Lebowski");
+        assert_eq!(h[0].media.year(), Some(1998));
+        assert_eq!(h[0].media.provider_id().as_deref(), Some("wikidata:Q337078"));
+    }
+
+    #[test]
+    fn things_that_are_not_films_are_dropped() {
+        // a search for a film's title also finds its soundtrack and its
+        // characters; checking `instance of` keeps them out without having to
+        // read the description as prose
+        let found = hits();
+        let titles: Vec<&str> = found.iter().map(|h| h.media.title()).collect();
+        assert!(!titles.contains(&"Jeffrey Lebowski"), "{titles:?}");
+        assert_eq!(titles.iter().filter(|t| **t == "The Big Lebowski").count(), 1,
+            "the soundtrack album survived: {titles:?}");
+    }
+
+    #[test]
+    fn the_runtime_is_carried_because_it_is_evidence() {
+        // Search ranks by label similarity, not fame, so a parody sits beside
+        // the film it parodies. 117 minutes against 155 is what separates them,
+        // and only the disc can say which is right.
+        let h = hits();
+        assert!(h[0].detail.as_deref().unwrap().contains("117 min"), "{:?}", h[0].detail);
+        let parody = h.iter().find(|x| x.media.title().contains("XXX")).unwrap();
+        assert!(parody.detail.as_deref().unwrap().contains("155 min"));
+    }
+
+    #[test]
+    fn the_description_names_the_director() {
+        assert!(hits()[0].detail.as_deref().unwrap().starts_with("1998 film by Joel Coen"));
+    }
+
+    #[test]
+    fn a_series_is_declined_rather_than_guessed_at() {
+        // Wikidata knows series but rarely their episode lists, and an episode
+        // list is the whole reason a series needs a catalogue at all.
+        let http = FakeHttp::new();
+        let w = Wikidata { http: &http };
+        assert!(w.search("Parks and Recreation", MediaKind::Series, Some(7)).unwrap().is_empty());
+        assert!(http.requested().is_empty(), "it should not have asked");
+    }
+
+    #[test]
+    fn a_film_search_makes_exactly_two_requests() {
+        let http = FakeHttp::new()
+            .on("wbsearchentities", SEARCH)
+            .on("wbgetentities", ENTITIES);
+        let w = Wikidata { http: &http };
+        let found = w.search("The Big Lebowski", MediaKind::Movie, None).unwrap();
+        assert_eq!(found.len(), 2, "the film and the parody, nothing else");
+        assert_eq!(http.requested().len(), 2);
+    }
+
+    #[test]
+    fn nothing_found_makes_no_second_request() {
+        let http = FakeHttp::new().on("wbsearchentities", r#"{"search":[]}"#);
+        let w = Wikidata { http: &http };
+        assert!(w.search("zzzz", MediaKind::Movie, None).unwrap().is_empty());
+        assert_eq!(http.requested().len(), 1);
     }
 }

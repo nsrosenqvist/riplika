@@ -119,6 +119,8 @@ struct Ui {
     audio: adw::ComboRow,
     container: adw::ComboRow,
     language_group: adw::PreferencesGroup,
+    include_extended: adw::SwitchRow,
+    include_extras: adw::SwitchRow,
     language_rows: RefCell<Vec<(String, adw::SwitchRow)>>,
     output_dir: adw::ActionRow,
     disc_entry: adw::EntryRow,
@@ -381,6 +383,24 @@ fn build_ui() -> Ui {
         .description("What this disc carries. Your preferred languages start ticked; the first becomes the default track.")
         .build();
 
+    // What to take off this disc. A season disc carries thirty pieces of bonus
+    // material against seven episodes, so this is most of the reading as well
+    // as most of the files.
+    let contents_group = adw::PreferencesGroup::builder()
+        .title("What to take")
+        .description("Episodes are always taken. Anything unticked is not read at all.")
+        .build();
+    let include_extended = adw::SwitchRow::builder()
+        .title("Extended episodes")
+        .subtitle("Longer cuts some discs carry alongside the broadcast versions")
+        .build();
+    let include_extras = adw::SwitchRow::builder()
+        .title("Bonus material")
+        .subtitle("Featurettes, deleted scenes, gag reels")
+        .build();
+    contents_group.add(&include_extended);
+    contents_group.add(&include_extras);
+
     let folders = adw::PreferencesGroup::builder().title("Output").build();
     let output_dir = adw::ActionRow::builder().title("Folder").activatable(true).build();
     folders.add(&output_dir);
@@ -393,6 +413,7 @@ fn build_ui() -> Ui {
         .build();
     set_body.append(&quality);
     set_body.append(&language_group);
+    set_body.append(&contents_group);
     set_body.append(&folders);
     set_body.append(&start);
     nav.add(&page(Step::Settings.tag(), "Settings", &set_body));
@@ -490,6 +511,8 @@ fn build_ui() -> Ui {
         audio,
         container,
         language_group,
+        include_extended,
+        include_extras,
         language_rows: RefCell::new(Vec::new()),
         output_dir,
         disc_entry,
@@ -605,6 +628,8 @@ impl App {
             .clone()
             .unwrap_or_else(|| glib::home_dir().join("Videos"));
         let mut s = prefs.to_settings(output, self.chosen_languages());
+        s.include_extended_cuts = self.ui.include_extended.is_active();
+        s.include_extras = self.ui.include_extras.is_active();
         // the rip page can override the persisted quality for this disc
         s.video = quality_at(&self.ui.video);
         s.audio = quality_at(&self.ui.audio);
@@ -666,6 +691,8 @@ impl App {
             Container::Mp4 => 0,
             Container::Mkv => 1,
         });
+        self.ui.include_extended.set_active(prefs.include_extended_cuts);
+        self.ui.include_extras.set_active(prefs.include_extras);
     }
 
     /// What the drive page should say, given what the machine has.

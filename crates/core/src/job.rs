@@ -174,9 +174,19 @@ impl<'a> Pipeline<'a> {
         let Some(plan) = plan else {
             return scan.titles.clone();
         };
+        // Not read: play-alls always, and anything that would not be produced.
+        // An extended cut cannot be told from an ordinary extra before the file
+        // exists, so an episode-length title is read if *either* is wanted.
+        let range = structure::EpisodeRange::default();
         let redundant: Vec<String> = plan
             .iter()
-            .filter(|i| !i.role.is_output())
+            .filter(|i| {
+                let could_be_a_longer_cut =
+                    matches!(i.role, Role::Extra) && range.contains(i.duration);
+                let wanted = i.role.wanted(&self.settings)
+                    || (could_be_a_longer_cut && self.settings.include_extended_cuts);
+                !wanted
+            })
             .filter_map(|i| {
                 i.source
                     .file_name()
@@ -266,7 +276,9 @@ impl<'a> Pipeline<'a> {
             .map(Path::to_path_buf)
             .unwrap_or_default();
 
-        let extended = if st.loose.is_empty() {
+        let extended = if st.loose.is_empty() || !self.settings.include_extended_cuts {
+            // Comparing pictures means decoding every loose title against every
+            // episode. Not worth doing for cuts that will not be produced.
             Vec::new()
         } else {
             match structure::find_extended_cuts(self.ports.runner, &dir, &st.loose, &st.episodes) {
@@ -406,7 +418,10 @@ impl<'a> Pipeline<'a> {
     /// Stage four and the encode: produce the output files.
     pub fn produce(&self, items: &[Item], media: &Media, events: Events) -> Result<Report> {
         let mut report = Report::default();
-        let outputs: Vec<&Item> = items.iter().filter(|i| i.role.is_output()).collect();
+        let outputs: Vec<&Item> = items
+            .iter()
+            .filter(|i| i.role.wanted(&self.settings))
+            .collect();
 
         let table = match &self.settings.glyph_table {
             Some(p) if self.ports.fs.exists(p) => match Table::load(p) {

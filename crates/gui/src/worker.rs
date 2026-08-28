@@ -9,7 +9,7 @@
 //! change the quality after seeing how many episodes there are.
 
 use riplika_core::host::{Cancel, RealFs, RealRunner};
-use riplika_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, UreqHttp};
+use riplika_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, UreqHttp, Wikidata};
 use riplika_core::job::{Event, Pipeline, Ports, Report};
 use riplika_core::media::FfProbe;
 use riplika_core::model::{Candidate, DiscScan, Drive, Item, JobSettings, Media};
@@ -62,11 +62,20 @@ impl Real {
         }
     }
 
+    /// In preference order, and asked in that order until one answers.
+    ///
+    /// TMDB first when a key is configured: it is the better data, it covers
+    /// film and television both, and it is what a media server will consult
+    /// about the same files afterwards. Without a key, TVmaze answers for
+    /// television and Wikidata for film - between them, no key is needed for
+    /// anything.
     fn catalogues(&self) -> Catalogues<'_> {
-        let mut v: Vec<Box<dyn Catalogue + '_>> = vec![Box::new(TvMaze { http: &self.http })];
+        let mut v: Vec<Box<dyn Catalogue + '_>> = Vec::new();
         if let Some(t) = Tmdb::from_env(&self.http) {
             v.push(Box::new(t));
         }
+        v.push(Box::new(TvMaze { http: &self.http }));
+        v.push(Box::new(Wikidata { http: &self.http }));
         Catalogues(v)
     }
 }

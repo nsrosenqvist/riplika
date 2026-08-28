@@ -356,6 +356,17 @@ pub struct JobSettings {
     pub dual_audio: bool,
     /// Keep VobSub bitmaps even after they have been recognised.
     pub keep_bitmap_subs: bool,
+    /// Produce the longer cuts of episodes some discs carry.
+    ///
+    /// Spotting one means comparing pictures, which needs the file, so this
+    /// also decides whether episode-length titles nobody claimed are read at
+    /// all - and on a television disc those are the expensive ones.
+    pub include_extended_cuts: bool,
+    /// Produce the bonus material: featurettes, deleted scenes, gag reels.
+    ///
+    /// A season disc can carry thirty of these against seven episodes. They are
+    /// most of the titles and a good deal of the reading.
+    pub include_extras: bool,
     pub drop_commentary: bool,
     /// Where to look for `<code>.txt` wordlists used in subtitle recognition.
     pub words_dir: Option<PathBuf>,
@@ -373,6 +384,8 @@ impl Default for JobSettings {
             languages: LanguageSet::default(),
             dual_audio: false,
             keep_bitmap_subs: false,
+            include_extended_cuts: true,
+            include_extras: true,
             drop_commentary: true,
             words_dir: None,
             glyph_table: None,
@@ -395,6 +408,16 @@ pub enum Role {
 impl Role {
     pub fn is_output(&self) -> bool {
         !matches!(self, Role::PlayAll)
+    }
+
+    /// Is this worth producing, given what was asked for?
+    pub fn wanted(&self, settings: &JobSettings) -> bool {
+        match self {
+            Role::PlayAll => false,
+            Role::Episode { .. } | Role::Feature => true,
+            Role::ExtendedCut { .. } => settings.include_extended_cuts,
+            Role::Extra => settings.include_extras,
+        }
     }
 
     /// Extras live in a subdirectory so a media server does not try to file
@@ -545,5 +568,58 @@ mod season_tests {
         let m = Media::Movie { title: "Lebowski".into(), year: Some(1998), provider_id: None };
         assert_eq!(m.season(), None);
         assert_eq!(m.with_season(6), m, "setting a season on a film changes nothing");
+    }
+}
+
+#[cfg(test)]
+mod wanted_tests {
+    use super::*;
+
+    fn settings(extended: bool, extras: bool) -> JobSettings {
+        JobSettings {
+            include_extended_cuts: extended,
+            include_extras: extras,
+            ..JobSettings::default()
+        }
+    }
+
+    #[test]
+    fn episodes_and_features_are_always_taken() {
+        // there is no configuration in which the thing you put the disc in for
+        // is skipped
+        for s in [settings(false, false), settings(true, true)] {
+            assert!(Role::Episode { season: 6, number: 1 }.wanted(&s));
+            assert!(Role::Feature.wanted(&s));
+        }
+    }
+
+    #[test]
+    fn a_play_all_is_never_taken_however_it_is_configured() {
+        for s in [settings(false, false), settings(true, true)] {
+            assert!(!Role::PlayAll.wanted(&s));
+        }
+    }
+
+    #[test]
+    fn the_two_switches_are_independent() {
+        let cut = Role::ExtendedCut { season: 6, number: 1 };
+        assert!(cut.wanted(&settings(true, false)));
+        assert!(!cut.wanted(&settings(false, true)));
+        assert!(Role::Extra.wanted(&settings(false, true)));
+        assert!(!Role::Extra.wanted(&settings(true, false)));
+    }
+
+    #[test]
+    fn wanting_neither_leaves_only_the_programme() {
+        let s = settings(false, false);
+        let roles = [
+            Role::Episode { season: 6, number: 1 },
+            Role::ExtendedCut { season: 6, number: 1 },
+            Role::Extra,
+            Role::PlayAll,
+        ];
+        let kept: Vec<&Role> = roles.iter().filter(|r| r.wanted(&s)).collect();
+        assert_eq!(kept.len(), 1);
+        assert!(matches!(kept[0], Role::Episode { .. }));
     }
 }
