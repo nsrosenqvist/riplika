@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn opening_something_that_is_not_a_disc_fails_cleanly() {
         if available() {
-            assert!(matches!(Dvd::open(Path::new("/dev/null/nope")), Err(_)));
+            assert!(Dvd::open(Path::new("/dev/null/nope")).is_err());
         }
     }
 }

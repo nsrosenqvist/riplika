@@ -329,8 +329,8 @@ pub struct FakeDisc {
 
 #[cfg(test)]
 impl FakeDisc {
-    pub fn new(bad: Vec<std::ops::Range<u64>>) -> FakeDisc {
-        FakeDisc { bad, reads: 0, single_reads: 0, touched: Default::default() }
+    pub fn new(bad: impl Into<Vec<std::ops::Range<u64>>>) -> FakeDisc {
+        FakeDisc { bad: bad.into(), reads: 0, single_reads: 0, touched: Default::default() }
     }
 
     fn is_bad(&self, lba: u64) -> bool {
@@ -373,10 +373,13 @@ impl SectorSink for MemorySink {
 }
 
 #[cfg(test)]
+// `[500..501]` says "one damaged sector" more clearly than the alternatives
+// clippy suggests, and these tests are about which sectors are damaged.
+#[allow(clippy::single_range_in_vec_init)]
 mod tests {
     use super::*;
 
-    fn run_rescue(bad: Vec<std::ops::Range<u64>>, total: u64) -> (Rescue, FakeDisc, MemorySink) {
+    fn run_rescue(bad: impl Into<Vec<std::ops::Range<u64>>>, total: u64) -> (Rescue, FakeDisc, MemorySink) {
         let mut disc = FakeDisc::new(bad);
         let mut sink = MemorySink::default();
         let mut r = Rescue::new(Map::new(0, total));
@@ -387,7 +390,7 @@ mod tests {
 
     #[test]
     fn an_undamaged_disc_is_copied_in_one_pass() {
-        let (r, disc, sink) = run_rescue(vec![], 1024);
+        let (r, disc, sink) = run_rescue([], 1024);
         assert_eq!(r.map.recovered(), 1024);
         assert_eq!(r.map.count(State::Bad), 0);
         assert_eq!(sink.0.len(), 1024);
@@ -399,7 +402,7 @@ mod tests {
     #[test]
     fn a_single_bad_sector_costs_only_itself() {
         // the whole point: one scratch should not condemn the region round it
-        let (r, _, sink) = run_rescue(vec![500..501], 1024);
+        let (r, _, sink) = run_rescue([500..501], 1024);
         assert_eq!(r.map.count(State::Bad), 1);
         assert_eq!(r.map.recovered(), 1023);
         assert!(sink.0.contains_key(&499) && sink.0.contains_key(&501));
@@ -409,7 +412,7 @@ mod tests {
 
     #[test]
     fn a_contiguous_scratch_is_bracketed_exactly() {
-        let (r, _, _) = run_rescue(vec![300..340], 1024);
+        let (r, _, _) = run_rescue([300..340], 1024);
         assert_eq!(r.map.count(State::Bad), 40);
         assert_eq!(r.map.recovered(), 1024 - 40);
         // and the map says precisely where
@@ -421,7 +424,7 @@ mod tests {
     #[test]
     fn the_good_data_is_secured_before_the_damage_is_worked_on() {
         // if the drive dies partway, what survives should be the easy 99%
-        let mut disc = FakeDisc::new(vec![500..600]);
+        let mut disc = FakeDisc::new([500..600]);
         let mut sink = MemorySink::default();
         let mut r = Rescue::new(Map::new(0, 2048));
         r.skip_ahead = 256;
@@ -434,21 +437,21 @@ mod tests {
 
     #[test]
     fn several_separate_scratches_are_all_found() {
-        let (r, _, _) = run_rescue(vec![100..110, 700..705, 900..901], 1024);
+        let (r, _, _) = run_rescue([100..110, 700..705, 900..901], 1024);
         assert_eq!(r.map.count(State::Bad), 16);
         assert_eq!(r.map.all(State::Bad).len(), 3);
     }
 
     #[test]
     fn damage_at_the_very_end_does_not_run_off_the_map() {
-        let (r, _, _) = run_rescue(vec![1020..1024], 1024);
+        let (r, _, _) = run_rescue([1020..1024], 1024);
         assert_eq!(r.map.total(), 1024);
         assert_eq!(r.map.count(State::Bad), 4);
     }
 
     #[test]
     fn a_disc_that_is_entirely_unreadable_ends_rather_than_looping() {
-        let (r, _, _) = run_rescue(vec![0..1024], 1024);
+        let (r, _, _) = run_rescue([0..1024], 1024);
         assert_eq!(r.map.recovered(), 0);
         assert_eq!(r.map.count(State::Bad), 1024);
         assert!(r.map.is_done());
@@ -493,7 +496,7 @@ mod tests {
 
     #[test]
     fn holes_are_filled_with_padding_a_demuxer_will_skip() {
-        let (r, _, sink) = run_rescue(vec![500..502], 1024);
+        let (r, _, sink) = run_rescue([500..502], 1024);
         assert_eq!(r.map.count(State::Bad), 2);
         // the sectors exist in the output, and are valid padding packets
         let filler = sink.0.get(&500).unwrap();
@@ -513,7 +516,7 @@ mod tests {
     #[test]
     fn only_the_wanted_areas_are_read() {
         // rescuing seven episodes rather than a whole disc
-        let mut disc = FakeDisc::new(vec![]);
+        let mut disc = FakeDisc::new([]);
         let mut sink = MemorySink::default();
         let mut r = Rescue::new(Map::over(&[(100, 200), (500, 600)]));
         r.run(&mut disc, &mut sink, &mut |_| {}).unwrap();
@@ -524,7 +527,7 @@ mod tests {
 
     #[test]
     fn progress_only_moves_forwards() {
-        let mut disc = FakeDisc::new(vec![300..340]);
+        let mut disc = FakeDisc::new([300..340]);
         let mut sink = MemorySink::default();
         let mut r = Rescue::new(Map::new(0, 1024));
         let mut seen: Vec<f32> = Vec::new();
@@ -536,7 +539,7 @@ mod tests {
     #[test]
     fn a_rescue_can_be_stopped_and_resumed_from_its_map() {
         // the reason the map exists: clean the disc, put it back, carry on
-        let mut disc = FakeDisc::new(vec![500..600]);
+        let mut disc = FakeDisc::new([500..600]);
         let mut sink = MemorySink::default();
         let mut first = Rescue::new(Map::new(0, 2048));
         first.skip_ahead = 256;
@@ -546,7 +549,7 @@ mod tests {
 
         // ... a different session, and this time the disc reads cleanly
         let mut second = Rescue::new(Map::from_text(&saved).unwrap());
-        let mut healthy = FakeDisc::new(vec![]);
+        let mut healthy = FakeDisc::new([]);
         second.run(&mut healthy, &mut sink, &mut |_| {}).unwrap();
         assert_eq!(second.map.recovered(), 2048);
 
