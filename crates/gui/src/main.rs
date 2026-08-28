@@ -420,6 +420,8 @@ fn build_ui() -> Ui {
         .wrap_mode(gtk::WrapMode::WordChar)
         .build();
     log.add_css_class("dim-label");
+    // Small: it is a running commentary, not the content of the page.
+    log.add_css_class("caption");
     let log_scroll = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .height_request(180)
@@ -431,11 +433,25 @@ fn build_ui() -> Ui {
         .css_classes(vec!["pill".to_string(), "destructive-action".to_string()])
         .halign(gtk::Align::Center)
         .build();
-    prog_body.append(&stage_label);
-    prog_body.append(&progress);
+    // The heading, the bar and the button read as a column and are held to a
+    // narrow measure. The log is lines of text and wants the room, so it sits
+    // outside that clamp at the page's full width.
+    let focus = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(18)
+        .build();
+    focus.append(&stage_label);
+    focus.append(&progress);
     // Directly under the bar: it is the page's only action, and putting it
     // below the log made its position depend on how much had been logged.
-    prog_body.append(&cancel_button);
+    focus.append(&cancel_button);
+    prog_body.append(
+        &adw::Clamp::builder()
+            .maximum_size(FOCUSED_WIDTH)
+            .tightening_threshold(FOCUSED_WIDTH / 2)
+            .child(&focus)
+            .build(),
+    );
     // Hidden until there is something in it. A scan logs nothing at all, and an
     // empty card between the progress bar and the button is furniture for
     // content that may never arrive.
@@ -449,7 +465,7 @@ fn build_ui() -> Ui {
     prog_body.set_vexpand(true);
     // Narrower than a form page: this is a heading, a bar and a list, and they
     // read better as a column than spread across the window.
-    nav.add(&page_clamped(Step::Progress.tag(), "Working", &prog_body, FOCUSED_WIDTH));
+    nav.add(&page(Step::Progress.tag(), "Working", &prog_body));
 
     // --- and what came out ------------------------------------------------
     let res_body = body();
@@ -496,6 +512,13 @@ impl App {
     fn set_busy(&self, what: Option<&str>) {
         self.state.borrow_mut().busy = what.map(str::to_string);
         let idle = what.is_none();
+
+        // While something is running the progress page cannot be left. Swiping
+        // back from it hid a job that was still going, with no way to return to
+        // it and no way to cancel it. Cancel is the way out; there is no other.
+        if let Some(page) = self.ui.nav.find_page(Step::Progress.tag()) {
+            page.set_can_pop(idle);
+        }
         let has_candidate = !self.state.borrow().candidates.is_empty();
 
         self.ui.drive_next.set_label(match what {
@@ -1639,5 +1662,36 @@ mod navigation_tests {
         // the case that broke: pressing Start while progress was already on the
         // stack from the scan left the window sitting on the settings page
         assert_eq!(Step::Progress.path(), &["drive", "progress"]);
+    }
+}
+
+#[cfg(test)]
+mod locking_tests {
+    use super::*;
+
+    /// While a job runs there must be no way off the progress page except
+    /// cancelling.
+    ///
+    /// Swiping back from it left the job running with nothing showing it and no
+    /// way to return - the window looked idle while the drive was still going.
+    #[test]
+    fn a_running_job_pins_the_page_and_finishing_releases_it() {
+        let mut state = State::default();
+
+        state.busy = Some("Ripping...".into());
+        assert!(state.busy.is_some(), "can_pop is false while this holds");
+
+        for ending in ["finished", "failed", "cancelled"] {
+            state.busy = Some("Ripping...".into());
+            state.busy = None; // every ending clears it
+            assert!(state.busy.is_none(), "{ending} must release the page");
+        }
+    }
+
+    #[test]
+    fn the_progress_page_is_the_only_one_worth_pinning() {
+        // the others are forms; leaving them loses nothing
+        assert_eq!(Step::Progress.tag(), "progress");
+        assert_ne!(Step::Settings.tag(), Step::Progress.tag());
     }
 }
