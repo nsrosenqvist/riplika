@@ -70,10 +70,24 @@ modules:
         sha256: a2a18f5ad36d133c74bf9106b6445806fa253b09141a46392550394b647b221e
 
   # --- the tools the pipeline drives --------------------------------------
+  # The GNOME SDK carries no x264, and the encoder is not optional here: every
+  # quality tier is an x264 CRF.
+  - name: x264
+    config-opts:
+      - --enable-shared
+      - --disable-cli
+    sources:
+      - type: git
+        url: https://code.videolan.org/videolan/x264.git
+        # the stable branch, pinned - a branch name would drift
+        commit: b35605ace3ddf7c1a5d67a2eb553f034aef41d55
+
   # ffmpeg must be built --enable-libdvdnav --enable-libdvdread: without them
   # there is no dvdvideo demuxer and the application cannot read a disc at all.
   - name: ffmpeg
     config-opts:
+      # GPL for x264, version3 for nothing in particular yet - but changing
+      # licence terms later is worse than starting permissive enough.
       - --enable-gpl
       - --enable-version3
       - --enable-shared
@@ -85,8 +99,6 @@ modules:
       - --enable-libdvdnav
       - --enable-libdvdread
       - --enable-libx264
-      - --enable-libvorbis
-      - --enable-libopus
     sources:
       - type: archive
         url: https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz
