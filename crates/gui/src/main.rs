@@ -147,10 +147,22 @@ fn page(tag: &str, title: &str, child: &impl IsA<gtk::Widget>) -> adw::Navigatio
         .build();
     header.pack_end(&prefs_button);
     view.add_top_bar(&header);
+    // Rows stretched across a wide window are hard to read - the eye has to
+    // travel from a label on the left to its control on the right - so the
+    // content is held to a comfortable measure and centred, which is what the
+    // platform's own preference pages do.
+    let clamp = adw::Clamp::builder()
+        .maximum_size(560)
+        .tightening_threshold(400)
+        // so a page that wants to centre itself vertically has the height to
+        // do it in, rather than being sized to its own content
+        .vexpand(true)
+        .child(child)
+        .build();
     let scroll = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
-        .child(child)
+        .child(&clamp)
         .build();
     view.set_content(Some(&scroll));
     
@@ -350,7 +362,11 @@ fn build_ui() -> Ui {
 
     // --- step four: watching it happen -----------------------------------
     let prog_body = body();
-    let stage_label = gtk::Label::builder().label("Starting").xalign(0.0).build();
+    let stage_label = gtk::Label::builder()
+        .label("Starting")
+        .justify(gtk::Justification::Center)
+        .wrap(true)
+        .build();
     stage_label.add_css_class("title-2");
     let progress = gtk::ProgressBar::builder().show_text(true).build();
     let log = gtk::ListBox::builder()
@@ -359,13 +375,19 @@ fn build_ui() -> Ui {
         .build();
     let cancel_button = gtk::Button::builder()
         .label("Cancel")
-        .css_classes(vec!["destructive-action".to_string()])
-        .halign(gtk::Align::End)
+        .css_classes(vec!["pill".to_string(), "destructive-action".to_string()])
+        .halign(gtk::Align::Center)
         .build();
     prog_body.append(&stage_label);
     prog_body.append(&progress);
     prog_body.append(&log);
     prog_body.append(&cancel_button);
+    // While a scan is running there are three short things on this page, and
+    // pinned to the top of a tall window they look stranded. Centred, the page
+    // reads as one thing happening. It still grows downwards normally once the
+    // log fills up.
+    prog_body.set_valign(gtk::Align::Center);
+    prog_body.set_vexpand(true);
     nav.add(&page(Step::Progress.tag(), "Working", &prog_body));
 
     // --- and what came out ------------------------------------------------
