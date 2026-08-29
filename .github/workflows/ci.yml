@@ -1,0 +1,143 @@
+# What has to hold before a change is trusted.
+#
+# The jobs are split so a failure names its own cause: formatting, lints,
+# tests, the translation catalogues, the flatpak source list, and the flatpak
+# itself. The last one is slow - it builds ffmpeg and x264 from source - so it
+# is cached, and waits for the tests rather than building a package out of code
+# that does not pass them.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch makes the first one's answer irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Formatting
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup component add rustfmt
+      - run: cargo fmt --check
+
+  clippy:
+    name: Lints
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/gui-build-deps
+      - run: rustup component add clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/gui-build-deps
+      - uses: Swatinem/rust-cache@v2
+      # The tests reach nothing outside themselves - every part of the outside
+      # world is behind a trait with a fake - so no disc, drive, ffmpeg or even
+      # a HOME is needed. Checked rather than hoped: the suite passes with
+      # nothing on PATH but sh and cat. If that stops being true, it shows up
+      # here as a test that only passes on a developer's machine.
+      - run: cargo test --workspace --all-targets
+      - name: Doc tests
+        run: cargo test --workspace --doc
+
+  catalogues:
+    name: Translations
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gettext
+      - name: Every string a person reads is in the template
+        # Compare the set of strings rather than the file: xgettext writes its
+        # own version and a timestamp into the header, and wraps lines to its
+        # own taste, so file equality would fail on gettext's version and not
+        # on anything about this repository.
+        run: |
+          grep '^msgid' po/riplika.pot | sort -u > /tmp/msgids-committed
+          ./po/build.sh
+          grep '^msgid' po/riplika.pot | sort -u > /tmp/msgids-rebuilt
+          if ! diff -u /tmp/msgids-committed /tmp/msgids-rebuilt; then
+            echo "::error::po/riplika.pot is out of date - run ./po/build.sh"
+            exit 1
+          fi
+      - name: Every catalogue compiles and none has holes
+        # English is generated from the template, so a hole in it means the
+        # generation is broken - and a missing catalogue is invisible in
+        # English and only in English.
+        run: |
+          while read -r lang; do
+            [ -n "$lang" ] || continue
+            msgfmt --check --statistics "po/$lang.po" -o /dev/null 2>&1 | tee /tmp/stats
+            if grep -qE 'untranslated|fuzzy' /tmp/stats; then
+              echo "::error::po/$lang.po is incomplete"
+              exit 1
+            fi
+          done < po/LINGUAS
+
+  cargo-sources:
+    name: Flatpak source list
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install aiohttp PyYAML tomlkit
+      - name: The list still matches Cargo.lock
+        # A stale list does not fail loudly - it pins the wrong versions - so
+        # it is worth checking apart from the build that consumes it.
+        run: |
+          python3 packaging/flatpak-cargo-generator.py Cargo.lock -o packaging/cargo-sources.json
+          if ! git diff --exit-code --stat packaging/cargo-sources.json; then
+            echo "::error::packaging/cargo-sources.json is stale - run packaging/regenerate-cargo-sources.sh"
+            exit 1
+          fi
+
+  flatpak:
+    name: Packaging
+    runs-on: ubuntu-24.04
+    # No point building a package out of code that does not pass its own tests.
+    needs: [test, cargo-sources]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install flatpak
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder ca-certificates
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      - name: Cache the built modules
+        # ffmpeg and x264 are built from source and change far less often than
+        # this application does.
+        uses: actions/cache@v6
+        with:
+          path: .flatpak-builder
+          key: flatpak-${{ runner.os }}-${{ hashFiles('packaging/com.nsrosenqvist.Riplika.yml') }}
+          restore-keys: flatpak-${{ runner.os }}-
+      - name: Install the runtime it builds against
+        run: |
+          flatpak install --user --noninteractive flathub \
+            org.gnome.Platform//50 org.gnome.Sdk//50 \
+            org.freedesktop.Sdk.Extension.rust-stable//25.08
+      - name: Build
+        run: |
+          flatpak-builder --user --install --force-clean \
+            build packaging/com.nsrosenqvist.Riplika.yml
+      - name: Check what was built
+        # The manifest can lose a module and still produce an application that
+        # starts and then fails on the first disc. This looks for the pieces.
+        run: ./packaging/check-flatpak.sh

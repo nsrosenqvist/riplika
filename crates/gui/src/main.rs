@@ -606,16 +606,26 @@ fn plan_lines(items: &[Item]) -> Vec<String> {
     let count = |f: fn(&Role) -> bool| items.iter().filter(|i| f(&i.role)).count() as u32;
     let play_alls = count(|r| matches!(r, Role::PlayAll));
 
+    // Written out one call at a time on purpose. xgettext reads the strings
+    // where tr_n is called, so a table of them - which is otherwise the tidier
+    // way to write this - hands it variables it cannot see through, and the
+    // entries quietly leave the template. They did, once.
     let mut parts = Vec::new();
-    for (n, one, many) in [
-        (count(|r| matches!(r, Role::Episode { .. })), "%d episode", "%d episodes"),
-        (count(|r| matches!(r, Role::Feature)), "%d feature", "%d features"),
-        (count(|r| matches!(r, Role::ExtendedCut { .. })), "%d extended cut", "%d extended cuts"),
-        (count(|r| matches!(r, Role::Extra)), "%d extra", "%d extras"),
-    ] {
-        if n > 0 {
-            parts.push(tr_n(one, many, n));
-        }
+    let episodes = count(|r| matches!(r, Role::Episode { .. }));
+    if episodes > 0 {
+        parts.push(tr_n("%d episode", "%d episodes", episodes));
+    }
+    let features = count(|r| matches!(r, Role::Feature));
+    if features > 0 {
+        parts.push(tr_n("%d feature", "%d features", features));
+    }
+    let cuts = count(|r| matches!(r, Role::ExtendedCut { .. }));
+    if cuts > 0 {
+        parts.push(tr_n("%d extended cut", "%d extended cuts", cuts));
+    }
+    let extras = count(|r| matches!(r, Role::Extra));
+    if extras > 0 {
+        parts.push(tr_n("%d extra", "%d extras", extras));
     }
 
     let mut lines = Vec::new();

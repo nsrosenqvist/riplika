@@ -2,6 +2,7 @@
 name = "riplika-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Disc ripping pipeline: rip, identify, transcode, subtitles"
 

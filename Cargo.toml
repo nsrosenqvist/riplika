@@ -5,6 +5,10 @@ resolver = "3"
 [workspace.package]
 version = "0.2.0"
 edition = "2024"
+# let-chains, which this uses, are stable in edition 2024 from here. Stating it
+# turns "some trait bound is unsatisfied" on an older toolchain into a sentence
+# that says which toolchain.
+rust-version = "1.88"
 license = "MIT"
 
 [workspace.dependencies]

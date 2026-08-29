@@ -55,7 +55,7 @@ So: **prefer failing loudly over carrying on**, and when something cannot be ver
 
 ## Tests
 
-~390, all offline, all fast. `cargo test` is the whole story; there is no integration suite and nothing needs a disc.
+~430, all offline, all fast. `cargo test` is the whole story; there is no integration suite and nothing needs a disc. They are hermetic to the point of passing with nothing on `PATH` but `sh` and `cat`, and with no `HOME` - worth keeping, since it is what makes CI's answer mean the same as a laptop's.
 
 **Name a test after the rule it protects**, not the function it calls: `a_play_all_is_decomposed_into_its_episodes`, not `test_decompose`. When a test exists because something went wrong, say what went wrong in a comment — most of them do, and that is the record of why the code is shaped as it is.
 
@@ -69,7 +69,23 @@ Every one goes through `tr()` in `crates/gui/src/i18n.rs`, so `xgettext` can fin
 
 Wrap prose, not identifiers. Icon names, CSS classes, widget names and device paths are not read as language and must stay bare, which is why the marking was done by hand rather than by a regex over every string literal.
 
-English is a catalogue like any other. It looks redundant, and it is what proves the machinery works: without it, a broken catalogue path is invisible because English keeps working anyway.
+English is a catalogue like any other. It looks redundant, and it is what proves the machinery works: without it, a broken catalogue path is invisible because English keeps working anyway. It is generated from the template by `msgen`, not filled in by hand, because a catalogue with holes reads perfectly in English and only in English.
+
+**Pass the strings to `tr`/`tr_n` literally, at the call site.** `xgettext` reads the source, not the program, so a string that arrives through a variable is a string it cannot see. Collecting four plural forms into a table once dropped all four from the template while the code still compiled and ran - in English, indistinguishably. `tr_n` also substitutes `%d` itself, so call sites do not format around it.
+
+## Before pushing
+
+CI runs these, and running them first is faster than waiting for it:
+
+```sh
+cargo fmt --check                                   # the tree is rustfmt-clean; rustfmt.toml keeps the wide style
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-targets && cargo test --workspace --doc
+./po/build.sh                                       # then check git diff: new strings must appear
+packaging/regenerate-cargo-sources.sh               # only after Cargo.lock changes
+```
+
+The packaging job builds the flatpak and runs `packaging/check-flatpak.sh` against it, which is the only thing that catches a module going missing from the manifest. It takes far longer than the rest, so it waits on the tests.
 
 ## Conventions
 
