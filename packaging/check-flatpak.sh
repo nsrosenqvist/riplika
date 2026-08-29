@@ -17,6 +17,12 @@ check "ffprobe is present"             bash -c \
   "flatpak run --command=ffprobe $APP -version >/dev/null 2>&1"
 check "libdvdcss is present"           bash -c \
   "flatpak run --command=sh $APP -c 'test -e /app/lib/libdvdcss.so.2'"
+# Not the same question. The manifest links libdvdcss into libdvdread rather
+# than letting it be dlopened by name, because inside a sandbox that depends on
+# the loader path. If that ever silently reverts, the library is still present
+# and an encrypted disc is still unreadable.
+check "libdvdread links libdvdcss"     bash -c \
+  "flatpak run --command=sh $APP -c 'ldd /app/lib/libdvdread.so.* | grep -q libdvdcss'"
 check "mkvextract is NOT needed"       bash -c \
   "! flatpak run --command=sh $APP -c 'command -v mkvextract' >/dev/null 2>&1"
 echo "--- the application ---"
