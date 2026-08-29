@@ -319,11 +319,32 @@ fn decide_media(
     println!("{}\n", scan.label);
     print_candidates(&cands);
     println!();
-    cands
+    let media = cands
         .into_iter()
         .next()
         .map(|c| c.media)
-        .ok_or_else(|| "could not identify the disc; pass --title".to_string())
+        .ok_or_else(|| "could not identify the disc; pass --title".to_string())?;
+    let identified_season = media.season();
+
+    let chosen = with_given_season(media, season);
+    if chosen.season() != identified_season {
+        println!("  using season {} rather than the identified one", season.unwrap_or(0));
+    }
+    Ok(chosen)
+}
+
+/// Apply a season the user gave by hand, over the one identification guessed.
+///
+/// A season disc's label rarely says which season it is - "PARKS_AND_RECREATION"
+/// says nothing - so identification has to pick one, and for a season 6 disc it
+/// picked season 1 and named eight episodes after season 1's. That is what
+/// `--season` is for, and it was only being applied on the path where the title
+/// was also given by hand: on the path that needs it, it did nothing at all.
+fn with_given_season(media: Media, season: Option<u32>) -> Media {
+    match season {
+        Some(n) if media.season() != Some(n) => media.with_season(n),
+        _ => media,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -572,6 +593,40 @@ mod tests {
     use riplika_core::model::DiscScan;
     use riplika_core::model::Drive;
     use riplika_core::rip::FakeRipper;
+
+    fn series(season: u32) -> Media {
+        Media::Series {
+            title: "Parks and Recreation".into(),
+            year: Some(2009),
+            season,
+            provider_id: None,
+        }
+    }
+
+    #[test]
+    fn a_season_given_by_hand_beats_the_one_identification_guessed() {
+        // A season disc label rarely says which season it is, so this disc -
+        // PARKS_AND_RECREATION, season 6 - identified as season 1 and named
+        // eight episodes after season 1's. --season existed for exactly this
+        // and was applied only when the title was also given by hand.
+        assert_eq!(with_given_season(series(1), Some(6)).season(), Some(6));
+    }
+
+    #[test]
+    fn saying_nothing_leaves_the_identified_season_alone() {
+        assert_eq!(with_given_season(series(1), None).season(), Some(1));
+    }
+
+    #[test]
+    fn saying_the_season_it_already_found_changes_nothing() {
+        assert_eq!(with_given_season(series(6), Some(6)).season(), Some(6));
+    }
+
+    #[test]
+    fn a_film_has_no_season_to_set() {
+        let film = Media::Movie { title: "Heat".into(), year: Some(1995), provider_id: None };
+        assert_eq!(with_given_season(film.clone(), Some(6)), film);
+    }
 
     fn drive(id: &str, label: Option<&str>) -> Drive {
         Drive {
