@@ -241,6 +241,7 @@ impl<'a> Pipeline<'a> {
     pub fn organise(
         &self,
         files: &[PathBuf],
+        scan: Option<&DiscScan>,
         media: &Media,
         disc: Option<u32>,
         events: Events,
@@ -250,7 +251,39 @@ impl<'a> Pipeline<'a> {
 
         let shapes = identify::shapes(self.ports.prober, files)?;
         let plain: Vec<structure::TitleShape> = shapes.iter().map(|(s, _)| s.clone()).collect();
-        let mut st = structure::decompose(&plain, structure::EpisodeRange::default());
+
+        // Decompose from the disc where there is one, rather than from what was
+        // ripped. A play-all is not ripped - it is the same video again - so
+        // deciding the episode order from the files means deciding it without
+        // the one title that states the order. That reads as "no play-all on
+        // this disc" on a disc that has one, and falls back to ordering by
+        // duration, which the fallback itself calls a guess where this is
+        // evidence.
+        let from_disc: Option<Vec<structure::TitleShape>> =
+            scan.filter(|s| s.titles.iter().any(|t| !t.chapters.is_empty())).map(|s| {
+                s.titles
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| structure::TitleShape {
+                        key: t.output_name.clone(),
+                        order: i as u32,
+                        duration: t.duration,
+                        chapters: t.chapters.clone(),
+                    })
+                    .collect()
+            });
+        let mut st = structure::decompose(
+            from_disc.as_deref().unwrap_or(&plain),
+            structure::EpisodeRange::default(),
+        );
+
+        // Whatever the disc said, only what was ripped can be worked on.
+        let ripped: Vec<String> = plain.iter().map(|s| s.key.clone()).collect();
+        if from_disc.is_some() {
+            st.episodes.retain(|k| ripped.contains(k));
+            st.loose.retain(|k| ripped.contains(k));
+            st.extras.retain(|k| ripped.contains(k));
+        }
 
         if st.episodes.is_empty() {
             // No play-all: fall back to the house-length cluster, and say so,
@@ -641,7 +674,7 @@ impl<'a> Pipeline<'a> {
             }));
         }
         let files = self.rip(&scan, &titles, rip_dir, events)?;
-        let items = self.organise(&files, &media, disc, events)?;
+        let items = self.organise(&files, Some(&scan), &media, disc, events)?;
         self.produce(&items, &media, events)
     }
 }
@@ -799,9 +832,63 @@ mod tests {
         let scan = p.scan(&fake_disc().drive, &mut sink).unwrap();
         let media = p.identify(&scan, &mut sink).remove(0).media;
         let files = p.rip(&scan, &scan.titles, Path::new("/rip"), &mut sink).unwrap();
-        let items = p.organise(&files, &media, Some(1), &mut sink).unwrap();
+        let items = p.organise(&files, None, &media, Some(1), &mut sink).unwrap();
         let report = p.produce(&items, &media, &mut sink).unwrap();
         (items, report, events)
+    }
+
+    #[test]
+    fn the_episode_order_comes_from_the_disc_not_from_what_was_ripped() {
+        // A play-all is deliberately not ripped - it is the same video again -
+        // so working the order out from the ripped files means working it out
+        // without the one title that states the order. That reported "no
+        // play-all title on this disc" for a disc that has one, and fell back
+        // to ordering by duration, which is a guess where this is evidence.
+        let h = harness();
+        let cat = TvMaze { http: &h.http };
+        let p = Pipeline::new(
+            Ports {
+                runner: &h.runner,
+                prober: &h.prober,
+                ripper: &h.ripper,
+                catalogue: &cat,
+                fs: &h.fs,
+                cancel: Cancel::new(),
+            },
+            settings(),
+        );
+        let mut warnings = Vec::new();
+        let mut sink = |e: Event| {
+            if let Event::Warning(w) = e {
+                warnings.push(w);
+            }
+        };
+        let scan = disc_with_a_play_all();
+        let media = p.identify(&scan, &mut sink).remove(0).media;
+
+        // the two episodes, as they are after the play-all was skipped
+        let files = vec![PathBuf::from("/rip/title_t01.mkv"), PathBuf::from("/rip/title_t02.mkv")];
+        let items = p.organise(&files, Some(&scan), &media, Some(1), &mut sink).unwrap();
+
+        assert!(
+            !warnings.iter().any(|w| matches!(w, Warning::NoPlayAll { .. })),
+            "said there is no play-all on a disc that has one: {warnings:?}"
+        );
+        let episodes: Vec<&Item> =
+            items.iter().filter(|i| matches!(i.role, Role::Episode { .. })).collect();
+        assert_eq!(episodes.len(), 2, "{items:#?}");
+        // and the play-all itself is not written out, having never been read
+        assert!(!items.iter().any(|i| i.role == Role::Episode { season: 7, number: 3 }));
+    }
+
+    /// The fake disc, with chapter times so the play-all can be recognised.
+    fn disc_with_a_play_all() -> DiscScan {
+        let ep = vec![600_000, 675_000, 1_000];
+        let mut scan = fake_disc();
+        scan.titles[0].chapters = [&ep[..2], &ep[..2], &[1_000][..]].concat();
+        scan.titles[1].chapters = ep.clone();
+        scan.titles[2].chapters = ep;
+        scan
     }
 
     #[test]
@@ -906,7 +993,7 @@ mod tests {
         let scan = p.scan(&fake_disc().drive, &mut sink).unwrap();
         let media = p.identify(&scan, &mut sink).remove(0).media;
         let files = p.rip(&scan, &scan.titles, Path::new("/rip"), &mut sink).unwrap();
-        let items = p.organise(&files, &media, Some(1), &mut sink).unwrap();
+        let items = p.organise(&files, None, &media, Some(1), &mut sink).unwrap();
         let report = p.produce(&items, &media, &mut sink).unwrap();
         assert_eq!(report.produced.len(), 1);
         assert_eq!(report.skipped.len(), 1);
@@ -965,7 +1052,7 @@ mod tests {
         let media = p.identify(&scan, &mut sink).remove(0).media;
         let files = p.rip(&scan, &scan.titles, Path::new("/rip"), &mut sink).unwrap();
         cancel.cancel();
-        assert!(p.organise(&files, &media, Some(1), &mut sink).is_err());
+        assert!(p.organise(&files, None, &media, Some(1), &mut sink).is_err());
     }
 
     #[test]
@@ -1039,7 +1126,7 @@ mod tests {
             season: 7,
             provider_id: Some("1633".into()),
         };
-        let items = p.organise(&files, &media, Some(2), &mut sink).unwrap();
+        let items = p.organise(&files, None, &media, Some(2), &mut sink).unwrap();
         let first = items.iter().find(|i| matches!(i.role, Role::Episode { .. })).unwrap();
         assert_eq!(first.role, Role::Episode { season: 7, number: 3 });
     }

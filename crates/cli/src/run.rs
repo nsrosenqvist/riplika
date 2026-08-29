@@ -424,13 +424,17 @@ pub fn rip(
     let plan = pipeline.preview(&scan, &media, disc, rip_dir);
     let titles = pipeline.titles_to_rip(&scan, plan.as_deref());
     if titles.len() < scan.titles.len() {
+        // The same sentence the log and the window use, rather than a third
+        // copy of it - this one still said "play-all title(s)".
         println!(
-            "  skipping {} play-all title(s), already covered by the episodes",
-            scan.titles.len() - titles.len()
+            "  {}",
+            riplika_core::Warning::PlayAllsSkipped { titles: scan.titles.len() - titles.len() }
+                .text()
         );
     }
     let files = pipeline.rip(&scan, &titles, rip_dir, &mut events).map_err(|e| e.to_string())?;
-    let items = pipeline.organise(&files, &media, disc, &mut events).map_err(|e| e.to_string())?;
+    let items =
+        pipeline.organise(&files, None, &media, disc, &mut events).map_err(|e| e.to_string())?;
     show_plan(&items);
     let report = pipeline.produce(&items, &media, &mut events).map_err(|e| e.to_string())?;
     log.finish(&summarise(&report));
@@ -506,7 +510,8 @@ pub fn process(
         events(e);
     };
 
-    let items = pipeline.organise(&files, &media, disc, &mut events).map_err(|e| e.to_string())?;
+    let items =
+        pipeline.organise(&files, None, &media, disc, &mut events).map_err(|e| e.to_string())?;
     show_plan(&items);
     if dry_run {
         log.finish("dry run: nothing was read");

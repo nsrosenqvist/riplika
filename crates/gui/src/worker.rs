@@ -235,7 +235,7 @@ pub fn run(
                     }));
                 }
                 let files = p.rip(&scan, &titles, &rip_dir, &mut events)?;
-                let items = p.organise(&files, &media, disc, &mut events)?;
+                let items = p.organise(&files, Some(&scan), &media, disc, &mut events)?;
                 let _ = tx.send(Msg::Organised(items.clone()));
                 let report = p.produce(&items, &media, &mut events)?;
                 let _ = tx.send(Msg::Finished(Box::new(report)));
