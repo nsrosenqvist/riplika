@@ -73,12 +73,14 @@ fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len()
-            && let Ok(byte) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(byte);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(byte) = u8::from_str_radix(&s[i + 1..i + 3], 16)
+        {
+            out.push(byte);
+            i += 3;
+            continue;
+        }
         out.push(bytes[i]);
         i += 1;
     }
@@ -133,11 +135,7 @@ pub trait Ripper: Send + Sync {
     /// Reports progress from 0.0 to 1.0. A scan probes each title in turn and
     /// takes minutes on a full disc, so a caller with a progress bar has
     /// something real to put in it rather than a bar that never moves.
-    fn scan(
-        &self,
-        drive: &Drive,
-        progress: &mut dyn FnMut(f32, Option<&str>),
-    ) -> Result<DiscScan>;
+    fn scan(&self, drive: &Drive, progress: &mut dyn FnMut(f32, Option<&str>)) -> Result<DiscScan>;
 
     /// Rip `titles` into `dest`, reporting progress from 0.0 to 1.0.
     ///
@@ -158,10 +156,7 @@ pub struct MakeMkv<'a> {
 
 impl<'a> MakeMkv<'a> {
     pub fn new(runner: &'a dyn Runner) -> Self {
-        MakeMkv {
-            runner,
-            min_length_seconds: DEFAULT_MIN_LENGTH_SECONDS,
-        }
+        MakeMkv { runner, min_length_seconds: DEFAULT_MIN_LENGTH_SECONDS }
     }
 }
 
@@ -173,17 +168,14 @@ impl Ripper for MakeMkv<'_> {
         let out = self.runner.run(&makemkv::drives_command())?;
         let drives = makemkv::parse_drives(&out.stdout);
         if drives.is_empty()
-            && let Some(msg) = makemkv::parse_error(&out.stdout) {
-                return Err(Error(format!("MakeMKV: {msg}")));
-            }
+            && let Some(msg) = makemkv::parse_error(&out.stdout)
+        {
+            return Err(Error(format!("MakeMKV: {msg}")));
+        }
         Ok(drives)
     }
 
-    fn scan(
-        &self,
-        drive: &Drive,
-        progress: &mut dyn FnMut(f32, Option<&str>),
-    ) -> Result<DiscScan> {
+    fn scan(&self, drive: &Drive, progress: &mut dyn FnMut(f32, Option<&str>)) -> Result<DiscScan> {
         // MakeMKV reports its own progress while it reads the disc structure,
         // so it is passed through rather than invented.
         let cmd = makemkv::scan_command(&drive.id, self.min_length_seconds);
@@ -273,10 +265,7 @@ pub struct FakeRipper {
 
 impl FakeRipper {
     pub fn new(scan: DiscScan) -> Self {
-        FakeRipper {
-            scan,
-            written: std::sync::Mutex::new(Vec::new()),
-        }
+        FakeRipper { scan, written: std::sync::Mutex::new(Vec::new()) }
     }
 }
 
@@ -371,14 +360,29 @@ TINFO:0,27,0,"title_t00.mkv"
             },
             label: "X".into(),
             titles: vec![
-                DiscTitle { id: 0, duration: 1000, chapter_count: 1, chapters: vec![], size_bytes: 0, output_name: "a.mkv".into(), tracks: vec![] },
-                DiscTitle { id: 1, duration: 1000, chapter_count: 1, chapters: vec![], size_bytes: 0, output_name: "b.mkv".into(), tracks: vec![] },
+                DiscTitle {
+                    id: 0,
+                    duration: 1000,
+                    chapter_count: 1,
+                    chapters: vec![],
+                    size_bytes: 0,
+                    output_name: "a.mkv".into(),
+                    tracks: vec![],
+                },
+                DiscTitle {
+                    id: 1,
+                    duration: 1000,
+                    chapter_count: 1,
+                    chapters: vec![],
+                    size_bytes: 0,
+                    output_name: "b.mkv".into(),
+                    tracks: vec![],
+                },
             ],
         };
         let f = FakeRipper::new(scan.clone());
         let mut seen = Vec::new();
-        f.rip(&scan.drive, &scan.titles, Path::new("/rip"), &mut |p, _| seen.push(p))
-            .unwrap();
+        f.rip(&scan.drive, &scan.titles, Path::new("/rip"), &mut |p, _| seen.push(p)).unwrap();
         assert_eq!(seen.first(), Some(&0.0));
         assert_eq!(seen.last(), Some(&1.0));
         assert!(seen.windows(2).all(|w| w[0] <= w[1]), "{seen:?}");
@@ -436,8 +440,7 @@ impl<'a> Auto<'a> {
     }
 
     fn take_fallback(&self) -> Option<&MakeMkv<'a>> {
-        self.used_fallback
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.used_fallback.store(true, std::sync::atomic::Ordering::SeqCst);
         self.makemkv.as_ref()
     }
 
@@ -446,9 +449,10 @@ impl<'a> Auto<'a> {
     /// programme entirely.
     fn reader(&self) -> &dyn Ripper {
         if self.fell_back()
-            && let Some(m) = &self.makemkv {
-                return m;
-            }
+            && let Some(m) = &self.makemkv
+        {
+            return m;
+        }
         &self.free
     }
 }
@@ -459,17 +463,14 @@ impl Ripper for Auto<'_> {
         // when it is available its listing is the more informative one.
         if let Some(m) = &self.makemkv
             && let Ok(d) = m.drives()
-                && !d.is_empty() {
-                    return Ok(d);
-                }
+            && !d.is_empty()
+        {
+            return Ok(d);
+        }
         self.free.drives()
     }
 
-    fn scan(
-        &self,
-        drive: &Drive,
-        progress: &mut dyn FnMut(f32, Option<&str>),
-    ) -> Result<DiscScan> {
+    fn scan(&self, drive: &Drive, progress: &mut dyn FnMut(f32, Option<&str>)) -> Result<DiscScan> {
         match self.free.scan_checked(drive, progress) {
             Ok((scan, health)) if health.is_trustworthy() => Ok(scan),
             Ok((_, health)) => match self.take_fallback() {
@@ -530,9 +531,7 @@ TINFO:0,27,0,"title_t00.mkv"
 
     #[test]
     fn a_disc_the_free_reader_cannot_decrypt_goes_to_makemkv() {
-        let r = FakeRunner::new()
-            .fail("ffprobe", CSS_FAILURE)
-            .on("makemkvcon", MAKEMKV_INFO);
+        let r = FakeRunner::new().fail("ffprobe", CSS_FAILURE).on("makemkvcon", MAKEMKV_INFO);
         let told = std::sync::Mutex::new(Vec::new());
         let a = Auto::new(&r, true).on_fallback(|m| told.lock().unwrap().push(m.to_string()));
         let scan = a.scan(&drive(), &mut |_, _| {}).unwrap();
@@ -565,9 +564,7 @@ TINFO:0,27,0,"title_t00.mkv"
     fn whoever_scanned_the_disc_also_rips_it() {
         // the two number titles differently, so ripping "title 41" with the
         // wrong one is a different programme entirely
-        let r = FakeRunner::new()
-            .fail("ffprobe", CSS_FAILURE)
-            .on("makemkvcon", MAKEMKV_INFO);
+        let r = FakeRunner::new().fail("ffprobe", CSS_FAILURE).on("makemkvcon", MAKEMKV_INFO);
         let a = Auto::new(&r, true);
         let scan = a.scan(&drive(), &mut |_, _| {}).unwrap();
         let dir = std::env::temp_dir().join("riplika-auto-test");
@@ -640,10 +637,7 @@ tmpfs /tmp tmpfs rw,nosuid,nodev 0 0";
 
     #[test]
     fn a_device_passed_directly_is_taken_as_given() {
-        assert_eq!(
-            drive_from_argument("/dev/sr0", ""),
-            Some(PathBuf::from("/dev/sr0"))
-        );
+        assert_eq!(drive_from_argument("/dev/sr0", ""), Some(PathBuf::from("/dev/sr0")));
     }
 
     #[test]

@@ -27,9 +27,7 @@ pub fn init() {
 
     let candidates = [
         std::env::var_os("RIPLIKA_LOCALE_DIR").map(std::path::PathBuf::from),
-        std::env::current_exe()
-            .ok()
-            .and_then(|e| e.parent().map(|p| p.join("locale"))),
+        std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("locale"))),
         Some(std::path::PathBuf::from("/app/share/locale")),
         Some(std::path::PathBuf::from("/usr/share/locale")),
     ];
@@ -88,11 +86,7 @@ mod tests {
 
 /// The language part of a locale name: `sv_SE.UTF-8` is Swedish.
 fn language_of(locale: &str) -> &str {
-    locale
-        .split(['_', '.', '@'])
-        .next()
-        .unwrap_or("")
-        .trim()
+    locale.split(['_', '.', '@']).next().unwrap_or("").trim()
 }
 
 /// Locales to try when the asked-for one is not installed, best first.
@@ -127,7 +121,7 @@ fn fallbacks(asked: &str) -> Vec<String> {
 /// The choice goes back into the environment as well, because the toolkit will
 /// call `setlocale` itself long after this runs.
 fn ensure_a_locale_that_exists() {
-    use gettextrs::{setlocale, LocaleCategory};
+    use gettextrs::{LocaleCategory, setlocale};
 
     // Unsafe because these mutate process-global state. Called once, at
     // startup, before there is a second thread to race.
@@ -135,9 +129,7 @@ fn ensure_a_locale_that_exists() {
         return;
     }
 
-    let asked = std::env::var("LC_ALL")
-        .or_else(|_| std::env::var("LANG"))
-        .unwrap_or_default();
+    let asked = std::env::var("LC_ALL").or_else(|_| std::env::var("LANG")).unwrap_or_default();
     let lang = language_of(&asked);
     if !lang.is_empty() && lang != "C" && std::env::var_os("LANGUAGE").is_none() {
         unsafe { std::env::set_var("LANGUAGE", lang) };

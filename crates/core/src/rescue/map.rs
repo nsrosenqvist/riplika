@@ -140,9 +140,7 @@ impl Map {
 
     /// Is there nothing left to try?
     pub fn is_done(&self) -> bool {
-        self.runs
-            .iter()
-            .all(|r| matches!(r.state, State::Finished | State::Bad))
+        self.runs.iter().all(|r| matches!(r.state, State::Finished | State::Bad))
     }
 
     /// Record what happened to `[start, end)`.

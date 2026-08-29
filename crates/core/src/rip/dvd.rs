@@ -91,17 +91,9 @@ pub const DVDCSS_METHOD: &str = "key";
 pub fn probe_command_with(device: &Path, title: u32, method: &str) -> Command {
     Command::new("ffprobe")
         .env("DVDCSS_METHOD", method)
-        .args([
-            "-v", "error",
-            "-f", "dvdvideo",
-            "-title", &title.to_string(),
-            "-i",
-        ])
+        .args(["-v", "error", "-f", "dvdvideo", "-title", &title.to_string(), "-i"])
         .path(device)
-        .args([
-            "-print_format", "json",
-            "-show_format", "-show_streams", "-show_chapters",
-        ])
+        .args(["-print_format", "json", "-show_format", "-show_streams", "-show_chapters"])
 }
 
 pub fn probe_command(device: &Path, title: u32) -> Command {
@@ -121,28 +113,30 @@ pub fn rip_command_with(
     method: &str,
     chapters: Option<(u32, u32)>,
 ) -> Command {
-    let mut c = Command::new("ffmpeg")
-        .env("DVDCSS_METHOD", method)
-        .args([
-            "-nostdin", "-y",
-            // progress on stdout in a form that is parseable rather than pretty
-            "-progress", "pipe:1", "-v", "error",
-            "-f", "dvdvideo",
-            // Accurate chapter marks are worth a second read: they are what
-            // play-all decomposition matches on.
-            "-preindex", "true",
-            "-title", &title.to_string(),
-        ]);
+    let mut c = Command::new("ffmpeg").env("DVDCSS_METHOD", method).args([
+        "-nostdin",
+        "-y",
+        // progress on stdout in a form that is parseable rather than pretty
+        "-progress",
+        "pipe:1",
+        "-v",
+        "error",
+        "-f",
+        "dvdvideo",
+        // Accurate chapter marks are worth a second read: they are what
+        // play-all decomposition matches on.
+        "-preindex",
+        "true",
+        "-title",
+        &title.to_string(),
+    ]);
     // Reading a chapter range is how a title with one damaged chapter is
     // salvaged: the rest of it is still perfectly good.
     if let Some((first, last)) = chapters {
         c = c.args(["-chapter_start", &first.to_string()]);
         c = c.args(["-chapter_end", &last.to_string()]);
     }
-    c.arg("-i")
-        .path(device)
-        .args(["-map", "0", "-c", "copy"])
-        .path(dest)
+    c.arg("-i").path(device).args(["-map", "0", "-c", "copy"]).path(dest)
 }
 
 pub fn rip_command(device: &Path, title: u32, dest: &Path) -> Command {
@@ -300,14 +294,10 @@ pub fn rescue_advice(device: &Path, title: u32) -> String {
         .ok()
         .and_then(|table| table.iter().find(|t| t.number == title).map(|t| t.vts));
     match vts {
-        Some(vts) => format!(
-            "Try recovering it: riplika rescue {} disc.iso --vts {vts}",
-            device.display()
-        ),
-        None => format!(
-            "Try recovering it: riplika rescue {} disc.iso",
-            device.display()
-        ),
+        Some(vts) => {
+            format!("Try recovering it: riplika rescue {} disc.iso --vts {vts}", device.display())
+        }
+        None => format!("Try recovering it: riplika rescue {} disc.iso", device.display()),
     }
 }
 
@@ -321,13 +311,9 @@ pub struct DvdVideo<'a> {
 
 impl<'a> DvdVideo<'a> {
     pub fn new(runner: &'a dyn Runner) -> Self {
-        DvdVideo {
-            runner,
-            max_title: MAX_TITLE,
-        }
+        DvdVideo { runner, max_title: MAX_TITLE }
     }
 }
-
 
 impl DvdVideo<'_> {
     /// Scan, and say whether the result can be trusted.
@@ -368,10 +354,7 @@ impl DvdVideo<'_> {
         progress: &mut dyn FnMut(f32, Option<&str>),
     ) -> Result<(DiscScan, ScanHealth)> {
         let device = PathBuf::from(&drive.device);
-        let mut health = ScanHealth {
-            method: method.to_string(),
-            ..ScanHealth::default()
-        };
+        let mut health = ScanHealth { method: method.to_string(), ..ScanHealth::default() };
 
         // Ask the disc how many titles it has. Guessing the end of the range is
         // not safe: a disc can have content at 2-19 and again at 39-58, so any
@@ -390,10 +373,7 @@ impl DvdVideo<'_> {
         for (done, n) in numbers.into_iter().enumerate() {
             // Each probe is a real fraction of the work, and there are up to 99
             // of them, so this is genuine progress rather than a guess.
-            progress(
-                done as f32 / total,
-                Some(&format!("title {n} of {}", health.declared)),
-            );
+            progress(done as f32 / total, Some(&format!("title {n} of {}", health.declared)));
             let out = self.runner.run(&probe_command_with(&device, n, method))?;
             inspect_stderr(&out.stderr, &mut health);
             if !health.is_trustworthy() {
@@ -531,13 +511,8 @@ impl DvdVideo<'_> {
         let mut lost = Vec::new();
         for chapter in 1..=count {
             let part = dest.with_extension(format!("ch{chapter:02}.mkv"));
-            let cmd = rip_command_with(
-                device,
-                title.id,
-                &part,
-                DVDCSS_METHOD,
-                Some((chapter, chapter)),
-            );
+            let cmd =
+                rip_command_with(device, title.id, &part, DVDCSS_METHOD, Some((chapter, chapter)));
             let out = self.runner.run(&cmd)?;
             if out.ok() && part.exists() && self.measure(&part) > 0 {
                 parts.push(part);
@@ -553,10 +528,7 @@ impl DvdVideo<'_> {
     /// Join salvaged chapters back into one file.
     fn concatenate(&self, parts: &[PathBuf], dest: &Path) -> Result<()> {
         let list = dest.with_extension("parts.txt");
-        let body: String = parts
-            .iter()
-            .map(|p| format!("file '{}'\n", p.display()))
-            .collect();
+        let body: String = parts.iter().map(|p| format!("file '{}'\n", p.display())).collect();
         std::fs::write(&list, body).map_err(|e| Error(format!("{}: {e}", list.display())))?;
         let cmd = Command::new("ffmpeg")
             .args(["-nostdin", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i"])
@@ -582,11 +554,7 @@ impl super::Ripper for DvdVideo<'_> {
             .collect())
     }
 
-    fn scan(
-        &self,
-        drive: &Drive,
-        progress: &mut dyn FnMut(f32, Option<&str>),
-    ) -> Result<DiscScan> {
+    fn scan(&self, drive: &Drive, progress: &mut dyn FnMut(f32, Option<&str>)) -> Result<DiscScan> {
         let (scan, health) = self.scan_checked(drive, progress)?;
         // Used on its own there is no fallback to hand the disc to, so an
         // untrustworthy scan has to be an error. Returning it would hand back a
@@ -985,8 +953,7 @@ mod tolerance_tests {
         }
     }
 
-    const REGION_REFUSED: &str =
-        "libdvdcss: Could not get disc key\nlibdvdnav: Error cracking CSS key for /VIDEO_TS/VTS_01_1.VOB";
+    const REGION_REFUSED: &str = "libdvdcss: Could not get disc key\nlibdvdnav: Error cracking CSS key for /VIDEO_TS/VTS_01_1.VOB";
 
     #[test]
     fn a_method_that_fails_is_not_the_end_of_the_disc() {
@@ -1066,7 +1033,11 @@ mod tolerance_tests {
             if let Some(range) = cmd.value_of("-chapter_start") {
                 let dest = PathBuf::from(cmd.args.last().unwrap());
                 if range == "3" {
-                    return Ok(Output { status: 1, stdout: String::new(), stderr: "read error".into() });
+                    return Ok(Output {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: "read error".into(),
+                    });
                 }
                 std::fs::create_dir_all(dest.parent().unwrap()).ok();
                 std::fs::write(&dest, b"part").ok();
@@ -1085,10 +1056,7 @@ mod tolerance_tests {
 
     #[test]
     fn one_damaged_chapter_costs_that_chapter_not_the_episode() {
-        let runner = Scratched {
-            calls: Mutex::new(Vec::new()),
-            good: Mutex::new(Vec::new()),
-        };
+        let runner = Scratched { calls: Mutex::new(Vec::new()), good: Mutex::new(Vec::new()) };
         let d = DvdVideo::new(&runner);
         let mut title = parse_title(tests::EPISODE, 41).unwrap();
         title.chapter_count = 5;
@@ -1103,10 +1071,7 @@ mod tolerance_tests {
 
         assert!(result.is_ok(), "{result:?}");
         // four of the five chapters were kept, and it said which one was not
-        assert!(
-            messages.iter().any(|m| m.contains("without chapter 3")),
-            "{messages:?}"
-        );
+        assert!(messages.iter().any(|m| m.contains("without chapter 3")), "{messages:?}");
         let calls = runner.calls.lock().unwrap();
         assert!(calls.iter().any(|c| c.has("concat")), "should have rejoined the parts");
     }
@@ -1139,13 +1104,18 @@ mod tolerance_tests {
                 if cmd.program == "ffprobe" && !cmd.has("dvdvideo") {
                     return Ok(crate::host::Output {
                         status: 0,
-                        stdout: r#"{"streams":[],"chapters":[],"format":{"duration":"1289.0"}}"#.into(),
+                        stdout: r#"{"streams":[],"chapters":[],"format":{"duration":"1289.0"}}"#
+                            .into(),
                         stderr: String::new(),
                     });
                 }
                 Ok(crate::host::Output::default())
             }
-            fn stream(&self, cmd: &Command, _: &mut dyn FnMut(&str)) -> Result<crate::host::Output> {
+            fn stream(
+                &self,
+                cmd: &Command,
+                _: &mut dyn FnMut(&str),
+            ) -> Result<crate::host::Output> {
                 let dest = PathBuf::from(cmd.args.last().unwrap());
                 if cmd.value_of("-title") == Some("3") {
                     return Ok(crate::host::Output {
@@ -1289,14 +1259,11 @@ mod cancel_tests {
         // title as damaged and kept going through all of them - twenty
         // warnings and a "nothing could be read from the disc" for a rip the
         // user had simply stopped.
-        let runner = CancelledAfterOne {
-            stopped: AtomicBool::new(false),
-            attempts: AtomicUsize::new(0),
-        };
+        let runner =
+            CancelledAfterOne { stopped: AtomicBool::new(false), attempts: AtomicUsize::new(0) };
         let d = DvdVideo::new(&runner);
-        let titles: Vec<DiscTitle> = (2..=20)
-            .map(|n| parse_title(tests::EPISODE, n).unwrap())
-            .collect();
+        let titles: Vec<DiscTitle> =
+            (2..=20).map(|n| parse_title(tests::EPISODE, n).unwrap()).collect();
         let dir = std::env::temp_dir().join(format!("riplika-cancel-{}", std::process::id()));
         let result = d.rip(&drive(), &titles, &dir, &mut |_, _| {});
         let _ = std::fs::remove_dir_all(&dir);

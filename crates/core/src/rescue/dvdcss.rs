@@ -16,9 +16,9 @@
 //! exchange while the drive is still there, and `DVDCSS_READ_DECRYPT` clears
 //! the scrambling bits as it goes, so what lands on disk needs no keys at all.
 
-use super::{ReadError, SectorSource, SECTOR};
+use super::{ReadError, SECTOR, SectorSource};
 use crate::{Error, Result};
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::path::Path;
 
 /// `dvdcss_seek` flags.

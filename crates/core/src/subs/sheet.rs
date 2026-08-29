@@ -38,10 +38,7 @@ fn png_data_uri(e: &Entry, zoom: usize) -> String {
 }
 
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
 pub fn render(table: &Table, zoom: usize) -> String {
@@ -66,11 +63,8 @@ pub fn render(table: &Table, zoom: usize) -> String {
             (Some(_), a) if a < 0.98 => "shaky",
             _ => "ok",
         };
-        let alts: Vec<String> = e
-            .votes
-            .iter()
-            .map(|(k, v)| format!("{}&times;{}", esc(k), v))
-            .collect();
+        let alts: Vec<String> =
+            e.votes.iter().map(|(k, v)| format!("{}&times;{}", esc(k), v)).collect();
         rows.push_str(&format!(
             r#"<div class="g {cls}">
   <img src="{src}" alt="">

@@ -102,10 +102,11 @@ pub fn read_spu(buf: &[u8], pos: usize) -> Option<Vec<u8>> {
         }
         p = end;
         if let Some(t) = total
-            && data.len() >= t {
-                data.truncate(t);
-                return Some(data);
-            }
+            && data.len() >= t
+        {
+            data.truncate(t);
+            return Some(data);
+        }
     }
     total.filter(|t| data.len() >= *t).map(|t| {
         data.truncate(t);
@@ -275,15 +276,7 @@ pub fn decode_spu(spu: &[u8]) -> Option<Spu> {
         }
     }
 
-    Some(Spu {
-        w,
-        h,
-        pixels,
-        alpha,
-        pal_idx,
-        start_delay_ms: start_delay,
-        stop_ms,
-    })
+    Some(Spu { w, h, pixels, alpha, pal_idx, start_delay_ms: start_delay, stop_ms })
 }
 
 impl Spu {
@@ -334,11 +327,7 @@ pub fn decode_packets(packets: &[crate::subs::matroska::Packet]) -> Vec<Event> {
         };
         let start = packet.start_ms + spu.start_delay_ms;
         let end = spu.stop_ms.map(|s| packet.start_ms + s);
-        out.push(Event {
-            start_ms: start,
-            end_ms: end,
-            spu,
-        });
+        out.push(Event { start_ms: start, end_ms: end, spu });
     }
     out
 }
@@ -354,11 +343,7 @@ pub fn decode_all(idx: &Idx, sub: &[u8]) -> Vec<Event> {
         };
         let start = ev.start_ms + spu.start_delay_ms;
         let end = spu.stop_ms.map(|s| ev.start_ms + s);
-        out.push(Event {
-            start_ms: start,
-            end_ms: end,
-            spu,
-        });
+        out.push(Event { start_ms: start, end_ms: end, spu });
     }
     out
 }

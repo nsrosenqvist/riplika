@@ -62,11 +62,7 @@ pub fn file_name(started: &str, label: &str) -> String {
         .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '-' })
         .collect();
     let safe = safe.trim_matches('-');
-    if safe.is_empty() {
-        format!("{started}.log")
-    } else {
-        format!("{started}-{safe}.log")
-    }
+    if safe.is_empty() { format!("{started}.log") } else { format!("{started}-{safe}.log") }
 }
 
 /// Writes one disc's run to a file as it happens.
@@ -85,9 +81,8 @@ impl JobLog {
     pub fn start(label: &str, details: &[String], started: &str) -> JobLog {
         let dir = directory();
         let path = dir.join(file_name(started, label));
-        let file = std::fs::create_dir_all(&dir)
-            .ok()
-            .and_then(|_| std::fs::File::create(&path).ok());
+        let file =
+            std::fs::create_dir_all(&dir).ok().and_then(|_| std::fs::File::create(&path).ok());
 
         let mut log = JobLog { file, path };
         for line in details {
@@ -119,10 +114,7 @@ impl JobLog {
             .unwrap_or_else(|| "folder".into());
         Self::start(
             &label,
-            &[
-                format!("folder:  {}", dir.display()),
-                format!("files:   {files}"),
-            ],
+            &[format!("folder:  {}", dir.display()), format!("files:   {files}")],
             started,
         )
     }

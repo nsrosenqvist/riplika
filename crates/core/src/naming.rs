@@ -316,9 +316,7 @@ mod tests {
         let i = item(Role::Episode { season: 3, number: 4 }, "Ron and Tammy");
         assert_eq!(
             destination(Path::new("/media"), &series(), &i, Container::Mp4, None),
-            PathBuf::from(
-                "/media/Season 03/Parks and Recreation - S03E04 - Ron and Tammy.mp4"
-            )
+            PathBuf::from("/media/Season 03/Parks and Recreation - S03E04 - Ron and Tammy.mp4")
         );
     }
 
@@ -345,11 +343,8 @@ mod tests {
 
     #[test]
     fn movies_are_named_with_their_year_and_no_season_directory() {
-        let m = Media::Movie {
-            title: "The Big Lebowski".into(),
-            year: Some(1998),
-            provider_id: None,
-        };
+        let m =
+            Media::Movie { title: "The Big Lebowski".into(), year: Some(1998), provider_id: None };
         let i = item(Role::Feature, "The Big Lebowski");
         assert_eq!(
             destination(Path::new("/media"), &m, &i, Container::Mp4, None),

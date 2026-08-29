@@ -13,9 +13,9 @@
 //! The lesson is in `measure_decoded_fps`: ask the decoder what it produces,
 //! never trust what the container declares.
 
+use crate::Result;
 use crate::host::{Command, Runner};
 use crate::media::MediaInfo;
-use crate::Result;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -52,16 +52,7 @@ pub fn crop_command(path: &Path) -> Command {
     Command::new("ffmpeg")
         .args(["-nostdin", "-v", "info", "-ss", "300", "-t", "60", "-i"])
         .path(path)
-        .args([
-            "-vf",
-            "cropdetect=24:2:0",
-            "-frames:v",
-            "400",
-            "-an",
-            "-f",
-            "null",
-            "-",
-        ])
+        .args(["-vf", "cropdetect=24:2:0", "-frames:v", "400", "-an", "-f", "null", "-"])
 }
 
 /// Frame count from a finished run, from whichever stream carried it.
@@ -70,9 +61,7 @@ pub fn crop_command(path: &Path) -> Command {
 /// stdout; reading only one silently yields zero frames, which then reads as
 /// "not telecined" no matter what the source is.
 pub fn frames_of(out: &crate::host::Output) -> u64 {
-    parse_frame_count(&out.stderr)
-        .or_else(|| parse_frame_count(&out.stdout))
-        .unwrap_or(0)
+    parse_frame_count(&out.stderr).or_else(|| parse_frame_count(&out.stdout)).unwrap_or(0)
 }
 
 /// Pull the final `frame=  1234` out of ffmpeg's progress output.
@@ -82,7 +71,8 @@ pub fn parse_frame_count(output: &str) -> Option<u64> {
         // progress is rewritten with \r, so one "line" holds many updates
         for part in line.split('\r') {
             if let Some(rest) = part.trim_start().strip_prefix("frame=") {
-                let n: String = rest.trim_start().chars().take_while(|c| c.is_ascii_digit()).collect();
+                let n: String =
+                    rest.trim_start().chars().take_while(|c| c.is_ascii_digit()).collect();
                 if let Ok(v) = n.parse::<u64>() {
                     last = Some(v);
                 }
@@ -115,11 +105,8 @@ pub fn parse_crop(output: &str) -> Option<String> {
 /// Cropping a couple of pixels costs a re-encode of the whole frame and can
 /// push the dimensions off the macroblock grid, for no visible gain.
 pub fn crop_is_worthwhile(crop: &str, width: u32, height: u32) -> bool {
-    let nums: Vec<u32> = crop
-        .trim_start_matches("crop=")
-        .split(':')
-        .filter_map(|n| n.parse().ok())
-        .collect();
+    let nums: Vec<u32> =
+        crop.trim_start_matches("crop=").split(':').filter_map(|n| n.parse().ok()).collect();
     let [w, h, ..] = nums[..] else { return false };
     (width.saturating_sub(w)) >= 4 || (height.saturating_sub(h)) >= 4
 }

@@ -11,7 +11,7 @@ use adw::prelude::*;
 use riplika_core::host;
 use riplika_core::lang;
 use riplika_core::naming;
-use riplika_core::prefs::{Preferences, MAKEMKV};
+use riplika_core::prefs::{MAKEMKV, Preferences};
 use riplika_core::secret;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -24,9 +24,7 @@ pub struct Store {
 
 impl Store {
     pub fn new(prefs: Preferences) -> Self {
-        Store {
-            prefs: RefCell::new(prefs),
-        }
+        Store { prefs: RefCell::new(prefs) }
     }
 
     /// Save, reporting failure rather than losing it silently.
@@ -36,17 +34,11 @@ impl Store {
 }
 
 fn folder_row(title: &str, subtitle: &str) -> adw::ActionRow {
-    adw::ActionRow::builder()
-        .title(title)
-        .subtitle(subtitle)
-        .activatable(true)
-        .build()
+    adw::ActionRow::builder().title(title).subtitle(subtitle).activatable(true).build()
 }
 
 fn describe(path: &Option<PathBuf>, empty: &str) -> String {
-    path.as_ref()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| empty.to_string())
+    path.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| empty.to_string())
 }
 
 /// Build and present the dialog.
@@ -57,9 +49,7 @@ pub fn present<F>(parent: &impl IsA<gtk::Widget>, store: Rc<Store>, on_change: F
 where
     F: Fn() + Clone + 'static,
 {
-    let dialog = adw::PreferencesDialog::builder()
-        .title(tr("Preferences"))
-        .build();
+    let dialog = adw::PreferencesDialog::builder().title(tr("Preferences")).build();
     let page = adw::PreferencesPage::builder().title("General").build();
 
     // --- reading discs ----------------------------------------------------
@@ -106,12 +96,7 @@ where
 
     let expander = adw::ExpanderRow::builder().title(tr("Languages")).build();
     let summary = |p: &Preferences| {
-        let names: Vec<String> = p
-            .languages()
-            .wanted()
-            .iter()
-            .map(|l| l.name.clone())
-            .collect();
+        let names: Vec<String> = p.languages().wanted().iter().map(|l| l.name.clone()).collect();
         if names.is_empty() {
             "None - every language on a disc will be offered unticked".to_string()
         } else {
@@ -223,10 +208,7 @@ where
         .build();
     let rip = folder_row(
         "Folder",
-        &describe(
-            &Some(store.prefs.borrow().rip_dir()),
-            "System temporary folder",
-        ),
+        &describe(&Some(store.prefs.borrow().rip_dir()), "System temporary folder"),
     );
     folders.add(&rip);
     page.add(&folders);
@@ -314,12 +296,13 @@ where
             let on_change = on_change.clone();
             let handle = move |res: Result<gtk::gio::File, gtk::glib::Error>| {
                 if let Ok(f) = res
-                    && let Some(path) = f.path() {
-                        set(&mut store.prefs.borrow_mut(), Some(path));
-                        store.save();
-                        row3.set_subtitle(&describe(&get(&store.prefs.borrow()), empty));
-                        on_change();
-                    }
+                    && let Some(path) = f.path()
+                {
+                    set(&mut store.prefs.borrow_mut(), Some(path));
+                    store.save();
+                    row3.set_subtitle(&describe(&get(&store.prefs.borrow()), empty));
+                    on_change();
+                }
             };
             let root = dialog.root().and_downcast::<gtk::Window>();
             if folder {
@@ -331,9 +314,15 @@ where
     };
 
     pick(
-        &rip, &dialog, Rc::clone(&store), true, "Working folder",
+        &rip,
+        &dialog,
+        Rc::clone(&store),
+        true,
+        "Working folder",
         "System temporary folder",
-        |p, v| p.rip_dir = v, |p| p.rip_dir.clone(), on_change.clone(),
+        |p, v| p.rip_dir = v,
+        |p| p.rip_dir.clone(),
+        on_change.clone(),
     );
 
     dialog.present(Some(parent));

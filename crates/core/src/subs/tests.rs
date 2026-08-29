@@ -2,7 +2,7 @@
 //! resolver, mark merging, spacing, and SRT round-tripping.
 
 use crate::subs::resolve::{Resolver, Slot};
-use crate::subs::segment::{SegOpts, Glyph, Line};
+use crate::subs::segment::{Glyph, Line, SegOpts};
 use crate::subs::srt;
 
 fn amb() -> Slot {
@@ -48,20 +48,14 @@ fn resolves_contractions() {
     // I'll  -  bar, apostrophe, bar, bar
     assert_eq!(word(&r, &[amb(), fixed("'"), amb(), amb()]), "I'll");
     // We'll  -  the ambiguous pair must not turn the word into shouting
-    assert_eq!(
-        word(&r, &[fixed("W"), fixed("e"), fixed("'"), amb(), amb()]),
-        "We'll"
-    );
+    assert_eq!(word(&r, &[fixed("W"), fixed("e"), fixed("'"), amb(), amb()]), "We'll");
 }
 
 #[test]
 fn resolves_by_dictionary() {
     let r = Resolver::load(None);
     // "look" not "Iook"
-    assert_eq!(
-        word(&r, &[amb(), fixed("o"), fixed("o"), fixed("k")]),
-        "look"
-    );
+    assert_eq!(word(&r, &[amb(), fixed("o"), fixed("o"), fixed("k")]), "look");
     // "All" not "AII" - one leading capital is a sentence start, not an acronym
     assert_eq!(word(&r, &[fixed("A"), amb(), amb()]), "All");
     // "It" not "lt"
@@ -79,10 +73,7 @@ fn keeps_capitals_inside_an_acronym() {
 fn resolves_lowercase_l_after_apostrophe() {
     let r = Resolver::load(None);
     // Li'l - not a dictionary word, so the structural rule decides
-    assert_eq!(
-        word(&r, &[fixed("L"), fixed("i"), fixed("'"), amb()]),
-        "Li'l"
-    );
+    assert_eq!(word(&r, &[fixed("L"), fixed("i"), fixed("'"), amb()]), "Li'l");
 }
 
 /// Build a glyph from an ASCII picture, '#' meaning ink.
@@ -123,17 +114,12 @@ fn space_threshold_scales_with_line_height() {
 #[test]
 fn gaps_are_measured_between_bounding_boxes() {
     let line = Line {
-        glyphs: vec![
-            glyph(0, 0, &["#"]),
-            glyph(5, 0, &["#"]),
-            glyph(6, 0, &["#"]),
-        ],
+        glyphs: vec![glyph(0, 0, &["#"]), glyph(5, 0, &["#"]), glyph(6, 0, &["#"])],
         top: 0,
         bottom: 0,
     };
     assert_eq!(crate::subs::segment::gaps(&line), vec![4, 0]);
 }
-
 
 #[test]
 fn english_rules_do_not_apply_to_other_languages() {

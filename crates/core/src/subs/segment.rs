@@ -63,11 +63,7 @@ pub struct SegOpts {
 
 impl Default for SegOpts {
     fn default() -> Self {
-        Self {
-            min_ink: 3,
-            space_ratio: 0.28,
-            mark_gap_ratio: 0.80,
-        }
+        Self { min_ink: 3, space_ratio: 0.28, mark_gap_ratio: 0.80 }
     }
 }
 
@@ -117,13 +113,7 @@ fn components(mask: &[u8], w: usize, h: usize, min_ink: usize) -> Vec<Comp> {
             }
         }
         if cells.len() >= min_ink {
-            out.push(Comp {
-                x0,
-                y0,
-                x1,
-                y1,
-                cells,
-            });
+            out.push(Comp { x0, y0, x1, y1, cells });
         }
     }
     out
@@ -136,13 +126,7 @@ fn to_glyph(c: &Comp) -> Glyph {
     for &(cx, cy) in &c.cells {
         bits[((cy - c.y0) * w + (cx - c.x0)) as usize] = 1;
     }
-    Glyph {
-        x: c.x0,
-        y: c.y0,
-        w,
-        h,
-        bits,
-    }
+    Glyph { x: c.x0, y: c.y0, w, h, bits }
 }
 
 fn merge(a: &Glyph, b: &Glyph) -> Glyph {
@@ -164,13 +148,7 @@ fn merge(a: &Glyph, b: &Glyph) -> Glyph {
             }
         }
     }
-    Glyph {
-        x: x0,
-        y: y0,
-        w,
-        h,
-        bits,
-    }
+    Glyph { x: x0, y: y0, w, h, bits }
 }
 
 /// Group components into text lines by vertical overlap.
@@ -194,11 +172,7 @@ fn group_lines(mut comps: Vec<Glyph>) -> Vec<Line> {
             }
         }
         if !placed {
-            lines.push(Line {
-                top: gt,
-                bottom: gb,
-                glyphs: vec![g],
-            });
+            lines.push(Line { top: gt, bottom: gb, glyphs: vec![g] });
         }
     }
 
@@ -354,14 +328,9 @@ fn coalesce_mark_lines(lines: &mut Vec<Line>) {
     let mut i = 0;
     while i < lines.len() {
         let h = lines[i].height();
-        let dist_next = lines
-            .get(i + 1)
-            .map(|n| (n.top - lines[i].bottom - 1).max(0));
-        let dist_prev = if i > 0 {
-            Some((lines[i].top - lines[i - 1].bottom - 1).max(0))
-        } else {
-            None
-        };
+        let dist_next = lines.get(i + 1).map(|n| (n.top - lines[i].bottom - 1).max(0));
+        let dist_prev =
+            if i > 0 { Some((lines[i].top - lines[i - 1].bottom - 1).max(0)) } else { None };
         let small_vs = |other: &Line| h * 10 <= other.height() * 4;
         let ok_next = matches!((lines.get(i + 1), dist_next), (Some(n), Some(d))
             if small_vs(n) && d * 4 <= n.height());
@@ -413,10 +382,7 @@ pub fn segment(spu: &Spu, palette: &[[u8; 3]], opts: &SegOpts) -> Vec<Line> {
 
 /// Horizontal gap from each glyph to the next on the same line.
 pub fn gaps(line: &Line) -> Vec<i32> {
-    line.glyphs
-        .windows(2)
-        .map(|w| w[1].x - (w[0].x + w[0].w))
-        .collect()
+    line.glyphs.windows(2).map(|w| w[1].x - (w[0].x + w[0].w)).collect()
 }
 
 /// Gap in pixels above which a space is inserted on this line.

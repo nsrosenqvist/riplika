@@ -16,8 +16,8 @@ use crate::media::Prober;
 use crate::model::*;
 use crate::rip::Ripper;
 use crate::subs::{self, table::Table};
-use crate::transcode::{self, analyze, SubtitleInput};
-use crate::{lang, naming, Error, Result};
+use crate::transcode::{self, SubtitleInput, analyze};
+use crate::{Error, Result, lang, naming};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,17 +187,9 @@ impl<'a> Pipeline<'a> {
                     || (could_be_a_longer_cut && self.settings.include_extended_cuts);
                 !wanted
             })
-            .filter_map(|i| {
-                i.source
-                    .file_name()
-                    .map(|f| f.to_string_lossy().into_owned())
-            })
+            .filter_map(|i| i.source.file_name().map(|f| f.to_string_lossy().into_owned()))
             .collect();
-        scan.titles
-            .iter()
-            .filter(|t| !redundant.contains(&t.output_name))
-            .cloned()
-            .collect()
+        scan.titles.iter().filter(|t| !redundant.contains(&t.output_name)).cloned().collect()
     }
 
     /// Stage one: read the disc.
@@ -218,9 +210,7 @@ impl<'a> Pipeline<'a> {
                     message: message.map(str::to_string),
                 });
             };
-            self.ports
-                .ripper
-                .rip(&scan.drive, titles, dest, &mut report)?
+            self.ports.ripper.rip(&scan.drive, titles, dest, &mut report)?
         };
 
         // Titles that could not be read are reported, not thrown: a disc is
@@ -259,7 +249,8 @@ impl<'a> Pipeline<'a> {
         if st.episodes.is_empty() {
             // No play-all: fall back to the house-length cluster, and say so,
             // because that ordering is a guess where the other one is evidence.
-            let by_duration = structure::episodes_by_duration(&plain, structure::EpisodeRange::default());
+            let by_duration =
+                structure::episodes_by_duration(&plain, structure::EpisodeRange::default());
             if !by_duration.is_empty() {
                 events(Event::Warning(format!(
                     "no play-all title on this disc; ordering {} episodes by disc layout instead",
@@ -270,11 +261,7 @@ impl<'a> Pipeline<'a> {
             }
         }
 
-        let dir = files
-            .first()
-            .and_then(|f| f.parent())
-            .map(Path::to_path_buf)
-            .unwrap_or_default();
+        let dir = files.first().and_then(|f| f.parent()).map(Path::to_path_buf).unwrap_or_default();
 
         let extended = if st.loose.is_empty() || !self.settings.include_extended_cuts {
             // Comparing pictures means decoding every loose title against every
@@ -293,11 +280,9 @@ impl<'a> Pipeline<'a> {
         };
 
         let episodes = match (media, media.provider_id()) {
-            (Media::Series { season, .. }, Some(id)) => self
-                .ports
-                .catalogue
-                .episodes(&id, *season)
-                .unwrap_or_default(),
+            (Media::Series { season, .. }, Some(id)) => {
+                self.ports.catalogue.episodes(&id, *season).unwrap_or_default()
+            }
             _ => Vec::new(),
         };
 
@@ -336,10 +321,9 @@ impl<'a> Pipeline<'a> {
 
     fn season_dir(&self, media: &Media) -> PathBuf {
         match media {
-            Media::Series { season, .. } => self
-                .settings
-                .output_dir
-                .join(naming::sanitize(&format!("Season {season:02}"))),
+            Media::Series { season, .. } => {
+                self.settings.output_dir.join(naming::sanitize(&format!("Season {season:02}")))
+            }
             Media::Movie { .. } => self.settings.output_dir.clone(),
         }
     }
@@ -397,11 +381,7 @@ impl<'a> Pipeline<'a> {
         // preview cannot spot them. Everything else is the real mapping.
         let mut items = identify::assign(media, &episodes, &st, rip_dir, offset, &[]);
         for item in &mut items {
-            if let Some(t) = scan
-                .titles
-                .iter()
-                .find(|t| item.source.ends_with(&t.output_name))
-            {
+            if let Some(t) = scan.titles.iter().find(|t| item.source.ends_with(&t.output_name)) {
                 item.duration = t.duration;
             }
             if item.role.is_output() {
@@ -420,10 +400,7 @@ impl<'a> Pipeline<'a> {
     /// Stage four and the encode: produce the output files.
     pub fn produce(&self, items: &[Item], media: &Media, events: Events) -> Result<Report> {
         let mut report = Report::default();
-        let outputs: Vec<&Item> = items
-            .iter()
-            .filter(|i| i.role.wanted(&self.settings))
-            .collect();
+        let outputs: Vec<&Item> = items.iter().filter(|i| i.role.wanted(&self.settings)).collect();
 
         let table = match &self.settings.glyph_table {
             Some(p) if self.ports.fs.exists(p) => match Table::load(p) {
@@ -551,9 +528,7 @@ impl<'a> Pipeline<'a> {
         let wanted = transcode::subtitles_to_recognise(info, &self.settings.languages);
         let Some(table) = table else {
             if !wanted.is_empty() {
-                events(Event::Warning(
-                    "no glyph table, so subtitles stay as bitmaps".into(),
-                ));
+                events(Event::Warning("no glyph table, so subtitles stay as bitmaps".into()));
             }
             // Without recognition the bitmaps are all there is: keep every one,
             // since dropping them would lose those languages outright.
@@ -567,10 +542,8 @@ impl<'a> Pipeline<'a> {
 
         for stream in wanted {
             self.ports.cancel.check()?;
-            let code = subs_tracks
-                .get(stream)
-                .map(|t| t.language.clone())
-                .unwrap_or_else(|| "und".into());
+            let code =
+                subs_tracks.get(stream).map(|t| t.language.clone()).unwrap_or_else(|| "und".into());
             let language = lang::parse(&code);
             let srt_path = item.source.with_extension(format!("{}.srt", language.code));
 
@@ -635,16 +608,12 @@ impl<'a> Pipeline<'a> {
             Some(m) => m,
             None => {
                 let candidates = self.identify(&scan, events);
-                candidates
-                    .into_iter()
-                    .next()
-                    .map(|c| c.media)
-                    .ok_or_else(|| {
-                        Error(format!(
-                            "could not identify {:?}; say what it is with --title",
-                            scan.label
-                        ))
-                    })?
+                candidates.into_iter().next().map(|c| c.media).ok_or_else(|| {
+                    Error(format!(
+                        "could not identify {:?}; say what it is with --title",
+                        scan.label
+                    ))
+                })?
             }
         };
         let disc = identify::label::parse(&scan.label).disc;
@@ -737,9 +706,33 @@ mod tests {
             },
             label: "PARKS_AND_RECREATION_S7D1".into(),
             titles: vec![
-                DiscTitle { id: 0, duration: 2_550_000, chapter_count: 4, chapters: vec![], size_bytes: 0, output_name: "title_t00.mkv".into(), tracks: vec![] },
-                DiscTitle { id: 1, duration: 1_275_000, chapter_count: 2, chapters: vec![], size_bytes: 0, output_name: "title_t01.mkv".into(), tracks: vec![] },
-                DiscTitle { id: 2, duration: 1_275_000, chapter_count: 2, chapters: vec![], size_bytes: 0, output_name: "title_t02.mkv".into(), tracks: vec![] },
+                DiscTitle {
+                    id: 0,
+                    duration: 2_550_000,
+                    chapter_count: 4,
+                    chapters: vec![],
+                    size_bytes: 0,
+                    output_name: "title_t00.mkv".into(),
+                    tracks: vec![],
+                },
+                DiscTitle {
+                    id: 1,
+                    duration: 1_275_000,
+                    chapter_count: 2,
+                    chapters: vec![],
+                    size_bytes: 0,
+                    output_name: "title_t01.mkv".into(),
+                    tracks: vec![],
+                },
+                DiscTitle {
+                    id: 2,
+                    duration: 1_275_000,
+                    chapter_count: 2,
+                    chapters: vec![],
+                    size_bytes: 0,
+                    output_name: "title_t02.mkv".into(),
+                    tracks: vec![],
+                },
             ],
         }
     }
@@ -771,10 +764,7 @@ mod tests {
     }
 
     fn settings() -> JobSettings {
-        JobSettings {
-            output_dir: PathBuf::from("/media"),
-            ..JobSettings::default()
-        }
+        JobSettings { output_dir: PathBuf::from("/media"), ..JobSettings::default() }
     }
 
     fn run_all(h: &Harness, s: JobSettings) -> (Vec<Item>, Report, Vec<Event>) {
@@ -804,10 +794,8 @@ mod tests {
     fn a_whole_disc_goes_through_without_touching_hardware() {
         let h = harness();
         let (items, report, _) = run_all(&h, settings());
-        let episodes: Vec<&Item> = items
-            .iter()
-            .filter(|i| matches!(i.role, Role::Episode { .. }))
-            .collect();
+        let episodes: Vec<&Item> =
+            items.iter().filter(|i| matches!(i.role, Role::Episode { .. })).collect();
         assert_eq!(episodes.len(), 2);
         assert_eq!(report.produced.len(), 2);
         assert!(report.is_complete());
@@ -820,10 +808,7 @@ mod tests {
         assert!(items.iter().any(|i| i.role == Role::PlayAll));
         // three ripped titles, two output files
         assert_eq!(report.produced.len(), 2);
-        assert!(!report
-            .produced
-            .iter()
-            .any(|p| p.destination.to_string_lossy().contains("t00")));
+        assert!(!report.produced.iter().any(|p| p.destination.to_string_lossy().contains("t00")));
     }
 
     #[test]
@@ -844,11 +829,7 @@ mod tests {
     fn the_output_directory_is_created_before_writing_into_it() {
         let h = harness();
         run_all(&h, settings());
-        assert!(h
-            .fs
-            .created_dirs()
-            .iter()
-            .any(|d| d == Path::new("/media/Season 07")));
+        assert!(h.fs.created_dirs().iter().any(|d| d == Path::new("/media/Season 07")));
     }
 
     #[test]
@@ -856,12 +837,7 @@ mod tests {
         // the shell version needed three passes per episode
         let h = harness();
         run_all(&h, settings());
-        let encodes = h
-            .runner
-            .calls_to("ffmpeg")
-            .into_iter()
-            .filter(|c| c.has("libx264"))
-            .count();
+        let encodes = h.runner.calls_to("ffmpeg").into_iter().filter(|c| c.has("libx264")).count();
         assert_eq!(encodes, 2);
     }
 
@@ -869,12 +845,7 @@ mod tests {
     fn tags_are_written_during_that_same_pass() {
         let h = harness();
         run_all(&h, settings());
-        let encode = h
-            .runner
-            .calls_to("ffmpeg")
-            .into_iter()
-            .find(|c| c.has("libx264"))
-            .unwrap();
+        let encode = h.runner.calls_to("ffmpeg").into_iter().find(|c| c.has("libx264")).unwrap();
         let meta = encode.values_of("-metadata");
         assert!(meta.contains(&"show=Parks and Recreation"), "{:?}", meta);
         assert!(meta.contains(&"season_number=7"));
@@ -886,12 +857,7 @@ mod tests {
         let h = harness();
         let (_, _, events) = run_all(&h, settings());
         assert!(events.iter().any(|e| matches!(e, Event::Warning(w) if w.contains("glyph table"))));
-        let encode = h
-            .runner
-            .calls_to("ffmpeg")
-            .into_iter()
-            .find(|c| c.has("libx264"))
-            .unwrap();
+        let encode = h.runner.calls_to("ffmpeg").into_iter().find(|c| c.has("libx264")).unwrap();
         // the English bitmap survives, so the language is not lost
         assert!(encode.values_of("-map").contains(&"0:s:0"), "{}", encode.display());
     }
@@ -990,12 +956,7 @@ mod tests {
         s.languages = lang::LanguageSet::parse("english");
         s.audio = Quality::Low;
         run_all(&h, s);
-        let encode = h
-            .runner
-            .calls_to("ffmpeg")
-            .into_iter()
-            .find(|c| c.has("libx264"))
-            .unwrap();
+        let encode = h.runner.calls_to("ffmpeg").into_iter().find(|c| c.has("libx264")).unwrap();
         assert_eq!(encode.value_of("-c:a"), Some("aac"));
         assert_eq!(encode.value_of("-b:a"), Some("96k"));
         assert_eq!(encode.values_of("-map"), vec!["0:v:0", "0:a:0", "0:s:0"]);
@@ -1008,12 +969,7 @@ mod tests {
         // as a finished episode and skips
         let h = harness();
         let (_, report, _) = run_all(&h, settings());
-        let encode = h
-            .runner
-            .calls_to("ffmpeg")
-            .into_iter()
-            .find(|c| c.has("libx264"))
-            .unwrap();
+        let encode = h.runner.calls_to("ffmpeg").into_iter().find(|c| c.has("libx264")).unwrap();
         let target = encode.args.last().unwrap();
         assert!(target.ends_with(".part"), "{target}");
         // and the finished file is at the real path, not the temporary one
@@ -1149,10 +1105,8 @@ mod preview_tests {
             .preview(&scan_with_chapters(), &season7(), Some(1), Path::new("/rip"))
             .expect("chapter durations were reported, so a preview is possible");
 
-        let episodes: Vec<&Item> = items
-            .iter()
-            .filter(|i| matches!(i.role, Role::Episode { .. }))
-            .collect();
+        let episodes: Vec<&Item> =
+            items.iter().filter(|i| matches!(i.role, Role::Episode { .. })).collect();
         assert_eq!(episodes.len(), 2);
         assert_eq!(episodes[0].role, Role::Episode { season: 7, number: 1 });
         assert_eq!(episodes[0].title, "2017");
@@ -1325,11 +1279,7 @@ impl Default for Eta {
 
 impl Eta {
     pub fn new() -> Eta {
-        Eta {
-            started: std::time::Instant::now(),
-            rate: None,
-            last: None,
-        }
+        Eta { started: std::time::Instant::now(), rate: None, last: None }
     }
 
     /// How long the whole job has been going.

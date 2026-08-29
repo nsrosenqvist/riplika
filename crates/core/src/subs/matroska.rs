@@ -86,11 +86,8 @@ impl<'a> Reader<'a> {
         if self.pos + width > self.data.len() {
             return None;
         }
-        let mut value = if keep_marker {
-            first as u64
-        } else {
-            (first as u64) & !(1 << (8 - width))
-        };
+        let mut value =
+            if keep_marker { first as u64 } else { (first as u64) & !(1 << (8 - width)) };
         for i in 1..width {
             value = (value << 8) | self.data[self.pos + i] as u64;
         }
@@ -237,10 +234,7 @@ fn read_block(block: &[u8], wanted: u64, cluster_time: u64, scale: u64) -> Optio
     let ticks = cluster_time as i64 + offset;
     // Nanoseconds to milliseconds, once, rather than per use.
     let start_ms = (ticks.max(0) as u64).saturating_mul(scale) / 1_000_000;
-    Some(Packet {
-        start_ms,
-        data: payload.to_vec(),
-    })
+    Some(Packet { start_ms, data: payload.to_vec() })
 }
 
 /// Read the *n*th VobSub track, counting subtitle tracks from zero.
@@ -285,10 +279,7 @@ pub fn read_vobsub(data: &[u8], subtitle_index: usize) -> Result<VobSubTrack> {
 
     let subtitles: Vec<&TrackInfo> = tracks.iter().filter(|t| t.is_subtitle).collect();
     let track = subtitles.get(subtitle_index).ok_or_else(|| {
-        Error(format!(
-            "no subtitle track {subtitle_index} ({} in the file)",
-            subtitles.len()
-        ))
+        Error(format!("no subtitle track {subtitle_index} ({} in the file)", subtitles.len()))
     })?;
     if !track.codec.starts_with("S_VOBSUB") {
         return Err(Error(format!(
@@ -445,9 +436,9 @@ mod tests {
         let tracks = element(
             id::TRACKS,
             &[
-                entry(1, 0x01, b"V_MPEG2"),   // video, not counted
-                entry(2, 0x11, b"S_VOBSUB"),  // subtitle 0
-                entry(3, 0x11, b"S_VOBSUB"),  // subtitle 1
+                entry(1, 0x01, b"V_MPEG2"),  // video, not counted
+                entry(2, 0x11, b"S_VOBSUB"), // subtitle 0
+                entry(3, 0x11, b"S_VOBSUB"), // subtitle 1
             ]
             .concat(),
         );

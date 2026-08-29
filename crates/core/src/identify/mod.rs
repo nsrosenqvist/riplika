@@ -15,9 +15,9 @@ pub mod catalogue;
 pub mod label;
 pub mod structure;
 
+use crate::Result;
 use crate::media::{MediaInfo, Prober};
 use crate::model::{Candidate, DiscScan, Episode, Item, Media, Millis, Role};
-use crate::Result;
 use catalogue::{Catalogue, MediaKind};
 use std::path::{Path, PathBuf};
 use structure::{EpisodeRange, Structure, TitleShape};
@@ -34,11 +34,7 @@ pub fn identify(scan: &DiscScan, cat: &dyn Catalogue) -> Result<Vec<Candidate>> 
         return Ok(Vec::new());
     }
 
-    let kind = if guess.season.is_some() {
-        MediaKind::Series
-    } else {
-        MediaKind::Movie
-    };
+    let kind = if guess.season.is_some() { MediaKind::Series } else { MediaKind::Movie };
 
     // A disc with a season marker is television; one without could be either, so
     // ask for both rather than ruling film in or out on a naming convention.
@@ -48,19 +44,12 @@ pub fn identify(scan: &DiscScan, cat: &dyn Catalogue) -> Result<Vec<Candidate>> 
     }
 
     let range = EpisodeRange::default();
-    let episode_durations: Vec<Millis> = scan
-        .titles
-        .iter()
-        .map(|t| t.duration)
-        .filter(|d| range.contains(*d))
-        .collect();
+    let episode_durations: Vec<Millis> =
+        scan.titles.iter().map(|t| t.duration).filter(|d| range.contains(*d)).collect();
 
     let mut out = Vec::new();
     for hit in hits {
-        let mut reasons = vec![format!(
-            "volume label {:?} reads as {:?}",
-            scan.label, guess.title
-        )];
+        let mut reasons = vec![format!("volume label {:?} reads as {:?}", scan.label, guess.title)];
         let mut confidence = hit.score * 0.6;
 
         if let (Media::Series { season, provider_id, .. }, Some(id)) =
@@ -78,10 +67,8 @@ pub fn identify(scan: &DiscScan, cat: &dyn Catalogue) -> Result<Vec<Candidate>> 
                     }
                     if let Some(m) = runtime_agreement(&episode_durations, &eps) {
                         confidence += 0.25 * m;
-                        reasons.push(format!(
-                            "runtimes agree with the catalogue ({:.0}%)",
-                            m * 100.0
-                        ));
+                        reasons
+                            .push(format!("runtimes agree with the catalogue ({:.0}%)", m * 100.0));
                     }
                 }
                 _ => {
@@ -214,9 +201,7 @@ pub fn assign(
             },
             // A missing catalogue entry must not lose the file: it still gets a
             // name, just a generic one the user can correct.
-            title: ep
-                .map(|e| e.title.clone())
-                .unwrap_or_else(|| format!("Episode {number}")),
+            title: ep.map(|e| e.title.clone()).unwrap_or_else(|| format!("Episode {number}")),
             air_date: ep.and_then(|e| e.air_date.clone()),
             duration: 0,
             destination: None,
@@ -225,19 +210,13 @@ pub fn assign(
 
     for (cut, of, _) in extended {
         // an extended cut inherits the episode number of what it duplicates
-        let number = st
-            .episodes
-            .iter()
-            .position(|e| e == of)
-            .map(|i| offset + i as u32 + 1)
-            .unwrap_or(0);
+        let number =
+            st.episodes.iter().position(|e| e == of).map(|i| offset + i as u32 + 1).unwrap_or(0);
         let ep = episodes.iter().find(|e| e.number == number);
         items.push(Item {
             source: dir.join(cut),
             role: Role::ExtendedCut { season, number },
-            title: ep
-                .map(|e| e.title.clone())
-                .unwrap_or_else(|| format!("Episode {number}")),
+            title: ep.map(|e| e.title.clone()).unwrap_or_else(|| format!("Episode {number}")),
             air_date: ep.and_then(|e| e.air_date.clone()),
             duration: 0,
             destination: None,
@@ -300,17 +279,10 @@ pub fn existing_episode_numbers(files: &[PathBuf]) -> Vec<u32> {
             if bytes[i] != 'E' || i == 0 {
                 continue;
             }
-            let digits: String = bytes[i + 1..]
-                .iter()
-                .take_while(|c| c.is_ascii_digit())
-                .collect();
+            let digits: String = bytes[i + 1..].iter().take_while(|c| c.is_ascii_digit()).collect();
             // an "E" that follows "Sdd" is an episode marker, not a word
-            let preceded_by_season = bytes[..i]
-                .iter()
-                .rev()
-                .take_while(|c| c.is_ascii_digit())
-                .count()
-                > 0;
+            let preceded_by_season =
+                bytes[..i].iter().rev().take_while(|c| c.is_ascii_digit()).count() > 0;
             if preceded_by_season && let Ok(n) = digits.parse::<u32>() {
                 out.push(n);
             }
@@ -400,7 +372,13 @@ mod tests {
     fn runtime_agreement_tolerates_the_slot_versus_show_difference() {
         // catalogues record the 30-minute slot; the show is 21 minutes
         let eps: Vec<Episode> = (1..=4)
-            .map(|n| Episode { season: 7, number: n, title: "x".into(), air_date: None, runtime_minutes: Some(30) })
+            .map(|n| Episode {
+                season: 7,
+                number: n,
+                title: "x".into(),
+                air_date: None,
+                runtime_minutes: Some(30),
+            })
             .collect();
         let m = runtime_agreement(&[1_275_000; 4], &eps).unwrap();
         assert!((m - 1.0).abs() < 0.001);

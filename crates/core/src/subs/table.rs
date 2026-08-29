@@ -82,12 +82,7 @@ impl Table {
     }
 
     pub fn reindex(&mut self) {
-        self.index = self
-            .glyphs
-            .iter()
-            .enumerate()
-            .map(|(i, g)| (g.key.clone(), i))
-            .collect();
+        self.index = self.glyphs.iter().enumerate().map(|(i, g)| (g.key.clone(), i)).collect();
     }
 
     pub fn get(&self, key: &str) -> Option<&Entry> {

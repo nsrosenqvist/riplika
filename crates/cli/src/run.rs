@@ -10,9 +10,9 @@ use riplika_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, Ure
 use riplika_core::job::{Event, Pipeline, Ports, Report, Stage};
 use riplika_core::joblog::JobLog;
 use riplika_core::media::FfProbe;
-use riplika_core::model::{Candidate, Drive, JobSettings, Item, Media, Role};
+use riplika_core::model::{Candidate, Drive, Item, JobSettings, Media, Role};
 use riplika_core::prefs::Preferences;
-use riplika_core::rip::{dvd::DvdVideo, Auto, MakeMkv, Ripper};
+use riplika_core::rip::{Auto, MakeMkv, Ripper, dvd::DvdVideo};
 use riplika_core::subs;
 use std::path::{Path, PathBuf};
 
@@ -36,12 +36,7 @@ struct Real {
 impl Real {
     fn new() -> Self {
         let cancel = Cancel::new();
-        Real {
-            runner: RealRunner::new(cancel.clone()),
-            fs: RealFs,
-            http: UreqHttp,
-            cancel,
-        }
+        Real { runner: RealRunner::new(cancel.clone()), fs: RealFs, http: UreqHttp, cancel }
     }
 
     /// TVmaze covers television and needs no key; TMDB also covers film but
@@ -111,8 +106,7 @@ fn reader<'a>(
             Ok(Box::new(MakeMkv::new(runner)))
         }
         "auto" => Ok(Box::new(
-            Auto::new(runner, Preferences::makemkv_available())
-                .on_fallback(|m| eprintln!("  {m}")),
+            Auto::new(runner, Preferences::makemkv_available()).on_fallback(|m| eprintln!("  {m}")),
         )),
         other => Err(format!("unknown reader {other:?}; use auto, dvd or makemkv")),
     }
@@ -154,8 +148,10 @@ pub fn scan(drive: Option<&str>, which: &str) -> Result<(), String> {
     println!("\r\x1b[K");
     println!("{}  ({} titles)\n", scan.label, scan.titles.len());
     for t in &scan.titles {
-        let audio = t.tracks.iter().filter(|x| x.kind == riplika_core::model::TrackKind::Audio).count();
-        let subs = t.tracks.iter().filter(|x| x.kind == riplika_core::model::TrackKind::Subtitle).count();
+        let audio =
+            t.tracks.iter().filter(|x| x.kind == riplika_core::model::TrackKind::Audio).count();
+        let subs =
+            t.tracks.iter().filter(|x| x.kind == riplika_core::model::TrackKind::Subtitle).count();
         println!(
             "  {:>3}  {:>9}  {:>2} chapters  {:>2} audio  {:>2} subs  {}",
             t.id,
@@ -231,11 +227,7 @@ fn reporter() -> impl FnMut(Event) {
                 }
             }
             Event::Progress { fraction, message, .. } => {
-                print!(
-                    "\r\x1b[K  {:>3.0}%  {}",
-                    fraction * 100.0,
-                    message.unwrap_or_default()
-                );
+                print!("\r\x1b[K  {:>3.0}%  {}", fraction * 100.0, message.unwrap_or_default());
                 let _ = std::io::stdout().flush();
                 on_progress_line = true;
             }
@@ -285,11 +277,7 @@ fn show_plan(items: &[Item]) {
 }
 
 fn show_report(r: &Report) {
-    println!(
-        "\n{} files, {}",
-        r.produced.len(),
-        mib(r.total_bytes())
-    );
+    println!("\n{} files, {}", r.produced.len(), mib(r.total_bytes()));
     for p in &r.produced {
         let langs: Vec<&str> = p.subtitles.iter().map(|s| s.language.name.as_str()).collect();
         println!(
@@ -300,10 +288,7 @@ fn show_report(r: &Report) {
         );
     }
     for (f, why) in &r.skipped {
-        println!(
-            "  FAILED {}: {why}",
-            f.file_name().unwrap_or_default().to_string_lossy()
-        );
+        println!("  FAILED {}: {why}", f.file_name().unwrap_or_default().to_string_lossy());
     }
 }
 
@@ -393,7 +378,10 @@ pub fn rip(
                 );
             }
             None => {
-                println!("\n{} titles; this reader reports no chapter durations,", scan.titles.len());
+                println!(
+                    "\n{} titles; this reader reports no chapter durations,",
+                    scan.titles.len()
+                );
                 println!("so the episode mapping cannot be worked out without ripping first.");
                 for t in &scan.titles {
                     println!("  {:>3}  {:>9}  {}", t.id, hms(t.duration), t.output_name);
@@ -413,16 +401,10 @@ pub fn rip(
             scan.titles.len() - titles.len()
         );
     }
-    let files = pipeline
-        .rip(&scan, &titles, rip_dir, &mut events)
-        .map_err(|e| e.to_string())?;
-    let items = pipeline
-        .organise(&files, &media, disc, &mut events)
-        .map_err(|e| e.to_string())?;
+    let files = pipeline.rip(&scan, &titles, rip_dir, &mut events).map_err(|e| e.to_string())?;
+    let items = pipeline.organise(&files, &media, disc, &mut events).map_err(|e| e.to_string())?;
     show_plan(&items);
-    let report = pipeline
-        .produce(&items, &media, &mut events)
-        .map_err(|e| e.to_string())?;
+    let report = pipeline.produce(&items, &media, &mut events).map_err(|e| e.to_string())?;
     log.finish(&summarise(&report));
     show_report(&report);
     if !report.is_complete() {
@@ -432,11 +414,7 @@ pub fn rip(
 }
 
 fn summarise(r: &Report) -> String {
-    let mut lines = vec![format!(
-        "{} files, {}",
-        r.produced.len(),
-        mib(r.total_bytes())
-    )];
+    let mut lines = vec![format!("{} files, {}", r.produced.len(), mib(r.total_bytes()))];
     for p in &r.produced {
         lines.push(format!(
             "  {}  {}",
@@ -472,11 +450,7 @@ pub fn process(
         .list(dir)
         .map_err(|e| e.to_string())?
         .into_iter()
-        .filter(|f| {
-            f.extension()
-                .map(|e| e == "mkv" || e == "mp4")
-                .unwrap_or(false)
-        })
+        .filter(|f| f.extension().map(|e| e == "mkv" || e == "mp4").unwrap_or(false))
         .collect();
     files.sort();
     if files.is_empty() {
@@ -504,17 +478,13 @@ pub fn process(
         events(e);
     };
 
-    let items = pipeline
-        .organise(&files, &media, disc, &mut events)
-        .map_err(|e| e.to_string())?;
+    let items = pipeline.organise(&files, &media, disc, &mut events).map_err(|e| e.to_string())?;
     show_plan(&items);
     if dry_run {
         log.finish("dry run: nothing was read");
         return Ok(());
     }
-    let report = pipeline
-        .produce(&items, &media, &mut events)
-        .map_err(|e| e.to_string())?;
+    let report = pipeline.produce(&items, &media, &mut events).map_err(|e| e.to_string())?;
     log.finish(&summarise(&report));
     show_report(&report);
     if !report.is_complete() {
@@ -541,11 +511,9 @@ pub fn ocr(
              rules only. Pass --words for better results."
         );
     }
-    let rec = subs::recognise(&runner, input, stream, &t, &r, placeholder)
-        .map_err(|e| e.to_string())?;
-    let dest = out
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| input.with_extension("srt"));
+    let rec =
+        subs::recognise(&runner, input, stream, &t, &r, placeholder).map_err(|e| e.to_string())?;
+    let dest = out.map(Path::to_path_buf).unwrap_or_else(|| input.with_extension("srt"));
     std::fs::write(&dest, &rec.srt).map_err(|e| format!("{}: {e}", dest.display()))?;
     println!(
         "{} cues, word-gap {}px, {} unknown glyph instances ({} distinct) -> {}",
@@ -570,12 +538,7 @@ pub fn inspect(input: &Path, at: u64, table: &Path, stream: usize) -> Result<(),
     };
     println!("cue at {} ms  ({}x{} bitmap)", ev.start_ms, ev.spu.w, ev.spu.h);
     for (li, line) in segment::segment(&ev.spu, &src.idx.palette, &opts).iter().enumerate() {
-        println!(
-            "line {li}: top={} bottom={} height={}",
-            line.top,
-            line.bottom,
-            line.height()
-        );
+        println!("line {li}: top={} bottom={} height={}", line.top, line.bottom, line.height());
         let gaps = segment::gaps(line);
         for (i, g) in line.glyphs.iter().enumerate() {
             let key = g.key();
@@ -599,9 +562,9 @@ pub fn inspect(input: &Path, at: u64, table: &Path, stream: usize) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+    use riplika_core::model::DiscScan;
     use riplika_core::model::Drive;
     use riplika_core::rip::FakeRipper;
-    use riplika_core::model::DiscScan;
 
     fn drive(id: &str, label: Option<&str>) -> Drive {
         Drive {
@@ -679,11 +642,8 @@ mod tests {
 
     #[test]
     fn fake_ripper_satisfies_the_same_trait_the_cli_uses() {
-        let scan = DiscScan {
-            drive: drive("disc:0", Some("X")),
-            label: "X".into(),
-            titles: vec![],
-        };
+        let scan =
+            DiscScan { drive: drive("disc:0", Some("X")), label: "X".into(), titles: vec![] };
         let f = FakeRipper::new(scan);
         assert_eq!(f.drives().unwrap().len(), 1);
     }

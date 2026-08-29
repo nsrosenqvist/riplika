@@ -137,12 +137,8 @@ impl DiscScan {
     /// Durations of the titles worth considering, sorted - a rough fingerprint
     /// that survives being ripped and re-probed.
     pub fn duration_fingerprint(&self, min: Millis) -> Vec<Millis> {
-        let mut v: Vec<Millis> = self
-            .titles
-            .iter()
-            .map(|t| t.duration)
-            .filter(|d| *d >= min)
-            .collect();
+        let mut v: Vec<Millis> =
+            self.titles.iter().map(|t| t.duration).filter(|d| *d >= min).collect();
         v.sort_unstable();
         v
     }
@@ -399,9 +395,15 @@ impl Default for JobSettings {
 /// What one ripped title becomes in the library.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Role {
-    Episode { season: u32, number: u32 },
+    Episode {
+        season: u32,
+        number: u32,
+    },
     /// A longer cut of an episode, filed under `extras/`.
-    ExtendedCut { season: u32, number: u32 },
+    ExtendedCut {
+        season: u32,
+        number: u32,
+    },
     Feature,
     Extra,
     /// A title that just replays others back to back; never written out.
@@ -522,10 +524,7 @@ mod tests {
     #[test]
     fn extras_are_filed_in_a_subdirectory() {
         assert_eq!(Role::Extra.subdirectory(), Some("extras"));
-        assert_eq!(
-            Role::ExtendedCut { season: 2, number: 1 }.subdirectory(),
-            Some("extras")
-        );
+        assert_eq!(Role::ExtendedCut { season: 2, number: 1 }.subdirectory(), Some("extras"));
         assert_eq!(Role::Episode { season: 2, number: 1 }.subdirectory(), None);
     }
 

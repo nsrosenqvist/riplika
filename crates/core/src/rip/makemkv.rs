@@ -51,11 +51,8 @@ pub fn split_fields(line: &str) -> Vec<String> {
 
 /// `1:23:45` or `23:45` to milliseconds.
 pub fn parse_duration(s: &str) -> Millis {
-    let parts: Vec<u64> = s
-        .trim()
-        .split(':')
-        .map(|p| p.trim().parse::<u64>().unwrap_or(0))
-        .collect();
+    let parts: Vec<u64> =
+        s.trim().split(':').map(|p| p.trim().parse::<u64>().unwrap_or(0)).collect();
     let secs = match parts.len() {
         3 => parts[0] * 3600 + parts[1] * 60 + parts[2],
         2 => parts[0] * 60 + parts[1],
@@ -168,9 +165,7 @@ pub fn parse_scan(output: &str, drive: Drive) -> Result<DiscScan> {
     }
 
     if titles.is_empty() {
-        return Err(Error(
-            "MakeMKV found no titles - is there a disc in the drive?".into(),
-        ));
+        return Err(Error("MakeMKV found no titles - is there a disc in the drive?".into()));
     }
 
     let mut out = Vec::new();
@@ -223,11 +218,7 @@ pub fn parse_scan(output: &str, drive: Drive) -> Result<DiscScan> {
         });
     }
 
-    Ok(DiscScan {
-        drive,
-        label,
-        titles: out,
-    })
+    Ok(DiscScan { drive, label, titles: out })
 }
 
 /// List drives and whatever is loaded in them.
@@ -251,7 +242,12 @@ pub fn scan_command(drive: &str, min_length_seconds: u32) -> Command {
 }
 
 /// Rip specific titles, or all of them.
-pub fn rip_command(drive: &str, title: Option<u32>, dest: &std::path::Path, min_length_seconds: u32) -> Command {
+pub fn rip_command(
+    drive: &str,
+    title: Option<u32>,
+    dest: &std::path::Path,
+    min_length_seconds: u32,
+) -> Command {
     Command::new("makemkvcon")
         .args([
             "-r",
@@ -278,19 +274,15 @@ pub fn parse_progress(line: &str) -> Option<Progress> {
     if let Some(rest) = line.strip_prefix("PRGV:") {
         let f = split_fields(rest);
         // PRGV:current,total,max
-        let (Ok(total), Ok(max)) = (
-            f.get(1)?.trim().parse::<f32>(),
-            f.get(2)?.trim().parse::<f32>(),
-        ) else {
+        let (Ok(total), Ok(max)) =
+            (f.get(1)?.trim().parse::<f32>(), f.get(2)?.trim().parse::<f32>())
+        else {
             return None;
         };
         if max <= 0.0 {
             return None;
         }
-        return Some(Progress {
-            total: (total / max).clamp(0.0, 1.0),
-            message: None,
-        });
+        return Some(Progress { total: (total / max).clamp(0.0, 1.0), message: None });
     }
     if let Some(rest) = line.strip_prefix("PRGT:") {
         // PRGT:code,id,name - the name of the current operation
@@ -331,11 +323,8 @@ pub fn saved_titles(output: &str) -> Option<(u32, u32)> {
         let Some(rest) = line.strip_prefix("MSG:5036,") else { continue };
         let f = split_fields(rest);
         // flags,count,message,format,param1,param2 - the counts are the params
-        let nums: Vec<u32> = f
-            .iter()
-            .skip(4)
-            .filter_map(|s| s.trim().parse::<u32>().ok())
-            .collect();
+        let nums: Vec<u32> =
+            f.iter().skip(4).filter_map(|s| s.trim().parse::<u32>().ok()).collect();
         if nums.len() >= 2 {
             return Some((nums[0], nums[1]));
         }
@@ -347,9 +336,7 @@ pub fn saved_titles(output: &str) -> Option<(u32, u32)> {
 pub fn ensure_available(runner: &dyn Runner) -> Result<()> {
     match runner.run(&Command::new("makemkvcon").arg("-r").arg("--version")) {
         Ok(_) => Ok(()),
-        Err(_) => Err(Error(
-            "makemkvcon not found - install MakeMKV to rip discs".into(),
-        )),
+        Err(_) => Err(Error("makemkvcon not found - install MakeMKV to rip discs".into())),
     }
 }
 
@@ -456,19 +443,11 @@ TINFO:2,27,0,"title_t02.mkv"
     fn stream_indices_are_numbered_per_type_as_ffmpeg_will_see_them() {
         let s = parse_scan(INFO, drive()).unwrap();
         let t = &s.titles[0];
-        let audio: Vec<usize> = t
-            .tracks
-            .iter()
-            .filter(|x| x.kind == TrackKind::Audio)
-            .map(|x| x.index)
-            .collect();
+        let audio: Vec<usize> =
+            t.tracks.iter().filter(|x| x.kind == TrackKind::Audio).map(|x| x.index).collect();
         assert_eq!(audio, vec![0, 1]);
-        let subs: Vec<usize> = t
-            .tracks
-            .iter()
-            .filter(|x| x.kind == TrackKind::Subtitle)
-            .map(|x| x.index)
-            .collect();
+        let subs: Vec<usize> =
+            t.tracks.iter().filter(|x| x.kind == TrackKind::Subtitle).map(|x| x.index).collect();
         assert_eq!(subs, vec![0]);
     }
 

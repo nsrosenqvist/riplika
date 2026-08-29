@@ -25,10 +25,10 @@ pub mod vobsub;
 #[cfg(test)]
 mod tests;
 
+use crate::Result;
 use crate::host::Runner;
 use crate::lang::Language;
 use crate::model::RecognisedSubtitle;
-use crate::Result;
 use segment::SegOpts;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -74,24 +74,15 @@ pub fn recognise(
     // Segment everything first, so the word gap is measured over the whole
     // file. Estimating it per cue makes a short cue with one wide space set a
     // threshold that swallows every space in the next one.
-    let segmented: Vec<Vec<segment::Line>> = events
-        .iter()
-        .map(|ev| segment::segment(&ev.spu, &src.idx.palette, &opts))
-        .collect();
-    let fallback = segmented
-        .iter()
-        .flatten()
-        .next()
-        .map(|l| segment::space_threshold(l, &opts))
-        .unwrap_or(6);
+    let segmented: Vec<Vec<segment::Line>> =
+        events.iter().map(|ev| segment::segment(&ev.spu, &src.idx.palette, &opts)).collect();
+    let fallback =
+        segmented.iter().flatten().next().map(|l| segment::space_threshold(l, &opts)).unwrap_or(6);
     let space_gap = recognize::estimate_space_gap(&segmented, fallback);
 
     let mut cues = Vec::new();
     let mut ends = Vec::new();
-    let mut out = Recognition {
-        space_gap,
-        ..Recognition::default()
-    };
+    let mut out = Recognition { space_gap, ..Recognition::default() };
 
     for (ev, lines) in events.iter().zip(&segmented) {
         let r = recognize::lines_to_text(lines, table, resolver, space_gap, placeholder);
@@ -135,8 +126,7 @@ pub fn recognise_to_file(
     let wordlist = wordlist.filter(|p| p.exists());
     let resolver = resolve::Resolver::load_lang(wordlist.as_deref(), &language.code);
     let r = recognise(runner, input, stream, table, &resolver, PLACEHOLDER)?;
-    std::fs::write(dest, &r.srt)
-        .map_err(|e| crate::Error(format!("{}: {e}", dest.display())))?;
+    std::fs::write(dest, &r.srt).map_err(|e| crate::Error(format!("{}: {e}", dest.display())))?;
     Ok((
         RecognisedSubtitle {
             language: language.clone(),

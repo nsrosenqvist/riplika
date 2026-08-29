@@ -143,14 +143,20 @@ impl TranscodePlan {
         // Swedish first and still leave English flagged default - and players
         // go by the flag, not the order.
         for i in 0..self.audio_count() {
-            c = c.args([format!("-disposition:a:{i}"), if i == 0 { "default" } else { "0" }.to_string()]);
+            c = c.args([
+                format!("-disposition:a:{i}"),
+                if i == 0 { "default" } else { "0" }.to_string(),
+            ]);
         }
         for i in 0..(text + self.selection.bitmaps.len()) {
             // Only a *text* track is ever made default. Defaulting to a bitmap
             // makes the server burn it into the picture and re-encode, which is
             // the problem subtitle recognition exists to avoid.
             let on = i == 0 && text > 0;
-            c = c.args([format!("-disposition:s:{i}"), if on { "default" } else { "0" }.to_string()]);
+            c = c.args([
+                format!("-disposition:s:{i}"),
+                if on { "default" } else { "0" }.to_string(),
+            ]);
         }
 
         for (k, v) in self.tags.pairs() {
@@ -206,10 +212,8 @@ pub fn select_tracks(info: &MediaInfo, settings: &JobSettings) -> TrackSelection
 
     // Filter by language over the tracks that survived the commentary rule, so
     // a commentary track can never be the one English track that is kept.
-    let keepable: Vec<&&crate::model::Track> = audio_tracks
-        .iter()
-        .filter(|t| !commentary.contains(&t.index))
-        .collect();
+    let keepable: Vec<&&crate::model::Track> =
+        audio_tracks.iter().filter(|t| !commentary.contains(&t.index)).collect();
     let tags: Vec<String> = keepable.iter().map(|t| t.language.clone()).collect();
     let audio: Vec<usize> = settings
         .languages
@@ -220,9 +224,7 @@ pub fn select_tracks(info: &MediaInfo, settings: &JobSettings) -> TrackSelection
 
     let sub_tracks = info.tracks_of(TrackKind::Subtitle);
     let sub_tags: Vec<String> = sub_tracks.iter().map(|t| t.language.clone()).collect();
-    let wanted = settings
-        .languages
-        .select_with_fallback(&sub_tags, TrackKind::Subtitle);
+    let wanted = settings.languages.select_with_fallback(&sub_tags, TrackKind::Subtitle);
     let bitmaps: Vec<usize> = if settings.keep_bitmap_subs {
         wanted
             .iter()
@@ -233,11 +235,7 @@ pub fn select_tracks(info: &MediaInfo, settings: &JobSettings) -> TrackSelection
         Vec::new()
     };
 
-    TrackSelection {
-        audio,
-        bitmaps,
-        dropped_commentary: commentary,
-    }
+    TrackSelection { audio, bitmaps, dropped_commentary: commentary }
 }
 
 /// Which subtitle streams to recognise, in the user's preferred order.
@@ -271,9 +269,11 @@ pub fn plan(
     let sub_tracks = info.tracks_of(TrackKind::Subtitle);
     for i in failed {
         if let Some(t) = sub_tracks.get(*i)
-            && t.is_bitmap_subtitle() && !selection.bitmaps.contains(&t.index) {
-                selection.bitmaps.push(t.index);
-            }
+            && t.is_bitmap_subtitle()
+            && !selection.bitmaps.contains(&t.index)
+        {
+            selection.bitmaps.push(t.index);
+        }
     }
     selection.bitmaps.sort_unstable();
 
@@ -372,10 +372,7 @@ mod tests {
     }
 
     fn srt(lang: &str) -> SubtitleInput {
-        SubtitleInput {
-            path: PathBuf::from(format!("/tmp/{lang}.srt")),
-            language: lang.into(),
-        }
+        SubtitleInput { path: PathBuf::from(format!("/tmp/{lang}.srt")), language: lang.into() }
     }
 
     #[test]
@@ -467,8 +464,14 @@ mod tests {
         s.keep_bitmap_subs = true;
         s.dual_audio = true;
         let p = plan(
-            Path::new("/i.mkv"), Path::new("/o.mp4"), &disc(), &analysis(), &s,
-            vec![srt("eng")], &[], Tags::default(),
+            Path::new("/i.mkv"),
+            Path::new("/o.mp4"),
+            &disc(),
+            &analysis(),
+            &s,
+            vec![srt("eng")],
+            &[],
+            Tags::default(),
         );
         let c = p.command();
         // 2 audio + 1 fallback, then 1 text + 2 bitmap subtitles
@@ -500,19 +503,23 @@ mod tests {
         s.dual_audio = true;
         s.audio = Quality::Medium;
         let p = plan(
-            Path::new("/i.mkv"), Path::new("/o.mp4"), &disc(), &analysis(), &s,
-            vec![], &[], Tags::default(),
+            Path::new("/i.mkv"),
+            Path::new("/o.mp4"),
+            &disc(),
+            &analysis(),
+            &s,
+            vec![],
+            &[],
+            Tags::default(),
         );
         assert!(!p.dual_audio);
     }
 
     #[test]
     fn audio_tiers_map_to_the_intended_codecs() {
-        for (q, expect) in [
-            (Quality::High, "copy"),
-            (Quality::Medium, "aac"),
-            (Quality::Low, "aac"),
-        ] {
+        for (q, expect) in
+            [(Quality::High, "copy"), (Quality::Medium, "aac"), (Quality::Low, "aac")]
+        {
             let mut s = settings();
             s.audio = q;
             assert_eq!(build(&s, vec![], &[]).value_of("-c:a"), Some(expect));
@@ -540,8 +547,14 @@ mod tests {
             sample_aspect: "32/27".into(),
         };
         let p = plan(
-            Path::new("/i.mkv"), Path::new("/o.mp4"), &disc(), &a, &settings(),
-            vec![], &[], Tags::default(),
+            Path::new("/i.mkv"),
+            Path::new("/o.mp4"),
+            &disc(),
+            &a,
+            &settings(),
+            vec![],
+            &[],
+            Tags::default(),
         );
         assert_eq!(
             p.command().value_of("-vf"),
@@ -586,8 +599,14 @@ mod tests {
             ..Tags::default()
         };
         let p = plan(
-            Path::new("/i.mkv"), Path::new("/o.mp4"), &disc(), &analysis(), &settings(),
-            vec![], &[], t,
+            Path::new("/i.mkv"),
+            Path::new("/o.mp4"),
+            &disc(),
+            &analysis(),
+            &settings(),
+            vec![],
+            &[],
+            t,
         );
         let c = p.command();
         let meta = c.values_of("-metadata");
@@ -610,9 +629,6 @@ mod tests {
         info.tracks.push(track(TrackKind::Subtitle, 2, "mov_text", "eng", None));
         // an already-recognised text track would be pointless to OCR
         assert_eq!(subtitles_to_recognise(&info, &LanguageSet::default()), vec![0, 1]);
-        assert_eq!(
-            subtitles_to_recognise(&info, &LanguageSet::parse("spanish")),
-            vec![1]
-        );
+        assert_eq!(subtitles_to_recognise(&info, &LanguageSet::parse("spanish")), vec![1]);
     }
 }

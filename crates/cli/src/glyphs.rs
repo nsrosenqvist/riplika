@@ -54,10 +54,7 @@ pub fn build(
                 let stem = input.file_stem().unwrap_or_default().to_string_lossy();
                 let p = dir.join(format!("{stem}.srt"));
                 match std::fs::read_to_string(&p) {
-                    Ok(s) => srt::parse(&s)
-                        .into_iter()
-                        .map(|c| (c.start_ms, c.text))
-                        .collect(),
+                    Ok(s) => srt::parse(&s).into_iter().map(|c| (c.start_ms, c.text)).collect(),
                     Err(_) => {
                         eprintln!("  no reference for {}", stem);
                         BTreeMap::new()
@@ -70,10 +67,8 @@ pub fn build(
         for ev in &events {
             n_ev += 1;
             let lines = segment::segment(&ev.spu, &src.idx.palette, &opts);
-            let idxs: Vec<Vec<usize>> = lines
-                .iter()
-                .map(|l| l.glyphs.iter().map(|g| t.observe(g)).collect())
-                .collect();
+            let idxs: Vec<Vec<usize>> =
+                lines.iter().map(|l| l.glyphs.iter().map(|g| t.observe(g)).collect()).collect();
             let linegaps: Vec<Vec<i32>> = lines.iter().map(segment::gaps).collect();
             n_gl += idxs.iter().map(|v| v.len()).sum::<usize>();
 
@@ -87,9 +82,10 @@ pub fn build(
                 n_skipped += 1;
                 continue;
             }
-            let ok = rlines.iter().zip(&idxs).all(|(r, gs)| {
-                r.chars().filter(|c| !c.is_whitespace()).count() == gs.len()
-            });
+            let ok = rlines
+                .iter()
+                .zip(&idxs)
+                .all(|(r, gs)| r.chars().filter(|c| !c.is_whitespace()).count() == gs.len());
             if !ok {
                 n_skipped += 1;
                 continue;
@@ -111,10 +107,11 @@ pub fn build(
                     t.vote(gs[k], &c.to_string());
                     n_votes += 1;
                     if k > 0
-                        && let Some(&g) = lg.get(k - 1) {
-                            let e = gapobs.entry(gs[k - 1]).or_default();
-                            if space_pending { e.1.push(g) } else { e.0.push(g) }
-                        }
+                        && let Some(&g) = lg.get(k - 1)
+                    {
+                        let e = gapobs.entry(gs[k - 1]).or_default();
+                        if space_pending { e.1.push(g) } else { e.0.push(g) }
+                    }
                     space_pending = false;
                     k += 1;
                 }
@@ -264,13 +261,21 @@ pub fn check(t: &Table) -> Result<(), String> {
                 continue;
             }
             if CAP.contains(c) && g.h <= xh + 1 {
-                println!("  {l:?} is {}px tall - that is x-height, so probably {:?}  (n={})",
-                         g.h, c.to_lowercase().to_string(), g.count);
+                println!(
+                    "  {l:?} is {}px tall - that is x-height, so probably {:?}  (n={})",
+                    g.h,
+                    c.to_lowercase().to_string(),
+                    g.count
+                );
                 issues += 1;
             }
             if XH.contains(c) && g.h >= cap - 1 {
-                println!("  {l:?} is {}px tall - that is cap-height, so probably {:?}  (n={})",
-                         g.h, c.to_uppercase().to_string(), g.count);
+                println!(
+                    "  {l:?} is {}px tall - that is cap-height, so probably {:?}  (n={})",
+                    g.h,
+                    c.to_uppercase().to_string(),
+                    g.count
+                );
                 issues += 1;
             }
         }
@@ -292,7 +297,8 @@ pub fn check(t: &Table) -> Result<(), String> {
             println!("  {:?}  (n={})", g.text.as_deref().unwrap_or(""), g.count);
         }
     }
-    let amb = t.glyphs.iter().filter(|g| g.text.as_deref().is_some_and(|l| l.contains('|'))).count();
+    let amb =
+        t.glyphs.iter().filter(|g| g.text.as_deref().is_some_and(|l| l.contains('|'))).count();
     if amb > 0 {
         println!("{amb} ambiguity classes - resolved from context at decode time");
     }
@@ -327,7 +333,8 @@ pub fn verify(produced: &Path, reference: &Path) -> Result<(), String> {
                 let (x, y): (Vec<char>, Vec<char>) =
                     (r.text.chars().collect(), c.text.chars().collect());
                 chars += x.len().max(y.len());
-                char_diff += x.len().max(y.len()) - x.iter().zip(&y).filter(|(p, q)| p == q).count();
+                char_diff +=
+                    x.len().max(y.len()) - x.iter().zip(&y).filter(|(p, q)| p == q).count();
             }
             None => off_grid += 1,
         }
@@ -349,7 +356,12 @@ pub fn verify(produced: &Path, reference: &Path) -> Result<(), String> {
         );
     }
     for (t, r, p) in &samples {
-        println!("\n  @{}\n    ref: {}\n    got: {}", srt::fmt_ts(*t), r.replace('\n', " / "), p.replace('\n', " / "));
+        println!(
+            "\n  @{}\n    ref: {}\n    got: {}",
+            srt::fmt_ts(*t),
+            r.replace('\n', " / "),
+            p.replace('\n', " / ")
+        );
     }
     Ok(())
 }

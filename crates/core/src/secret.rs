@@ -47,9 +47,7 @@ pub fn store(name: &str, value: &str) -> Result<()> {
         .ok_or_else(|| Error("secret-tool: no stdin".into()))?
         .write_all(value.as_bytes())
         .map_err(|e| Error(format!("secret-tool: {e}")))?;
-    let out = child
-        .wait_with_output()
-        .map_err(|e| Error(format!("secret-tool: {e}")))?;
+    let out = child.wait_with_output().map_err(|e| Error(format!("secret-tool: {e}")))?;
     if !out.status.success() {
         return Err(Error(format!(
             "could not save to the keyring: {}",

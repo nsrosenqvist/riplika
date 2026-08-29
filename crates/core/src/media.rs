@@ -46,10 +46,7 @@ impl MediaInfo {
     /// Language tags of one stream type, positionally - the input every
     /// language filter works from.
     pub fn language_tags(&self, kind: TrackKind) -> Vec<String> {
-        self.tracks_of(kind)
-            .iter()
-            .map(|t| t.language.clone())
-            .collect()
+        self.tracks_of(kind).iter().map(|t| t.language.clone()).collect()
     }
 
     pub fn chapter_durations(&self) -> Vec<Millis> {
@@ -109,11 +106,7 @@ pub fn parse_probe(json: &str) -> Result<MediaInfo> {
         serde_json::from_str(json).map_err(|e| Error(format!("ffprobe output: {e}")))?;
 
     let mut info = MediaInfo {
-        duration: v
-            .get("format")
-            .and_then(|f| f.get("duration"))
-            .map(seconds_to_ms)
-            .unwrap_or(0),
+        duration: v.get("format").and_then(|f| f.get("duration")).map(seconds_to_ms).unwrap_or(0),
         ..MediaInfo::default()
     };
 
@@ -146,11 +139,8 @@ pub fn parse_probe(json: &str) -> Result<MediaInfo> {
         per_kind[slot] += 1;
 
         let tags = s.get("tags");
-        let tag = |k: &str| {
-            tags.and_then(|t| t.get(k))
-                .and_then(|x| x.as_str())
-                .map(str::to_string)
-        };
+        let tag =
+            |k: &str| tags.and_then(|t| t.get(k)).and_then(|x| x.as_str()).map(str::to_string);
 
         if kind == TrackKind::Video && index == 0 {
             info.width = s.get("width").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
@@ -160,21 +150,14 @@ pub fn parse_probe(json: &str) -> Result<MediaInfo> {
                 .and_then(|x| x.as_str())
                 .filter(|x| *x != "0:1" && !x.is_empty())
                 .map(str::to_string);
-            info.declared_fps = s
-                .get("avg_frame_rate")
-                .and_then(|x| x.as_str())
-                .map(parse_fps)
-                .unwrap_or(0.0);
+            info.declared_fps =
+                s.get("avg_frame_rate").and_then(|x| x.as_str()).map(parse_fps).unwrap_or(0.0);
         }
 
         info.tracks.push(Track {
             kind,
             index,
-            codec: s
-                .get("codec_name")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_string(),
+            codec: s.get("codec_name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
             // An untagged track is `und`, not a missing value: the filter has
             // to be able to match it, and players show it as Undetermined.
             language: tag("language").unwrap_or_else(|| "und".into()),
@@ -267,10 +250,9 @@ mod tests {
 
     #[test]
     fn untagged_tracks_become_und_rather_than_missing() {
-        let i = parse_probe(
-            r#"{"streams":[{"codec_type":"audio","codec_name":"ac3"}],"format":{}}"#,
-        )
-        .unwrap();
+        let i =
+            parse_probe(r#"{"streams":[{"codec_type":"audio","codec_name":"ac3"}],"format":{}}"#)
+                .unwrap();
         assert_eq!(i.tracks[0].language, "und");
     }
 

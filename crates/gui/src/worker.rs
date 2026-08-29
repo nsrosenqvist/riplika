@@ -16,7 +16,7 @@ use riplika_core::media::FfProbe;
 use riplika_core::model::{Candidate, DiscScan, Drive, Item, JobSettings, Media};
 use riplika_core::rip::Auto;
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 /// What a worker sends back to the window.
 pub enum Msg {
@@ -58,11 +58,7 @@ struct Real {
 
 impl Real {
     fn new(cancel: Cancel) -> Self {
-        Real {
-            runner: RealRunner::new(cancel),
-            fs: RealFs,
-            http: UreqHttp,
-        }
+        Real { runner: RealRunner::new(cancel), fs: RealFs, http: UreqHttp }
     }
 
     /// In preference order, and asked in that order until one answers.
@@ -110,10 +106,9 @@ pub fn analyse(drive: Drive, allow_makemkv: bool, cancel: Cancel, tx: Sender<Msg
     std::thread::spawn(move || {
         let real = Real::new(cancel.clone());
         let notify = tx.clone();
-        let mk = Auto::new(&real.runner, allow_makemkv)
-            .on_fallback(move |m| {
-                let _ = notify.send(Msg::Event(Event::Warning(m.to_string())));
-            });
+        let mk = Auto::new(&real.runner, allow_makemkv).on_fallback(move |m| {
+            let _ = notify.send(Msg::Event(Event::Warning(m.to_string())));
+        });
         let prober = FfProbe(&real.runner);
         let cat = real.catalogues();
         let p = Pipeline::new(
@@ -157,10 +152,8 @@ pub fn eject(device: String, tx: Sender<Msg>) {
                 let _ = tx.send(Msg::Ejected);
             }
             Ok(out) => {
-                let _ = tx.send(Msg::Failed(format!(
-                    "could not open the drive: {}",
-                    out.last_error()
-                )));
+                let _ =
+                    tx.send(Msg::Failed(format!("could not open the drive: {}", out.last_error())));
             }
             Err(e) => {
                 let _ = tx.send(Msg::Failed(format!("could not open the drive: {e}")));
@@ -201,10 +194,9 @@ pub fn run(
     std::thread::spawn(move || {
         let real = Real::new(cancel.clone());
         let notify = tx.clone();
-        let mk = Auto::new(&real.runner, allow_makemkv)
-            .on_fallback(move |m| {
-                let _ = notify.send(Msg::Event(Event::Warning(m.to_string())));
-            });
+        let mk = Auto::new(&real.runner, allow_makemkv).on_fallback(move |m| {
+            let _ = notify.send(Msg::Event(Event::Warning(m.to_string())));
+        });
         let prober = FfProbe(&real.runner);
         let cat = real.catalogues();
         let p = Pipeline::new(

@@ -74,11 +74,7 @@ pub fn parse(input: &str) -> Language {
             };
         }
     }
-    Language {
-        code: key.clone(),
-        name: input.trim().into(),
-        aliases: vec![key],
-    }
+    Language { code: key.clone(), name: input.trim().into(), aliases: vec![key] }
 }
 
 /// Every language we know, for populating a GUI picker.
@@ -105,17 +101,9 @@ pub enum LanguageSet {
 impl LanguageSet {
     /// Parse a `english,swedish` style list. Nothing said means no preference.
     pub fn parse(spec: &str) -> Self {
-        let wanted: Vec<Language> = spec
-            .split([',', ';'])
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(parse)
-            .collect();
-        if wanted.is_empty() {
-            LanguageSet::Everything
-        } else {
-            LanguageSet::Only(wanted)
-        }
+        let wanted: Vec<Language> =
+            spec.split([',', ';']).map(str::trim).filter(|s| !s.is_empty()).map(parse).collect();
+        if wanted.is_empty() { LanguageSet::Everything } else { LanguageSet::Only(wanted) }
     }
 
     /// The languages named, if any were.
@@ -160,7 +148,11 @@ impl LanguageSet {
     /// than a spare one. When nothing matches, the disc's first track is kept -
     /// one track, not all of them, so asking for Japanese on a disc that has
     /// none does not silently hand back Spanish as well as English.
-    pub fn select_with_fallback(&self, tags: &[String], kind: crate::model::TrackKind) -> Vec<usize> {
+    pub fn select_with_fallback(
+        &self,
+        tags: &[String],
+        kind: crate::model::TrackKind,
+    ) -> Vec<usize> {
         let keep = self.select(tags);
         if keep.is_empty() && kind == crate::model::TrackKind::Audio && !tags.is_empty() {
             return vec![0];
@@ -271,9 +263,6 @@ mod tests {
 
     #[test]
     fn separators_and_spacing_are_forgiving() {
-        assert_eq!(
-            LanguageSet::parse(" english ; swedish , ").wanted().len(),
-            2
-        );
+        assert_eq!(LanguageSet::parse(" english ; swedish , ").wanted().len(), 2);
     }
 }

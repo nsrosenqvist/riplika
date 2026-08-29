@@ -15,8 +15,8 @@ use adw::prelude::*;
 use gtk::glib;
 use riplika_core::job::{Event, Report};
 use riplika_core::lang::{self, LanguageSet};
-use riplika_core::prefs::Preferences;
 use riplika_core::model::*;
+use riplika_core::prefs::Preferences;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -154,7 +154,6 @@ struct App {
     prefs: Rc<prefs_dialog::Store>,
 }
 
-
 fn main() -> glib::ExitCode {
     // What the desktop passes when a disc is inserted: the mount point of the
     // volume it just mounted, as a file:// URI. Read before GTK sees it, since
@@ -203,11 +202,8 @@ const FOCUSED_WIDTH: i32 = 560;
 /// The one action a page exists for is left as plain text, where a picture
 /// would only compete with it.
 fn labelled_button(icon: &str, label: &str, name: &str) -> gtk::Button {
-    let content = adw::ButtonContent::builder()
-        .icon_name(icon)
-        .label(label)
-        .build();
-    
+    let content = adw::ButtonContent::builder().icon_name(icon).label(label).build();
+
     gtk::Button::builder().name(name).child(&content).build()
 }
 
@@ -258,12 +254,8 @@ fn page_clamped(
         .child(&clamp)
         .build();
     view.set_content(Some(&scroll));
-    
-    adw::NavigationPage::builder()
-        .tag(tag)
-        .title(title)
-        .child(&view)
-        .build()
+
+    adw::NavigationPage::builder().tag(tag).title(title).child(&view).build()
 }
 
 /// A page body with the usual margins.
@@ -370,9 +362,7 @@ fn build_ui() -> Ui {
     // it settled on, and the alternatives live in a dialog opened when that is
     // wrong.
     let id_body = body();
-    let id_group = adw::PreferencesGroup::builder()
-        .title(tr("Identified as"))
-        .build();
+    let id_group = adw::PreferencesGroup::builder().title(tr("Identified as")).build();
     let chosen_row = adw::ActionRow::builder()
         .title(tr("Not identified"))
         .subtitle(tr("Choose the show"))
@@ -420,11 +410,8 @@ fn build_ui() -> Ui {
         .selected(0)
         .build();
     let containers = gtk::StringList::new(&["MP4", "Matroska"]);
-    let container = adw::ComboRow::builder()
-        .title(tr("Container"))
-        .model(&containers)
-        .selected(0)
-        .build();
+    let container =
+        adw::ComboRow::builder().title(tr("Container")).model(&containers).selected(0).build();
     quality.add(&video);
     quality.add(&audio);
     quality.add(&container);
@@ -492,10 +479,8 @@ fn build_ui() -> Ui {
     progress_text.add_css_class("dim-label");
     progress_text.add_css_class("caption");
     let progress = gtk::ProgressBar::new();
-    let progress_block = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(6)
-        .build();
+    let progress_block =
+        gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(6).build();
     progress_block.append(&progress_text);
     progress_block.append(&progress);
     // A list row per line is enormous furniture for one line of text, and a
@@ -530,10 +515,7 @@ fn build_ui() -> Ui {
     // The heading, the bar and the button read as a column and are held to a
     // narrow measure. The log is lines of text and wants the room, so it sits
     // outside that clamp at the page's full width.
-    let focus = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(18)
-        .build();
+    let focus = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(18).build();
     focus.append(&stage_label);
     focus.append(&progress_block);
     // Directly under the bar: it is the page's only action, and putting it
@@ -769,21 +751,15 @@ impl App {
 
     fn settings(&self) -> JobSettings {
         let prefs = self.prefs.prefs.borrow();
-        let output = prefs
-            .output_dir
-            .clone()
-            .unwrap_or_else(|| glib::home_dir().join("Videos"));
+        let output = prefs.output_dir.clone().unwrap_or_else(|| glib::home_dir().join("Videos"));
         let mut s = prefs.to_settings(output, self.chosen_languages());
         s.include_extended_cuts = self.ui.include_extended.is_active();
         s.include_extras = self.ui.include_extras.is_active();
         // the rip page can override the persisted quality for this disc
         s.video = quality_at(&self.ui.video);
         s.audio = quality_at(&self.ui.audio);
-        s.container = if self.ui.container.selected() == 1 {
-            Container::Mkv
-        } else {
-            Container::Mp4
-        };
+        s.container =
+            if self.ui.container.selected() == 1 { Container::Mkv } else { Container::Mp4 };
         s
     }
 
@@ -827,10 +803,7 @@ impl App {
 
     fn refresh_paths(&self) {
         let prefs = self.prefs.prefs.borrow();
-        let output = prefs
-            .output_dir
-            .clone()
-            .unwrap_or_else(|| glib::home_dir().join("Videos"));
+        let output = prefs.output_dir.clone().unwrap_or_else(|| glib::home_dir().join("Videos"));
         self.ui.output_dir.set_subtitle(&output.to_string_lossy());
         self.ui.video.set_selected(match prefs.video {
             Quality::High => 0,
@@ -1010,13 +983,7 @@ impl App {
         for p in &r.produced {
             let langs: Vec<&str> = p.subtitles.iter().map(|s| s.language.name.as_str()).collect();
             let row = adw::ActionRow::builder()
-                .title(
-                    p.destination
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string(),
-                )
+                .title(p.destination.file_name().unwrap_or_default().to_string_lossy().to_string())
                 .subtitle(format!(
                     "{}   subtitles: {}",
                     mib(p.bytes),
@@ -1201,9 +1168,10 @@ fn choose_folder<F: Fn(PathBuf) + 'static>(window: &adw::ApplicationWindow, titl
     let dialog = gtk::FileDialog::builder().title(title).build();
     dialog.select_folder(Some(window), gtk::gio::Cancellable::NONE, move |res| {
         if let Ok(file) = res
-            && let Some(p) = file.path() {
-                then(p);
-            }
+            && let Some(p) = file.path()
+        {
+            then(p);
+        }
     });
 }
 
@@ -1303,11 +1271,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             let query = {
                 let state = app.state.borrow();
                 if state.query.trim().is_empty() {
-                    state
-                        .selected
-                        .as_ref()
-                        .map(|c| c.media.title().to_string())
-                        .unwrap_or_default()
+                    state.selected.as_ref().map(|c| c.media.title().to_string()).unwrap_or_default()
                 } else {
                     state.query.clone()
                 }
@@ -1333,7 +1297,6 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             *app.ui.picker.borrow_mut() = Some(picker);
         });
     }
-
 
     // Step three -----------------------------------------------------------
     {
@@ -1376,7 +1339,17 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             set_button_label(&app.ui.cancel_button, "Cancel");
             app.go(Step::Progress);
             let allow = app.prefs.prefs.borrow().use_makemkv();
-            worker::run(scan, media, disc, rip_dir, settings, allow, riplika_core::joblog::now(), cancel, tx.clone());
+            worker::run(
+                scan,
+                media,
+                disc,
+                rip_dir,
+                settings,
+                allow,
+                riplika_core::joblog::now(),
+                cancel,
+                tx.clone(),
+            );
         });
     }
 
@@ -1406,12 +1379,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 app.toast(&tr("Not while the drive is being read"));
                 return;
             }
-            let device = app
-                .state
-                .borrow()
-                .drive
-                .as_ref()
-                .map(|d| d.device.clone());
+            let device = app.state.borrow().drive.as_ref().map(|d| d.device.clone());
             match device {
                 Some(device) => {
                     app.toast(&tr("Opening the drive"));
@@ -1467,9 +1435,10 @@ fn find_buttons(anchor: &impl IsA<gtk::Widget>, name: &str) -> Vec<gtk::Button> 
     }
     fn walk(w: &gtk::Widget, name: &str, out: &mut Vec<gtk::Button>) {
         if w.widget_name() == name
-            && let Ok(b) = w.clone().downcast::<gtk::Button>() {
-                out.push(b);
-            }
+            && let Ok(b) = w.clone().downcast::<gtk::Button>()
+        {
+            out.push(b);
+        }
         let mut child = w.first_child();
         while let Some(c) = child {
             walk(&c, name, out);
@@ -1493,9 +1462,10 @@ fn find_button(anchor: &impl IsA<gtk::Widget>, name: &str) -> Option<gtk::Button
     }
     fn walk(w: &gtk::Widget, name: &str) -> Option<gtk::Button> {
         if w.widget_name() == name
-            && let Ok(b) = w.clone().downcast::<gtk::Button>() {
-                return Some(b);
-            }
+            && let Ok(b) = w.clone().downcast::<gtk::Button>()
+        {
+            return Some(b);
+        }
         let mut child = w.first_child();
         while let Some(c) = child {
             if let Some(found) = walk(&c, name) {
@@ -1525,16 +1495,11 @@ mod tests {
 
     #[test]
     fn every_step_has_a_distinct_tag() {
-        let tags: Vec<&str> = [
-            Step::Drive,
-            Step::Identify,
-            Step::Settings,
-            Step::Progress,
-            Step::Results,
-        ]
-        .iter()
-        .map(|s| s.tag())
-        .collect();
+        let tags: Vec<&str> =
+            [Step::Drive, Step::Identify, Step::Settings, Step::Progress, Step::Results]
+                .iter()
+                .map(|s| s.tag())
+                .collect();
         let mut sorted = tags.clone();
         sorted.sort_unstable();
         sorted.dedup();
@@ -1819,10 +1784,8 @@ mod picker_tests {
     #[test]
     fn choosing_from_the_picker_replaces_the_answer() {
         let mut state = State::default();
-        state.candidates = vec![
-            candidate("Parks and Recreation", 1, 0.85),
-            candidate("Parks", 1, 0.11),
-        ];
+        state.candidates =
+            vec![candidate("Parks and Recreation", 1, 0.85), candidate("Parks", 1, 0.11)];
         state.selected = state.candidates.first().cloned();
         state.selected = state.candidates.get(1).cloned();
         assert_eq!(state.selected.unwrap().media.title(), "Parks");

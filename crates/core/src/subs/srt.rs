@@ -59,11 +59,7 @@ pub fn parse(s: &str) -> Vec<Cue> {
         let (Some(start), Some(end)) = (parse_ts(a), parse_ts(b)) else {
             continue;
         };
-        out.push(Cue {
-            start_ms: start,
-            end_ms: end,
-            text: lines[2..].join("\n"),
-        });
+        out.push(Cue { start_ms: start, end_ms: end, text: lines[2..].join("\n") });
     }
     out
 }

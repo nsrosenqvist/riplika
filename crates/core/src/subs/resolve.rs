@@ -60,9 +60,9 @@ impl Resolver {
             // High-frequency words a password list may lack, and the forms that
             // matter most for the I/l pair.
             for w in [
-                "i", "a", "is", "it", "if", "in", "ill", "island", "all", "will",
-                "well", "tell", "look", "like", "little", "last", "left", "life",
-                "line", "list", "live", "long", "love", "let", "less", "later",
+                "i", "a", "is", "it", "if", "in", "ill", "island", "all", "will", "well", "tell",
+                "look", "like", "little", "last", "left", "life", "line", "list", "live", "long",
+                "love", "let", "less", "later",
             ] {
                 words.insert(w.to_string());
             }
@@ -232,12 +232,10 @@ impl Resolver {
             match s {
                 Slot::Fixed(t) => out.push_str(t),
                 Slot::Ambiguous(v) => {
-                    let upper: Option<&String> = v.iter().find(|x| {
-                        x.chars().next().is_some_and(|c| c.is_uppercase())
-                    });
-                    let lower: Option<&String> = v.iter().find(|x| {
-                        x.chars().next().is_some_and(|c| c.is_lowercase())
-                    });
+                    let upper: Option<&String> =
+                        v.iter().find(|x| x.chars().next().is_some_and(|c| c.is_uppercase()));
+                    let lower: Option<&String> =
+                        v.iter().find(|x| x.chars().next().is_some_and(|c| c.is_lowercase()));
                     // In English a short word starting with the bar is almost
                     // always "I"/"It"/"If". Other languages have no such rule,
                     // so prefer the lowercase reading there.
@@ -319,9 +317,7 @@ impl Resolver {
                 ),
                 None => self.resolve_word_at(slots, at_start),
             };
-            at_start = word
-                .trim_end_matches(['"', '\'', ')'])
-                .ends_with(['.', '!', '?']);
+            at_start = word.trim_end_matches(['"', '\'', ')']).ends_with(['.', '!', '?']);
             out.push(word);
         }
         out.join(" ")

@@ -45,11 +45,7 @@ pub fn estimate_space_gap(all: &[Vec<Line>], fallback: i32) -> i32 {
     }
 
     let total: u32 = hist.iter().sum();
-    let sum_all: f64 = hist
-        .iter()
-        .enumerate()
-        .map(|(i, &c)| i as f64 * c as f64)
-        .sum();
+    let sum_all: f64 = hist.iter().enumerate().map(|(i, &c)| i as f64 * c as f64).sum();
     let (mut w0, mut sum0) = (0u32, 0f64);
     let (mut best_t, mut best_var) = (fallback, -1f64);
     for (t, &count) in hist.iter().enumerate() {
@@ -140,8 +136,5 @@ pub fn lines_to_text(
         }
     }
 
-    Recognized {
-        text: out.join("\n"),
-        unknown,
-    }
+    Recognized { text: out.join("\n"), unknown }
 }

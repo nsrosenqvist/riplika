@@ -268,11 +268,7 @@ impl Output {
 fn resolve_table(given: Option<PathBuf>) -> PathBuf {
     given.unwrap_or_else(|| {
         let installed = riplika_core::prefs::Preferences::default_glyph_table();
-        if installed.exists() {
-            installed
-        } else {
-            PathBuf::from("glyphs.json")
-        }
+        if installed.exists() { installed } else { PathBuf::from("glyphs.json") }
     })
 }
 
@@ -316,14 +312,9 @@ fn dispatch() -> Result<(), String> {
         Cmd::Rescue { device, image, vts, chains, dry_run } => {
             run::rescue(&device, &image, vts, chains.as_deref(), dry_run)
         }
-        Cmd::Process { dir, title, season, disc, dry_run, output } => run::process(
-            &dir,
-            title.as_deref(),
-            season,
-            disc,
-            dry_run,
-            output.settings()?,
-        ),
+        Cmd::Process { dir, title, season, disc, dry_run, output } => {
+            run::process(&dir, title.as_deref(), season, disc, dry_run, output.settings()?)
+        }
 
         Cmd::Build { inputs, table, reference, min_agreement, name, stream } => {
             glyphs::build(&inputs, &table, reference.as_deref(), min_agreement, name, stream)
@@ -345,8 +336,8 @@ fn dispatch() -> Result<(), String> {
             let mut t = Table::load(&table).map_err(|e| e.to_string())?;
             let s = std::fs::read_to_string(&corrections)
                 .map_err(|e| format!("{}: {e}", corrections.display()))?;
-            let fixes: BTreeMap<String, String> = serde_json::from_str(&s)
-                .map_err(|e| format!("{}: {e}", corrections.display()))?;
+            let fixes: BTreeMap<String, String> =
+                serde_json::from_str(&s).map_err(|e| format!("{}: {e}", corrections.display()))?;
             let mut n = 0;
             for g in t.glyphs.iter_mut() {
                 if let Some(v) = fixes.get(&g.key) {

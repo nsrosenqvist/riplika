@@ -36,11 +36,7 @@ pub struct Command {
 
 impl Command {
     pub fn new(program: impl Into<String>) -> Self {
-        Command {
-            program: program.into(),
-            args: Vec::new(),
-            env: Vec::new(),
-        }
+        Command { program: program.into(), args: Vec::new(), env: Vec::new() }
     }
 
     /// Set an environment variable for this invocation only.
@@ -88,9 +84,10 @@ impl Command {
         let mut out = Vec::new();
         for (i, a) in self.args.iter().enumerate() {
             if a == flag
-                && let Some(v) = self.args.get(i + 1) {
-                    out.push(v.as_str());
-                }
+                && let Some(v) = self.args.get(i + 1)
+            {
+                out.push(v.as_str());
+            }
         }
         out
     }
@@ -129,12 +126,7 @@ impl Output {
     /// The last non-empty stderr line, which is where these tools put the
     /// actual complaint.
     pub fn last_error(&self) -> &str {
-        self.stderr
-            .lines()
-            .rev()
-            .map(str::trim)
-            .find(|l| !l.is_empty())
-            .unwrap_or("no output")
+        self.stderr.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("no output")
     }
 }
 
@@ -156,11 +148,7 @@ impl Cancel {
     }
 
     pub fn check(&self) -> Result<()> {
-        if self.is_cancelled() {
-            Err(Error("cancelled".into()))
-        } else {
-            Ok(())
-        }
+        if self.is_cancelled() { Err(Error("cancelled".into())) } else { Ok(()) }
     }
 }
 
@@ -235,10 +223,7 @@ impl Runner for RealRunner {
 
     fn run(&self, cmd: &Command) -> Result<Output> {
         self.cancel.check()?;
-        let out = self
-            .build(cmd)
-            .output()
-            .map_err(|e| Error(format!("{}: {e}", cmd.program)))?;
+        let out = self.build(cmd).output().map_err(|e| Error(format!("{}: {e}", cmd.program)))?;
         Ok(Output {
             status: out.status.code().unwrap_or(-1),
             stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -282,9 +267,7 @@ impl Runner for RealRunner {
                 stdout.push('\n');
             }
         }
-        let status = child
-            .wait()
-            .map_err(|e| Error(format!("{}: {e}", cmd.program)))?;
+        let status = child.wait().map_err(|e| Error(format!("{}: {e}", cmd.program)))?;
         if let Some(p) = pump {
             let _ = p.join();
         }
@@ -293,11 +276,7 @@ impl Runner for RealRunner {
             on_line(line);
         }
         self.cancel.check()?;
-        Ok(Output {
-            status: status.code().unwrap_or(-1),
-            stdout,
-            stderr,
-        })
+        Ok(Output { status: status.code().unwrap_or(-1), stdout, stderr })
     }
 }
 
@@ -318,11 +297,7 @@ impl FakeRunner {
         FakeRunner {
             responses: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
-            default: Mutex::new(Output {
-                status: 0,
-                stdout: String::new(),
-                stderr: String::new(),
-            }),
+            default: Mutex::new(Output { status: 0, stdout: String::new(), stderr: String::new() }),
         }
     }
 
@@ -330,11 +305,7 @@ impl FakeRunner {
     pub fn on(self, pattern: &str, stdout: &str) -> Self {
         self.responses.lock().unwrap().push((
             pattern.to_string(),
-            Output {
-                status: 0,
-                stdout: stdout.to_string(),
-                stderr: String::new(),
-            },
+            Output { status: 0, stdout: stdout.to_string(), stderr: String::new() },
         ));
         self
     }
@@ -343,11 +314,7 @@ impl FakeRunner {
     pub fn fail(self, pattern: &str, stderr: &str) -> Self {
         self.responses.lock().unwrap().push((
             pattern.to_string(),
-            Output {
-                status: 1,
-                stdout: String::new(),
-                stderr: stderr.to_string(),
-            },
+            Output { status: 1, stdout: String::new(), stderr: stderr.to_string() },
         ));
         self
     }
@@ -359,30 +326,20 @@ impl FakeRunner {
 
     /// The commands that invoked `program`.
     pub fn calls_to(&self, program: &str) -> Vec<Command> {
-        self.calls()
-            .into_iter()
-            .filter(|c| c.program == program)
-            .collect()
+        self.calls().into_iter().filter(|c| c.program == program).collect()
     }
 
     /// The single command matching `pattern`, panicking unless there is exactly
     /// one - an assertion in its own right.
     pub fn only_call(&self, pattern: &str) -> Command {
-        let hits: Vec<Command> = self
-            .calls()
-            .into_iter()
-            .filter(|c| c.display().contains(pattern))
-            .collect();
+        let hits: Vec<Command> =
+            self.calls().into_iter().filter(|c| c.display().contains(pattern)).collect();
         assert_eq!(
             hits.len(),
             1,
             "expected exactly one command matching {pattern:?}, got {}:\n{}",
             hits.len(),
-            self.calls()
-                .iter()
-                .map(|c| c.display())
-                .collect::<Vec<_>>()
-                .join("\n")
+            self.calls().iter().map(|c| c.display()).collect::<Vec<_>>().join("\n")
         );
         hits.into_iter().next().unwrap()
     }
@@ -399,9 +356,7 @@ impl Runner for FakeRunner {
                 best = Some(r);
             }
         }
-        Ok(best
-            .map(|(_, o)| o.clone())
-            .unwrap_or_else(|| self.default.lock().unwrap().clone()))
+        Ok(best.map(|(_, o)| o.clone()).unwrap_or_else(|| self.default.lock().unwrap().clone()))
     }
 }
 
@@ -494,9 +449,7 @@ impl Fs for RealFs {
             .map_err(|e| Error(format!("{} -> {}: {e}", from.display(), to.display())))
     }
     fn size(&self, p: &Path) -> Result<u64> {
-        std::fs::metadata(p)
-            .map(|m| m.len())
-            .map_err(|e| Error(format!("{}: {e}", p.display())))
+        std::fs::metadata(p).map(|m| m.len()).map_err(|e| Error(format!("{}: {e}", p.display())))
     }
     fn list(&self, p: &Path) -> Result<Vec<PathBuf>> {
         let mut out = Vec::new();
@@ -521,10 +474,7 @@ impl FakeFs {
     }
 
     pub fn with_file(self, p: impl Into<PathBuf>, data: &str) -> Self {
-        self.files
-            .lock()
-            .unwrap()
-            .insert(p.into(), data.as_bytes().to_vec());
+        self.files.lock().unwrap().insert(p.into(), data.as_bytes().to_vec());
         self
     }
 
@@ -541,7 +491,8 @@ impl FakeFs {
 
 impl Fs for FakeFs {
     fn exists(&self, p: &Path) -> bool {
-        self.files.lock().unwrap().contains_key(p) || self.dirs.lock().unwrap().iter().any(|d| d == p)
+        self.files.lock().unwrap().contains_key(p)
+            || self.dirs.lock().unwrap().iter().any(|d| d == p)
     }
     fn create_dir_all(&self, p: &Path) -> Result<()> {
         self.dirs.lock().unwrap().push(p.to_path_buf());
@@ -556,10 +507,7 @@ impl Fs for FakeFs {
             .ok_or_else(|| Error(format!("{}: not found", p.display())))
     }
     fn write(&self, p: &Path, data: &[u8]) -> Result<()> {
-        self.files
-            .lock()
-            .unwrap()
-            .insert(p.to_path_buf(), data.to_vec());
+        self.files.lock().unwrap().insert(p.to_path_buf(), data.to_vec());
         Ok(())
     }
     fn remove_file(&self, p: &Path) -> Result<()> {
@@ -577,11 +525,7 @@ impl Fs for FakeFs {
     }
     fn list(&self, p: &Path) -> Result<Vec<PathBuf>> {
         let f = self.files.lock().unwrap();
-        let mut v: Vec<PathBuf> = f
-            .keys()
-            .filter(|k| k.parent() == Some(p))
-            .cloned()
-            .collect();
+        let mut v: Vec<PathBuf> = f.keys().filter(|k| k.parent() == Some(p)).cloned().collect();
         v.sort();
         Ok(v)
     }
@@ -593,8 +537,7 @@ mod tests {
 
     #[test]
     fn display_quotes_only_what_needs_it() {
-        let c = Command::new("ffmpeg")
-            .args(["-i", "/tmp/a b.mkv", "-map", "0:s:0"]);
+        let c = Command::new("ffmpeg").args(["-i", "/tmp/a b.mkv", "-map", "0:s:0"]);
         assert_eq!(c.display(), "ffmpeg -i '/tmp/a b.mkv' -map 0:s:0");
     }
 
@@ -604,7 +547,11 @@ mod tests {
         assert_eq!(c.display(), "DVDCSS_METHOD=key ffprobe -i");
         // and it really is passed on, not just displayed
         let out = RealRunner::default()
-            .run(&Command::new("sh").args(["-c", "printf %s \"$RIPLIKA_TEST\""]).env("RIPLIKA_TEST", "yes"))
+            .run(
+                &Command::new("sh")
+                    .args(["-c", "printf %s \"$RIPLIKA_TEST\""])
+                    .env("RIPLIKA_TEST", "yes"),
+            )
             .unwrap();
         assert_eq!(out.stdout, "yes");
     }
@@ -622,13 +569,11 @@ mod tests {
         let r = FakeRunner::new()
             .on("ffprobe", "generic")
             .on("ffprobe -v error -select_streams a", "audio");
-        let out = r
-            .run(&Command::new("ffprobe").args(["-v", "error", "-select_streams", "a"]))
-            .unwrap();
+        let out =
+            r.run(&Command::new("ffprobe").args(["-v", "error", "-select_streams", "a"])).unwrap();
         assert_eq!(out.stdout, "audio");
-        let out = r
-            .run(&Command::new("ffprobe").args(["-v", "error", "-select_streams", "v"]))
-            .unwrap();
+        let out =
+            r.run(&Command::new("ffprobe").args(["-v", "error", "-select_streams", "v"])).unwrap();
         assert_eq!(out.stdout, "generic");
     }
 
@@ -637,10 +582,7 @@ mod tests {
         let r = FakeRunner::new();
         r.run(&Command::new("a")).unwrap();
         r.run(&Command::new("b")).unwrap();
-        assert_eq!(
-            r.calls().iter().map(|c| c.program.clone()).collect::<Vec<_>>(),
-            vec!["a", "b"]
-        );
+        assert_eq!(r.calls().iter().map(|c| c.program.clone()).collect::<Vec<_>>(), vec!["a", "b"]);
     }
 
     #[test]
@@ -687,10 +629,7 @@ mod tests {
     #[test]
     fn the_first_match_along_the_path_wins() {
         let exists = |_: &Path| true;
-        assert_eq!(
-            search_path("/first:/second", "x", &exists),
-            Some(PathBuf::from("/first/x"))
-        );
+        assert_eq!(search_path("/first:/second", "x", &exists), Some(PathBuf::from("/first/x")));
     }
 
     #[test]

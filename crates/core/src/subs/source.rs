@@ -78,10 +78,7 @@ pub fn is_matroska(path: &Path) -> bool {
 
 /// Load VobSub from a `.idx` (with its `.sub` beside it) or from a video file.
 pub fn load(runner: &dyn Runner, path: &Path, stream: usize) -> Result<Source> {
-    let ext = path
-        .extension()
-        .map(|e| e.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
+    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
 
     if ext == "idx" {
         let idx = vobsub::parse_idx(path)?;
@@ -97,10 +94,7 @@ pub fn load(runner: &dyn Runner, path: &Path, stream: usize) -> Result<Source> {
         let data = std::fs::read(path).map_err(|e| Error(format!("{}: {e}", path.display())))?;
         let track = crate::subs::matroska::read_vobsub(&data, stream)?;
         return Ok(Source {
-            idx: Idx {
-                palette: track.palette,
-                events: Vec::new(),
-            },
+            idx: Idx { palette: track.palette, events: Vec::new() },
             sub: Vec::new(),
             packets: Some(track.packets),
             _tmp: None,
@@ -114,10 +108,7 @@ pub fn load(runner: &dyn Runner, path: &Path, stream: usize) -> Result<Source> {
     let track = crate::subs::matroska::read_vobsub(&data, 0)?;
 
     Ok(Source {
-        idx: Idx {
-            palette: track.palette,
-            events: Vec::new(),
-        },
+        idx: Idx { palette: track.palette, events: Vec::new() },
         sub: Vec::new(),
         packets: Some(track.packets),
         _tmp: Some(tmp),

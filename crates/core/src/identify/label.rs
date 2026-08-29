@@ -99,11 +99,7 @@ pub fn parse(label: &str) -> LabelGuess {
         i += 1;
     }
 
-    guess.title = title_tokens
-        .iter()
-        .map(|t| title_case(t))
-        .collect::<Vec<_>>()
-        .join(" ");
+    guess.title = title_tokens.iter().map(|t| title_case(t)).collect::<Vec<_>>().join(" ");
     guess
 }
 

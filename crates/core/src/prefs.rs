@@ -126,7 +126,11 @@ impl Preferences {
     }
 
     /// Turn preferences plus a chosen set of languages into job settings.
-    pub fn to_settings(&self, output_dir: PathBuf, languages: LanguageSet) -> crate::model::JobSettings {
+    pub fn to_settings(
+        &self,
+        output_dir: PathBuf,
+        languages: LanguageSet,
+    ) -> crate::model::JobSettings {
         crate::model::JobSettings {
             output_dir,
             video: self.video,
@@ -140,8 +144,7 @@ impl Preferences {
             drop_commentary: self.drop_commentary,
             words_dir: self.words_dir(),
             glyph_table: self.glyph_table(),
-            episode_template: Some(self.episode_template.clone())
-                .filter(|t| !t.trim().is_empty()),
+            episode_template: Some(self.episode_template.clone()).filter(|t| !t.trim().is_empty()),
         }
     }
 
@@ -192,9 +195,7 @@ impl Preferences {
     }
 
     pub fn words_dir(&self) -> Option<PathBuf> {
-        self.words_dir
-            .clone()
-            .or_else(|| Some(Self::default_words_dir()).filter(|p| p.is_dir()))
+        self.words_dir.clone().or_else(|| Some(Self::default_words_dir()).filter(|p| p.is_dir()))
     }
 
     pub fn rip_dir(&self) -> PathBuf {
@@ -276,7 +277,10 @@ mod tests {
     #[test]
     fn a_missing_or_corrupt_file_falls_back_to_defaults() {
         // losing preferences should cost a re-tick, not a launch
-        assert_eq!(Preferences::load_from(Path::new("/nonexistent/x.json")), Preferences::default());
+        assert_eq!(
+            Preferences::load_from(Path::new("/nonexistent/x.json")),
+            Preferences::default()
+        );
         let path = tmp("corrupt.json");
         std::fs::write(&path, "{ this is not json").unwrap();
         assert_eq!(Preferences::load_from(&path), Preferences::default());
@@ -325,11 +329,7 @@ mod tests {
         let got = p.preselect(&langs(&["eng", "spa", "swe"]));
         assert_eq!(
             got,
-            vec![
-                ("swe".to_string(), true),
-                ("eng".to_string(), true),
-                ("spa".to_string(), false),
-            ]
+            vec![("swe".to_string(), true), ("eng".to_string(), true), ("spa".to_string(), false),]
         );
     }
 
@@ -354,21 +354,16 @@ mod tests {
 
     #[test]
     fn the_iso_variants_a_disc_might_use_still_match_a_preference() {
-        let p = Preferences {
-            preferred_languages: vec!["german".into()],
-            ..Preferences::default()
-        };
+        let p =
+            Preferences { preferred_languages: vec!["german".into()], ..Preferences::default() };
         // the disc writes the other variant
         assert_eq!(p.preselect(&langs(&["ger"])), vec![("ger".to_string(), true)]);
     }
 
     #[test]
     fn settings_carry_the_preferences_through() {
-        let p = Preferences {
-            video: Quality::Low,
-            keep_bitmap_subs: true,
-            ..Preferences::default()
-        };
+        let p =
+            Preferences { video: Quality::Low, keep_bitmap_subs: true, ..Preferences::default() };
         let s = p.to_settings(PathBuf::from("/media"), LanguageSet::parse("english"));
         assert_eq!(s.video, Quality::Low);
         assert!(s.keep_bitmap_subs);
@@ -445,11 +440,7 @@ mod xdg_tests {
     fn an_absent_glyph_table_is_absent_rather_than_a_path_to_nothing() {
         // the pipeline warns and keeps the bitmaps; it must not be handed a
         // path that does not exist and told to read it
-        let p = Preferences {
-            glyph_table: None,
-            words_dir: None,
-            ..Preferences::default()
-        };
+        let p = Preferences { glyph_table: None, words_dir: None, ..Preferences::default() };
         // whichever way this machine is set up, a missing file is None
         if !Preferences::default_glyph_table().exists() {
             assert_eq!(p.glyph_table(), None);

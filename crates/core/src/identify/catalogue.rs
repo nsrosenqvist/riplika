@@ -52,7 +52,12 @@ pub trait Catalogue: Send + Sync {
 
     /// Look up a title. `season` is a hint for building the returned [`Media`],
     /// not a filter.
-    fn search(&self, query: &str, kind: MediaKind, season: Option<u32>) -> Result<Vec<CatalogueHit>>;
+    fn search(
+        &self,
+        query: &str,
+        kind: MediaKind,
+        season: Option<u32>,
+    ) -> Result<Vec<CatalogueHit>>;
 
     /// Episodes of one season, in broadcast order.
     fn episodes(&self, provider_id: &str, season: u32) -> Result<Vec<Episode>>;
@@ -120,11 +125,7 @@ pub fn describe_show(
         (Some(_), None) if status == Some("Running") => parts.push("ongoing".into()),
         _ => {}
     }
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join(" \u{b7} "))
-    }
+    if parts.is_empty() { None } else { Some(parts.join(" \u{b7} ")) }
 }
 
 /// Parse `/search/shows` output.
@@ -149,11 +150,7 @@ pub fn parse_tvmaze_search(json: &str, season: Option<u32>) -> Result<Vec<Catalo
                 season: season.unwrap_or(1),
                 provider_id: show.get("id").map(|i| format!("tvmaze:{i}")),
             },
-            score: hit
-                .get("score")
-                .and_then(|s| s.as_f64())
-                .unwrap_or(0.0)
-                .clamp(0.0, 1.0) as f32,
+            score: hit.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0).clamp(0.0, 1.0) as f32,
             detail: describe_show(
                 network,
                 text("type"),
@@ -179,11 +176,7 @@ pub fn parse_tvmaze_episodes(json: &str, season: u32) -> Result<Vec<Episode>> {
         out.push(Episode {
             season: s,
             number: e.get("number").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
-            title: e
-                .get("name")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_string(),
+            title: e.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
             air_date: e
                 .get("airdate")
                 .and_then(|x| x.as_str())
@@ -208,14 +201,17 @@ impl Catalogue for TvMaze<'_> {
         "tvmaze"
     }
 
-    fn search(&self, query: &str, kind: MediaKind, season: Option<u32>) -> Result<Vec<CatalogueHit>> {
+    fn search(
+        &self,
+        query: &str,
+        kind: MediaKind,
+        season: Option<u32>,
+    ) -> Result<Vec<CatalogueHit>> {
         if kind == MediaKind::Movie {
             // TVmaze is television only; saying so beats returning nonsense
             return Ok(Vec::new());
         }
-        let body = self
-            .http
-            .get(&format!("{TVMAZE}/search/shows?q={}", encode(query)))?;
+        let body = self.http.get(&format!("{TVMAZE}/search/shows?q={}", encode(query)))?;
         parse_tvmaze_search(&body, season)
     }
 
@@ -243,7 +239,11 @@ impl<'a> Tmdb<'a> {
 }
 
 /// Parse a TMDB `/search/movie` or `/search/tv` response.
-pub fn parse_tmdb_search(json: &str, kind: MediaKind, season: Option<u32>) -> Result<Vec<CatalogueHit>> {
+pub fn parse_tmdb_search(
+    json: &str,
+    kind: MediaKind,
+    season: Option<u32>,
+) -> Result<Vec<CatalogueHit>> {
     let v: serde_json::Value =
         serde_json::from_str(json).map_err(|e| Error(format!("TMDB search: {e}")))?;
     let results = v.get("results").and_then(|r| r.as_array()).cloned().unwrap_or_default();
@@ -318,7 +318,12 @@ impl Catalogue for Tmdb<'_> {
         "tmdb"
     }
 
-    fn search(&self, query: &str, kind: MediaKind, season: Option<u32>) -> Result<Vec<CatalogueHit>> {
+    fn search(
+        &self,
+        query: &str,
+        kind: MediaKind,
+        season: Option<u32>,
+    ) -> Result<Vec<CatalogueHit>> {
         let path = match kind {
             MediaKind::Movie => "movie",
             MediaKind::Series => "tv",
@@ -364,7 +369,12 @@ impl Catalogue for Catalogues<'_> {
     /// than one. The order is the caller's preference - TMDB first when a key
     /// is configured, since it is better data and it is what a media server
     /// will use for the same files.
-    fn search(&self, query: &str, kind: MediaKind, season: Option<u32>) -> Result<Vec<CatalogueHit>> {
+    fn search(
+        &self,
+        query: &str,
+        kind: MediaKind,
+        season: Option<u32>,
+    ) -> Result<Vec<CatalogueHit>> {
         let mut last_error = None;
         for c in &self.0 {
             match c.search(query, kind, season) {
@@ -385,10 +395,10 @@ impl Catalogue for Catalogues<'_> {
         for c in &self.0 {
             if (origin.is_none() || origin == Some(c.prefix()))
                 && let Ok(e) = c.episodes(provider_id, season)
-                    && !e.is_empty()
-                {
-                    return Ok(e);
-                }
+                && !e.is_empty()
+            {
+                return Ok(e);
+            }
         }
         Ok(Vec::new())
     }
@@ -400,12 +410,8 @@ pub struct UreqHttp;
 
 impl Http for UreqHttp {
     fn get(&self, url: &str) -> Result<String> {
-        let mut resp = ureq::get(url)
-            .call()
-            .map_err(|e| Error(format!("{url}: {e}")))?;
-        resp.body_mut()
-            .read_to_string()
-            .map_err(|e| Error(format!("{url}: {e}")))
+        let mut resp = ureq::get(url).call().map_err(|e| Error(format!("{url}: {e}")))?;
+        resp.body_mut().read_to_string().map_err(|e| Error(format!("{url}: {e}")))
     }
 }
 
@@ -422,10 +428,7 @@ impl FakeHttp {
     }
 
     pub fn on(self, pattern: &str, body: &str) -> Self {
-        self.responses
-            .lock()
-            .unwrap()
-            .push((pattern.into(), body.into()));
+        self.responses.lock().unwrap().push((pattern.into(), body.into()));
         self
     }
 
@@ -516,9 +519,7 @@ mod tests {
 
     #[test]
     fn tvmaze_builds_the_urls_it_should() {
-        let http = FakeHttp::new()
-            .on("/search/shows", SEARCH)
-            .on("/episodes", EPISODES);
+        let http = FakeHttp::new().on("/search/shows", SEARCH).on("/episodes", EPISODES);
         let c = TvMaze { http: &http };
         c.search("Parks and Recreation", MediaKind::Series, Some(7)).unwrap();
         c.episodes("1633", 7).unwrap();
@@ -538,7 +539,8 @@ mod tests {
 
     #[test]
     fn tmdb_movie_results_carry_a_year() {
-        let json = r#"{"results":[{"id":115,"title":"The Big Lebowski","release_date":"1998-03-06"}]}"#;
+        let json =
+            r#"{"results":[{"id":115,"title":"The Big Lebowski","release_date":"1998-03-06"}]}"#;
         let hits = parse_tmdb_search(json, MediaKind::Movie, None).unwrap();
         assert_eq!(hits[0].media.title(), "The Big Lebowski");
         assert_eq!(hits[0].media.year(), Some(1998));
@@ -546,7 +548,8 @@ mod tests {
 
     #[test]
     fn tmdb_ranks_by_position_since_popularity_is_unbounded() {
-        let json = r#"{"results":[{"id":1,"title":"A"},{"id":2,"title":"B"},{"id":3,"title":"C"}]}"#;
+        let json =
+            r#"{"results":[{"id":1,"title":"A"},{"id":2,"title":"B"},{"id":3,"title":"C"}]}"#;
         let hits = parse_tmdb_search(json, MediaKind::Movie, None).unwrap();
         assert!(hits[0].score > hits[1].score);
         assert!(hits[1].score > hits[2].score);
@@ -566,8 +569,12 @@ mod tests {
         // answer than one. The order is the caller's preference.
         struct One(&'static str, f32);
         impl Catalogue for One {
-            fn name(&self) -> &'static str { "one" }
-            fn prefix(&self) -> &'static str { "one" }
+            fn name(&self) -> &'static str {
+                "one"
+            }
+            fn prefix(&self) -> &'static str {
+                "one"
+            }
             fn search(&self, _: &str, _: MediaKind, _: Option<u32>) -> Result<Vec<CatalogueHit>> {
                 Ok(vec![CatalogueHit {
                     media: Media::Movie { title: self.0.into(), year: None, provider_id: None },
@@ -575,7 +582,9 @@ mod tests {
                     detail: None,
                 }])
             }
-            fn episodes(&self, _: &str, _: u32) -> Result<Vec<Episode>> { Ok(vec![]) }
+            fn episodes(&self, _: &str, _: u32) -> Result<Vec<Episode>> {
+                Ok(vec![])
+            }
         }
         let c = Catalogues(vec![Box::new(One("preferred", 0.2)), Box::new(One("second", 0.9))]);
         let hits = c.search("x", MediaKind::Movie, None).unwrap();
@@ -597,12 +606,18 @@ mod tests {
     fn one_catalogue_failing_does_not_stop_the_others() {
         struct Broken;
         impl Catalogue for Broken {
-            fn name(&self) -> &'static str { "broken" }
-            fn prefix(&self) -> &'static str { "broken" }
+            fn name(&self) -> &'static str {
+                "broken"
+            }
+            fn prefix(&self) -> &'static str {
+                "broken"
+            }
             fn search(&self, _: &str, _: MediaKind, _: Option<u32>) -> Result<Vec<CatalogueHit>> {
                 Err(Error("network down".into()))
             }
-            fn episodes(&self, _: &str, _: u32) -> Result<Vec<Episode>> { Err(Error("down".into())) }
+            fn episodes(&self, _: &str, _: u32) -> Result<Vec<Episode>> {
+                Err(Error("down".into()))
+            }
         }
         let http = FakeHttp::new().on("/search/shows", SEARCH);
         let c = Catalogues(vec![Box::new(Broken), Box::new(TvMaze { http: &http })]);
@@ -613,12 +628,18 @@ mod tests {
     fn every_catalogue_failing_is_reported() {
         struct Broken;
         impl Catalogue for Broken {
-            fn name(&self) -> &'static str { "broken" }
-            fn prefix(&self) -> &'static str { "broken" }
+            fn name(&self) -> &'static str {
+                "broken"
+            }
+            fn prefix(&self) -> &'static str {
+                "broken"
+            }
             fn search(&self, _: &str, _: MediaKind, _: Option<u32>) -> Result<Vec<CatalogueHit>> {
                 Err(Error("network down".into()))
             }
-            fn episodes(&self, _: &str, _: u32) -> Result<Vec<Episode>> { Err(Error("down".into())) }
+            fn episodes(&self, _: &str, _: u32) -> Result<Vec<Episode>> {
+                Err(Error("down".into()))
+            }
         }
         let c = Catalogues(vec![Box::new(Broken)]);
         assert!(c.search("x", MediaKind::Series, None).is_err());
@@ -664,7 +685,13 @@ mod detail_tests {
     #[test]
     fn a_run_within_one_year_is_left_to_the_title() {
         // the title already shows the premiere year; "2015-2015" adds nothing
-        let d = describe_show(Some("Discovery"), Some("Reality"), Some("2015-03-02"), Some("2015-04-06"), Some("Ended"));
+        let d = describe_show(
+            Some("Discovery"),
+            Some("Reality"),
+            Some("2015-03-02"),
+            Some("2015-04-06"),
+            Some("Ended"),
+        );
         assert_eq!(d.as_deref(), Some("Discovery · Reality"));
     }
 
@@ -676,13 +703,11 @@ mod detail_tests {
     #[test]
     fn missing_parts_are_dropped_rather_than_left_blank() {
         assert_eq!(
-            describe_show(None, Some("Scripted"), Some("2009-04-09"), Some("2015-02-24"), None).as_deref(),
+            describe_show(None, Some("Scripted"), Some("2009-04-09"), Some("2015-02-24"), None)
+                .as_deref(),
             Some("Scripted · 2009-2015")
         );
-        assert_eq!(
-            describe_show(Some("NBC"), None, None, None, None).as_deref(),
-            Some("NBC")
-        );
+        assert_eq!(describe_show(Some("NBC"), None, None, None, None).as_deref(), Some("NBC"));
     }
 
     #[test]
@@ -755,10 +780,7 @@ pub fn parse_wikidata_search(json: &str) -> Vec<(String, String)> {
                 .filter_map(|i| {
                     Some((
                         i.get("id")?.as_str()?.to_string(),
-                        i.get("description")
-                            .and_then(|d| d.as_str())
-                            .unwrap_or("")
-                            .to_string(),
+                        i.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
                     ))
                 })
                 .collect()
@@ -807,17 +829,13 @@ pub fn parse_wikidata_entities(
                 .unwrap_or_default()
         };
         let first = |property: &str, field: &str| -> Option<String> {
-            claims?
-                .get(property)?
-                .as_array()?
-                .iter()
-                .find_map(|s| {
-                    s.get("mainsnak")?
-                        .get("datavalue")?
-                        .get("value")?
-                        .get(field)
-                        .map(|x| x.as_str().map(str::to_string).unwrap_or_else(|| x.to_string()))
-                })
+            claims?.get(property)?.as_array()?.iter().find_map(|s| {
+                s.get("mainsnak")?
+                    .get("datavalue")?
+                    .get("value")?
+                    .get(field)
+                    .map(|x| x.as_str().map(str::to_string).unwrap_or_else(|| x.to_string()))
+            })
         };
 
         if !ids_of("P31").iter().any(|c| FILM_CLASSES.contains(&c.as_str())) {
@@ -857,11 +875,7 @@ pub fn parse_wikidata_entities(
         };
 
         out.push(CatalogueHit {
-            media: Media::Movie {
-                title,
-                year,
-                provider_id: Some(format!("wikidata:{qid}")),
-            },
+            media: Media::Movie { title, year, provider_id: Some(format!("wikidata:{qid}")) },
             // Ranked by the search's own ordering, which is label similarity.
             // It is not a confidence in the disc; the runtime check is.
             score: 1.0 - (rank as f32 / order.len().max(1) as f32) * 0.5,
@@ -880,7 +894,12 @@ impl Catalogue for Wikidata<'_> {
         "wikidata"
     }
 
-    fn search(&self, query: &str, kind: MediaKind, _season: Option<u32>) -> Result<Vec<CatalogueHit>> {
+    fn search(
+        &self,
+        query: &str,
+        kind: MediaKind,
+        _season: Option<u32>,
+    ) -> Result<Vec<CatalogueHit>> {
         if kind == MediaKind::Series {
             // Wikidata knows series but rarely their episode lists, and an
             // episode list is the whole reason a series needs a catalogue.
@@ -951,8 +970,11 @@ mod wikidata_tests {
         let found = hits();
         let titles: Vec<&str> = found.iter().map(|h| h.media.title()).collect();
         assert!(!titles.contains(&"Jeffrey Lebowski"), "{titles:?}");
-        assert_eq!(titles.iter().filter(|t| **t == "The Big Lebowski").count(), 1,
-            "the soundtrack album survived: {titles:?}");
+        assert_eq!(
+            titles.iter().filter(|t| **t == "The Big Lebowski").count(),
+            1,
+            "the soundtrack album survived: {titles:?}"
+        );
     }
 
     #[test]
@@ -983,9 +1005,7 @@ mod wikidata_tests {
 
     #[test]
     fn a_film_search_makes_exactly_two_requests() {
-        let http = FakeHttp::new()
-            .on("wbsearchentities", SEARCH)
-            .on("wbgetentities", ENTITIES);
+        let http = FakeHttp::new().on("wbsearchentities", SEARCH).on("wbgetentities", ENTITIES);
         let w = Wikidata { http: &http };
         let found = w.search("The Big Lebowski", MediaKind::Movie, None).unwrap();
         assert_eq!(found.len(), 2, "the film and the parody, nothing else");

@@ -151,8 +151,8 @@ pub fn title_table(read: &mut dyn FnMut(u64, usize) -> Result<Vec<u8>>) -> Resul
         .ok_or_else(|| Error("no VIDEO_TS.IFO".into()))?;
 
     let header = read(ifo.lba as u64, 1)?;
-    let offset = tt_srpt_offset(&header)
-        .ok_or_else(|| Error("VIDEO_TS.IFO has no title table".into()))?;
+    let offset =
+        tt_srpt_offset(&header).ok_or_else(|| Error("VIDEO_TS.IFO has no title table".into()))?;
 
     // The table can exceed one sector: 12 bytes an entry, up to 99 titles.
     let table = read(ifo.lba as u64 + offset as u64, 2)?;
@@ -173,8 +173,7 @@ pub fn device_reader(path: &std::path::Path) -> Result<impl FnMut(u64, usize) ->
         file.seek(SeekFrom::Start(lba * SECTOR as u64))
             .map_err(|e| Error(format!("{display}: {e}")))?;
         let mut buf = vec![0u8; count * SECTOR];
-        file.read_exact(&mut buf)
-            .map_err(|e| Error(format!("{display}: {e}")))?;
+        file.read_exact(&mut buf).map_err(|e| Error(format!("{display}: {e}")))?;
         Ok(buf)
     })
 }
@@ -243,10 +242,7 @@ mod tests {
             let mut out = Vec::with_capacity(count * SECTOR);
             for n in 0..count {
                 out.extend(
-                    sectors
-                        .get(&(lba + n as u64))
-                        .cloned()
-                        .unwrap_or_else(|| vec![0u8; SECTOR]),
+                    sectors.get(&(lba + n as u64)).cloned().unwrap_or_else(|| vec![0u8; SECTOR]),
                 );
             }
             Ok(out)
@@ -440,11 +436,7 @@ pub fn parse_vts_pgcs(ifo: &[u8]) -> Vec<Pgc> {
                 extents.push((first, last + 1));
             }
         }
-        out.push(Pgc {
-            number: i as u32 + 1,
-            seconds,
-            cells: extents,
-        });
+        out.push(Pgc { number: i as u32 + 1, seconds, cells: extents });
     }
     out
 }
@@ -471,10 +463,7 @@ impl TitleSet {
 }
 
 /// Read one video title set's layout.
-pub fn title_set(
-    read: &mut dyn FnMut(u64, usize) -> Result<Vec<u8>>,
-    vts: u8,
-) -> Result<TitleSet> {
+pub fn title_set(read: &mut dyn FnMut(u64, usize) -> Result<Vec<u8>>, vts: u8) -> Result<TitleSet> {
     let pvd = read(PVD_SECTOR, 1)?;
     let (root_lba, root_size) =
         parse_pvd_root(&pvd).ok_or_else(|| Error("not an ISO 9660 volume".into()))?;
@@ -483,10 +472,7 @@ pub fn title_set(
         .into_iter()
         .find(|e| e.is_dir && e.name.eq_ignore_ascii_case("VIDEO_TS"))
         .ok_or_else(|| Error("no VIDEO_TS directory".into()))?;
-    let dir = read(
-        video_ts.lba as u64,
-        video_ts.size.div_ceil(SECTOR as u32) as usize,
-    )?;
+    let dir = read(video_ts.lba as u64, video_ts.size.div_ceil(SECTOR as u32) as usize)?;
     let files = dir_entries(&dir, video_ts.size as usize);
 
     let find = |name: String| files.iter().find(|e| e.name.eq_ignore_ascii_case(&name)).cloned();
@@ -502,11 +488,7 @@ pub fn title_set(
     if chains.is_empty() {
         return Err(Error(format!("VTS {vts} lists no program chains")));
     }
-    Ok(TitleSet {
-        number: vts,
-        vob_lba: vob.lba as u64,
-        chains,
-    })
+    Ok(TitleSet { number: vts, vob_lba: vob.lba as u64, chains })
 }
 
 #[cfg(test)]
@@ -522,8 +504,8 @@ mod cell_tests {
 
         let table_at = 2 * SECTOR;
         let chains: [(u32, &[(u64, u64)]); 3] = [
-            (1290, &[(0, 400_000)]),                    // episode one
-            (1291, &[(400_000, 800_000)]),              // episode two
+            (1290, &[(0, 400_000)]),                     // episode one
+            (1291, &[(400_000, 800_000)]),               // episode two
             (2581, &[(0, 400_000), (400_000, 800_000)]), // the play-all
         ];
         ifo[table_at..table_at + 2].copy_from_slice(&(chains.len() as u16).to_be_bytes());
@@ -567,9 +549,8 @@ mod cell_tests {
     fn a_play_all_shares_its_sectors_with_the_episodes() {
         // this is why rescuing the episodes costs nothing extra for the play-all
         let chains = parse_vts_pgcs(&vts_ifo());
-        let episodes = merge_ranges(
-            &chains[..2].iter().flat_map(|c| c.cells.clone()).collect::<Vec<_>>(),
-        );
+        let episodes =
+            merge_ranges(&chains[..2].iter().flat_map(|c| c.cells.clone()).collect::<Vec<_>>());
         let play_all = merge_ranges(&chains[2].cells);
         assert_eq!(episodes, play_all);
         assert_eq!(episodes, vec![(0, 800_000)]);
@@ -591,11 +572,7 @@ mod cell_tests {
 
     #[test]
     fn cell_extents_are_relative_to_the_title_sets_vob() {
-        let ts = TitleSet {
-            number: 11,
-            vob_lba: 485_863,
-            chains: parse_vts_pgcs(&vts_ifo()),
-        };
+        let ts = TitleSet { number: 11, vob_lba: 485_863, chains: parse_vts_pgcs(&vts_ifo()) };
         let abs = ts.absolute(&ts.chains[1]);
         assert_eq!(abs, vec![(485_863 + 400_000, 485_863 + 800_000)]);
     }
@@ -740,7 +717,9 @@ mod metadata_tests {
         move |lba, count| {
             let mut out = Vec::new();
             for n in 0..count {
-                out.extend(sectors.get(&(lba + n as u64)).cloned().unwrap_or_else(|| vec![0u8; SECTOR]));
+                out.extend(
+                    sectors.get(&(lba + n as u64)).cloned().unwrap_or_else(|| vec![0u8; SECTOR]),
+                );
             }
             Ok(out)
         }

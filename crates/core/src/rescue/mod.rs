@@ -94,9 +94,7 @@ impl SectorSink for FileSink {
     fn write(&mut self, lba: u64, data: &[u8]) -> Result<()> {
         use std::io::{Seek, SeekFrom, Write};
         let offset = lba.saturating_sub(self.base) * SECTOR as u64;
-        self.file
-            .seek(SeekFrom::Start(offset))
-            .map_err(|e| Error(e.to_string()))?;
+        self.file.seek(SeekFrom::Start(offset)).map_err(|e| Error(e.to_string()))?;
         self.file.write_all(data).map_err(|e| Error(e.to_string()))
     }
 }
@@ -139,13 +137,7 @@ pub struct Rescue {
 
 impl Rescue {
     pub fn new(map: Map) -> Rescue {
-        Rescue {
-            map,
-            big_read: BIG_READ,
-            trim_read: TRIM_READ,
-            skip_ahead: SKIP_AHEAD,
-            retries: 2,
-        }
+        Rescue { map, big_read: BIG_READ, trim_read: TRIM_READ, skip_ahead: SKIP_AHEAD, retries: 2 }
     }
 
     fn report(&self, pass: &'static str, report: &mut dyn FnMut(Progress)) {
@@ -379,7 +371,10 @@ impl SectorSink for MemorySink {
 mod tests {
     use super::*;
 
-    fn run_rescue(bad: impl Into<Vec<std::ops::Range<u64>>>, total: u64) -> (Rescue, FakeDisc, MemorySink) {
+    fn run_rescue(
+        bad: impl Into<Vec<std::ops::Range<u64>>>,
+        total: u64,
+    ) -> (Rescue, FakeDisc, MemorySink) {
         let mut disc = FakeDisc::new(bad);
         let mut sink = MemorySink::default();
         let mut r = Rescue::new(Map::new(0, total));
@@ -488,9 +483,7 @@ mod tests {
             }
         }
         let mut r = Rescue::new(Map::new(0, 1024));
-        let e = r
-            .run(&mut Gone, &mut MemorySink::default(), &mut |_| {})
-            .unwrap_err();
+        let e = r.run(&mut Gone, &mut MemorySink::default(), &mut |_| {}).unwrap_err();
         assert!(e.0.contains("disappeared"), "{}", e.0);
     }
 

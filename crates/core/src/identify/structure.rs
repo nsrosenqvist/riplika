@@ -12,9 +12,9 @@
 //! that part hashes frames; everything else here is arithmetic on chapter
 //! durations.
 
+use crate::Result;
 use crate::host::{Command, Runner};
 use crate::model::Millis;
-use crate::Result;
 use std::path::Path;
 
 /// The shape of one title: enough to reason about, without the video.
@@ -59,10 +59,7 @@ pub struct EpisodeRange {
 
 impl Default for EpisodeRange {
     fn default() -> Self {
-        EpisodeRange {
-            min: 15 * 60 * 1000,
-            max: 45 * 60 * 1000,
-        }
+        EpisodeRange { min: 15 * 60 * 1000, max: 45 * 60 * 1000 }
     }
 }
 
@@ -79,10 +76,8 @@ fn chapters_match(a: &[Millis], b: &[Millis]) -> bool {
 /// Sort a disc's titles into episodes, play-alls and extras.
 pub fn decompose(titles: &[TitleShape], range: EpisodeRange) -> Structure {
     // Only episode-length titles with chapters can be *parts* of a play-all.
-    let parts: Vec<&TitleShape> = titles
-        .iter()
-        .filter(|t| range.contains(t.duration) && !t.chapters.is_empty())
-        .collect();
+    let parts: Vec<&TitleShape> =
+        titles.iter().filter(|t| range.contains(t.duration) && !t.chapters.is_empty()).collect();
 
     let mut play_alls: Vec<(String, Vec<String>)> = Vec::new();
     for t in titles {
@@ -123,7 +118,9 @@ pub fn decompose(titles: &[TitleShape], range: EpisodeRange) -> Structure {
             play_alls.push((t.key.clone(), seq));
         }
     }
-    play_alls.sort_by_key(|(k, _)| titles.iter().find(|t| &t.key == k).map(|t| t.order).unwrap_or(u32::MAX));
+    play_alls.sort_by_key(|(k, _)| {
+        titles.iter().find(|t| &t.key == k).map(|t| t.order).unwrap_or(u32::MAX)
+    });
 
     let mut episodes: Vec<String> = Vec::new();
     for (_, seq) in &play_alls {
@@ -148,12 +145,7 @@ pub fn decompose(titles: &[TitleShape], range: EpisodeRange) -> Structure {
         }
     }
 
-    Structure {
-        play_alls,
-        episodes,
-        loose,
-        extras,
-    }
+    Structure { play_alls, episodes, loose, extras }
 }
 
 /// When a disc has no play-all, fall back to duration clustering.
@@ -162,7 +154,8 @@ pub fn decompose(titles: &[TitleShape], range: EpisodeRange) -> Structure {
 /// minutes of the most common length are the episodes and the rest are extras.
 /// Order can then only come from the disc layout, which is usually right.
 pub fn episodes_by_duration(titles: &[TitleShape], range: EpisodeRange) -> Vec<String> {
-    let candidates: Vec<&TitleShape> = titles.iter().filter(|t| range.contains(t.duration)).collect();
+    let candidates: Vec<&TitleShape> =
+        titles.iter().filter(|t| range.contains(t.duration)).collect();
     if candidates.is_empty() {
         return Vec::new();
     }
@@ -171,16 +164,11 @@ pub fn episodes_by_duration(titles: &[TitleShape], range: EpisodeRange) -> Vec<S
     let best = candidates
         .iter()
         .max_by_key(|seed| {
-            candidates
-                .iter()
-                .filter(|t| t.duration.abs_diff(seed.duration) <= window)
-                .count()
+            candidates.iter().filter(|t| t.duration.abs_diff(seed.duration) <= window).count()
         })
         .unwrap();
-    let mut hits: Vec<&&TitleShape> = candidates
-        .iter()
-        .filter(|t| t.duration.abs_diff(best.duration) <= window)
-        .collect();
+    let mut hits: Vec<&&TitleShape> =
+        candidates.iter().filter(|t| t.duration.abs_diff(best.duration) <= window).collect();
     hits.sort_by_key(|t| t.order);
     hits.iter().map(|t| t.key.clone()).collect()
 }
@@ -198,12 +186,7 @@ pub fn hash_command(path: &Path, fps: u32, size: u32, dest: &Path) -> Command {
     Command::new("ffmpeg")
         .args(["-nostdin", "-v", "error", "-y", "-i"])
         .path(path)
-        .args([
-            "-vf",
-            &format!("fps={fps},scale={size}:{size},format=gray"),
-            "-f",
-            "rawvideo",
-        ])
+        .args(["-vf", &format!("fps={fps},scale={size}:{size},format=gray"), "-f", "rawvideo"])
         .path(dest)
 }
 
@@ -235,10 +218,7 @@ pub fn similarity(a: &[FrameHash], b: &[FrameHash], tolerance: u32) -> f32 {
     if a.is_empty() || b.is_empty() {
         return 0.0;
     }
-    let hits = a
-        .iter()
-        .filter(|h| b.iter().any(|x| (*h ^ x).count_ones() <= tolerance))
-        .count();
+    let hits = a.iter().filter(|h| b.iter().any(|x| (*h ^ x).count_ones() <= tolerance)).count();
     hits as f32 / a.len() as f32
 }
 
@@ -288,9 +268,10 @@ pub fn find_extended_cuts(
             }
         }
         if let Some((e, s)) = best
-            && s >= SAME_CONTENT {
-                out.push((l.clone(), e, s));
-            }
+            && s >= SAME_CONTENT
+        {
+            out.push((l.clone(), e, s));
+        }
     }
     Ok(out)
 }
@@ -300,12 +281,7 @@ mod tests {
     use super::*;
 
     fn t(key: &str, order: u32, duration: Millis, chapters: &[Millis]) -> TitleShape {
-        TitleShape {
-            key: key.into(),
-            order,
-            duration,
-            chapters: chapters.to_vec(),
-        }
+        TitleShape { key: key.into(), order, duration, chapters: chapters.to_vec() }
     }
 
     /// Two episodes, and a play-all that is both of them end to end.
