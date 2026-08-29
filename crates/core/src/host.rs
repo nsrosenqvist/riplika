@@ -415,6 +415,11 @@ pub trait Fs: Send + Sync {
     fn create_dir_all(&self, p: &Path) -> Result<()>;
     fn read(&self, p: &Path) -> Result<Vec<u8>>;
     fn write(&self, p: &Path, data: &[u8]) -> Result<()>;
+    /// Read part of a file. A produced episode is gigabytes, so anything that
+    /// wants a header cannot be made to hold the whole thing to get it.
+    fn read_range(&self, p: &Path, offset: u64, len: usize) -> Result<Vec<u8>>;
+    /// Overwrite bytes in place, changing nothing else and no length.
+    fn write_at(&self, p: &Path, offset: u64, data: &[u8]) -> Result<()>;
     fn remove_file(&self, p: &Path) -> Result<()>;
     fn rename(&self, from: &Path, to: &Path) -> Result<()>;
     fn size(&self, p: &Path) -> Result<u64>;
@@ -436,6 +441,33 @@ impl Fs for RealFs {
     }
     fn write(&self, p: &Path, data: &[u8]) -> Result<()> {
         std::fs::write(p, data).map_err(|e| Error(format!("{}: {e}", p.display())))
+    }
+    fn read_range(&self, p: &Path, offset: u64, len: usize) -> Result<Vec<u8>> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut f = std::fs::File::open(p).map_err(|e| Error(format!("{}: {e}", p.display())))?;
+        f.seek(SeekFrom::Start(offset)).map_err(|e| Error(format!("{}: {e}", p.display())))?;
+        let mut buf = vec![0u8; len];
+        // A short read is the end of the file, not a failure: a caller asking
+        // for a header does not know how much is there.
+        let mut got = 0;
+        while got < len {
+            match f.read(&mut buf[got..]) {
+                Ok(0) => break,
+                Ok(n) => got += n,
+                Err(e) => return Err(Error(format!("{}: {e}", p.display()))),
+            }
+        }
+        buf.truncate(got);
+        Ok(buf)
+    }
+    fn write_at(&self, p: &Path, offset: u64, data: &[u8]) -> Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(p)
+            .map_err(|e| Error(format!("{}: {e}", p.display())))?;
+        f.seek(SeekFrom::Start(offset)).map_err(|e| Error(format!("{}: {e}", p.display())))?;
+        f.write_all(data).map_err(|e| Error(format!("{}: {e}", p.display())))
     }
     fn remove_file(&self, p: &Path) -> Result<()> {
         match std::fs::remove_file(p) {
@@ -508,6 +540,23 @@ impl Fs for FakeFs {
     }
     fn write(&self, p: &Path, data: &[u8]) -> Result<()> {
         self.files.lock().unwrap().insert(p.to_path_buf(), data.to_vec());
+        Ok(())
+    }
+    fn read_range(&self, p: &Path, offset: u64, len: usize) -> Result<Vec<u8>> {
+        let files = self.files.lock().unwrap();
+        let all = files.get(p).ok_or_else(|| Error(format!("{}: not found", p.display())))?;
+        let start = (offset as usize).min(all.len());
+        let end = start.saturating_add(len).min(all.len());
+        Ok(all[start..end].to_vec())
+    }
+    fn write_at(&self, p: &Path, offset: u64, data: &[u8]) -> Result<()> {
+        let mut files = self.files.lock().unwrap();
+        let all = files.get_mut(p).ok_or_else(|| Error(format!("{}: not found", p.display())))?;
+        let start = offset as usize;
+        if start + data.len() > all.len() {
+            return Err(Error(format!("{}: write past the end", p.display())));
+        }
+        all[start..start + data.len()].copy_from_slice(data);
         Ok(())
     }
     fn remove_file(&self, p: &Path) -> Result<()> {

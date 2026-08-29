@@ -509,6 +509,12 @@ impl<'a> Pipeline<'a> {
             let _ = self.ports.fs.remove_file(&partial);
             return Err(e);
         }
+        if self.settings.container == Container::Mp4 {
+            // ffmpeg leaves a reference to a chapter track it never wrote. The
+            // file plays either way, so a failure here is not worth failing a
+            // finished episode over - it is tidying, not producing.
+            let _ = transcode::mp4::drop_dangling_chapter_refs(self.ports.fs, &partial);
+        }
         self.ports.fs.rename(&partial, dest)?;
 
         let bytes = self.ports.fs.size(dest).unwrap_or(0);

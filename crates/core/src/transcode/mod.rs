@@ -20,6 +20,7 @@
 //! would both have been caught before they reached a file.
 
 pub mod analyze;
+pub mod mp4;
 
 use crate::host::Command;
 use crate::lang::LanguageSet;
