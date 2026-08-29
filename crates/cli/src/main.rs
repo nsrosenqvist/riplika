@@ -239,6 +239,7 @@ enum Cmd {
 
 impl Output {
     fn settings(&self) -> Result<riplika_core::model::JobSettings, String> {
+        let prefs = riplika_core::prefs::Preferences::load();
         Ok(riplika_core::model::JobSettings {
             output_dir: self.out.clone(),
             video: Quality::parse(&self.video)
@@ -256,8 +257,14 @@ impl Output {
             include_extended_cuts: !self.no_extended,
             include_extras: !self.no_extras,
             drop_commentary: !self.keep_commentary,
-            words_dir: self.words.clone(),
-            glyph_table: self.table.clone(),
+            // Asking Preferences, not just taking the flag. Without this the
+            // whole pipeline ran with no glyph table unless told where one was,
+            // so every subtitle stayed a bitmap - which is the thing
+            // recognition exists to avoid, since a bitmap subtitle makes a
+            // player burn it into the picture and re-encode. `ocr` was fixed to
+            // look for the installed table; the pipeline was not.
+            words_dir: self.words.clone().or_else(|| prefs.words_dir()),
+            glyph_table: self.table.clone().or_else(|| prefs.glyph_table()),
             episode_template: self.template.clone(),
         })
     }
@@ -407,5 +414,42 @@ mod tests {
     fn a_folder_given_by_hand_is_used_as_given() {
         let mine = PathBuf::from("/mnt/scratch/rip");
         assert_eq!(resolve_rip_dir(Some(mine.clone())), mine);
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+    use clap::Parser;
+
+    /// `Output` is flattened into each command, so it needs a parser around it
+    /// before it can be built from arguments.
+    #[derive(clap::Parser)]
+    struct Wrap {
+        #[command(flatten)]
+        out: Output,
+    }
+
+    #[test]
+    fn the_pipeline_looks_for_the_installed_glyph_table() {
+        // Without this the whole pipeline ran with no table unless told where
+        // one was, and every subtitle stayed a bitmap - which makes a player
+        // burn it into the picture and re-encode, the exact thing recognition
+        // exists to avoid. `ocr` had been fixed to look; the pipeline had not.
+        let installed = riplika_core::prefs::Preferences::default_glyph_table();
+        let out = Wrap::parse_from(["riplika"]).out;
+        let chosen = out.settings().unwrap().glyph_table;
+        if installed.exists() {
+            assert_eq!(chosen, Some(installed), "the installed table was not found");
+        } else {
+            assert_eq!(chosen, None, "invented a table that is not there");
+        }
+    }
+
+    #[test]
+    fn a_table_given_by_hand_still_wins() {
+        let mine = PathBuf::from("/mnt/tables/mine.json");
+        let out = Wrap::parse_from(["riplika", "--table", "/mnt/tables/mine.json"]).out;
+        assert_eq!(out.settings().unwrap().glyph_table, Some(mine));
     }
 }

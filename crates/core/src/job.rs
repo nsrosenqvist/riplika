@@ -19,6 +19,7 @@ use crate::subs::{self, table::Table};
 use crate::transcode::{self, SubtitleInput, analyze};
 use crate::{Error, Result, lang, naming};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
@@ -126,11 +127,13 @@ pub struct Ports<'a> {
 pub struct Pipeline<'a> {
     pub ports: Ports<'a>,
     pub settings: JobSettings,
+    /// Whether the missing glyph table has been mentioned yet.
+    said_no_table: std::sync::atomic::AtomicBool,
 }
 
 impl<'a> Pipeline<'a> {
     pub fn new(ports: Ports<'a>, settings: JobSettings) -> Self {
-        Pipeline { ports, settings }
+        Pipeline { ports, settings, said_no_table: std::sync::atomic::AtomicBool::new(false) }
     }
 
     pub fn drives(&self) -> Result<Vec<Drive>> {
@@ -575,7 +578,10 @@ impl<'a> Pipeline<'a> {
     ) -> Result<(Vec<SubtitleInput>, Vec<usize>, Vec<RecognisedSubtitle>)> {
         let wanted = transcode::subtitles_to_recognise(info, &self.settings.languages);
         let Some(table) = table else {
-            if !wanted.is_empty() {
+            // Said once, for the disc, rather than once for every title on it.
+            // A disc of forty titles said it forty times, which buries the
+            // warnings that are about a particular file.
+            if !wanted.is_empty() && !self.said_no_table.swap(true, Ordering::Relaxed) {
                 events(Event::Warning(Warning::NoGlyphTable));
             }
             // Without recognition the bitmaps are all there is: keep every one,
@@ -835,6 +841,19 @@ mod tests {
         let items = p.organise(&files, None, &media, Some(1), &mut sink).unwrap();
         let report = p.produce(&items, &media, &mut sink).unwrap();
         (items, report, events)
+    }
+
+    #[test]
+    fn a_missing_glyph_table_is_mentioned_once_for_the_disc() {
+        // It was said once per title. A disc of forty titles said it forty
+        // times, burying the warnings that are about a particular file.
+        let h = harness();
+        let mut s = settings();
+        s.glyph_table = None;
+        let (_, _, events) = run_all(&h, s);
+        let said =
+            events.iter().filter(|e| matches!(e, Event::Warning(Warning::NoGlyphTable))).count();
+        assert!(said <= 1, "said it {said} times");
     }
 
     #[test]
