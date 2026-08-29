@@ -193,8 +193,9 @@ enum Cmd {
     /// Recognise subtitles and write an SRT.
     Ocr {
         input: PathBuf,
-        #[arg(long, default_value = "glyphs.json")]
-        table: PathBuf,
+        /// Glyph table. Defaults to the installed one.
+        #[arg(long)]
+        table: Option<PathBuf>,
         #[arg(short, long)]
         out: Option<PathBuf>,
         #[arg(long, default_value_t = '\u{25a1}')]
@@ -212,8 +213,9 @@ enum Cmd {
         input: PathBuf,
         #[arg(long)]
         at: u64,
-        #[arg(long, default_value = "glyphs.json")]
-        table: PathBuf,
+        /// Glyph table. Defaults to the installed one.
+        #[arg(long)]
+        table: Option<PathBuf>,
         #[arg(long, default_value_t = 0)]
         stream: usize,
     },
@@ -256,6 +258,29 @@ impl Output {
             episode_template: self.template.clone(),
         })
     }
+}
+
+/// Where to find the glyph table: what was asked for, else the installed one,
+/// else the working directory.
+///
+/// The last is for someone in the middle of building a table, who has one in
+/// front of them and has not installed it yet.
+fn resolve_table(given: Option<PathBuf>) -> PathBuf {
+    given.unwrap_or_else(|| {
+        let installed = riplika_core::prefs::Preferences::default_glyph_table();
+        if installed.exists() {
+            installed
+        } else {
+            PathBuf::from("glyphs.json")
+        }
+    })
+}
+
+fn resolve_words(given: Option<PathBuf>) -> Option<PathBuf> {
+    given.or_else(|| {
+        let installed = riplika_core::prefs::Preferences::default_words_dir();
+        installed.is_dir().then_some(installed)
+    })
 }
 
 fn main() {
@@ -335,10 +360,18 @@ fn dispatch() -> Result<(), String> {
             println!("applied {n} changes; {} still unlabelled", t.unlabelled());
             Ok(())
         }
-        Cmd::Ocr { input, table, out, placeholder, words, lang, stream } => {
-            run::ocr(&input, &table, out.as_deref(), placeholder, words.as_deref(), &lang, stream)
+        Cmd::Ocr { input, table, out, placeholder, words, lang, stream } => run::ocr(
+            &input,
+            &resolve_table(table),
+            out.as_deref(),
+            placeholder,
+            resolve_words(words).as_deref(),
+            &lang,
+            stream,
+        ),
+        Cmd::Inspect { input, at, table, stream } => {
+            run::inspect(&input, at, &resolve_table(table), stream)
         }
-        Cmd::Inspect { input, at, table, stream } => run::inspect(&input, at, &table, stream),
         Cmd::Fingerprint { inputs, min_seconds } => glyphs::fingerprint(&inputs, min_seconds),
         Cmd::Check { table } => glyphs::check(&Table::load(&table).map_err(|e| e.to_string())?),
         Cmd::Verify { produced, reference } => glyphs::verify(&produced, &reference),
