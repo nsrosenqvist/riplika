@@ -113,6 +113,29 @@ pub fn rip_command_with(
     method: &str,
     chapters: Option<(u32, u32)>,
 ) -> Command {
+    rip_command_full(device, title, dest, method, chapters, false)
+}
+
+/// The rip command, with or without the second pass for chapter marks.
+///
+/// `preindex` makes ffmpeg read the whole title once to index it and again to
+/// copy it - its own help calls it "slow (2-pass read)" - and on this drive it
+/// is the difference between 97 seconds for an episode and 181. It buys chapter
+/// marks accurate to the frame; without it they drift by about a tenth of a
+/// per cent, which is under two seconds by the end of a twenty-minute episode.
+///
+/// Off by default, because nothing depends on that precision any more.
+/// Decomposition matches a disc's chapter times from its IFO tables, which cost
+/// no reading at all, and where it does compare ripped files it compares them
+/// with each other - the drift is a uniform scale, so it cancels.
+pub fn rip_command_full(
+    device: &Path,
+    title: u32,
+    dest: &Path,
+    method: &str,
+    chapters: Option<(u32, u32)>,
+    preindex: bool,
+) -> Command {
     let mut c = Command::new("ffmpeg").env("DVDCSS_METHOD", method).args([
         "-nostdin",
         "-y",
@@ -123,13 +146,12 @@ pub fn rip_command_with(
         "error",
         "-f",
         "dvdvideo",
-        // Accurate chapter marks are worth a second read: they are what
-        // play-all decomposition matches on.
-        "-preindex",
-        "true",
         "-title",
         &title.to_string(),
     ]);
+    if preindex {
+        c = c.args(["-preindex", "true"]);
+    }
     // Reading a chapter range is how a title with one damaged chapter is
     // salvaged: the rest of it is still perfectly good.
     if let Some((first, last)) = chapters {
@@ -307,11 +329,16 @@ pub struct DvdVideo<'a> {
     /// Highest title number to look at. Lower is faster; the default is the
     /// format maximum.
     pub max_title: u32,
+    /// Read each title twice, for chapter marks accurate to the frame.
+    ///
+    /// Off by default: it doubles the reading and nothing needs that precision.
+    /// Here for whoever does.
+    pub accurate_chapters: bool,
 }
 
 impl<'a> DvdVideo<'a> {
     pub fn new(runner: &'a dyn Runner) -> Self {
-        DvdVideo { runner, max_title: MAX_TITLE }
+        DvdVideo { runner, max_title: MAX_TITLE, accurate_chapters: false }
     }
 }
 
@@ -442,7 +469,8 @@ impl DvdVideo<'_> {
             if attempt > 0 {
                 report(0.0, &format!("retrying title {} with method {method}", title.id));
             }
-            let cmd = rip_command_with(device, title.id, dest, method, None);
+            let cmd =
+                rip_command_full(device, title.id, dest, method, None, self.accurate_chapters);
             let out = self.runner.stream(&cmd, &mut |line| {
                 if let Some(us) = line.strip_prefix("out_time_us=")
                     && let Ok(us) = us.trim().parse::<u64>()
@@ -725,7 +753,7 @@ pub(crate) mod tests {
         for n in 41..=47 {
             r = r.on(&format!("-title {n} "), EPISODE);
         }
-        let d = DvdVideo { runner: &r, max_title: 58 };
+        let d = DvdVideo { runner: &r, max_title: 58, accurate_chapters: false };
         let scan = d.scan(&drive(), &mut |_, _| {}).unwrap();
         assert_eq!(
             scan.titles.iter().map(|t| t.id).collect::<Vec<_>>(),
@@ -736,7 +764,7 @@ pub(crate) mod tests {
     #[test]
     fn an_empty_drive_is_an_error_not_an_empty_scan() {
         let r = FakeRunner::new();
-        let d = DvdVideo { runner: &r, max_title: 12 };
+        let d = DvdVideo { runner: &r, max_title: 12, accurate_chapters: false };
         assert!(d.scan(&drive(), &mut |_, _| {}).unwrap_err().0.contains("no titles"));
     }
 
@@ -746,10 +774,29 @@ pub(crate) mod tests {
         assert_eq!(c.value_of("-f"), Some("dvdvideo"));
         assert_eq!(c.value_of("-title"), Some("9"));
         assert_eq!(c.value_of("-c"), Some("copy"));
-        // accurate chapter marks are what decomposition matches on
-        assert_eq!(c.value_of("-preindex"), Some("true"));
         assert!(c.has("-nostdin"));
         assert_eq!(c.args.last().unwrap(), "/rip/t09.mkv");
+    }
+
+    #[test]
+    fn a_rip_does_not_read_the_disc_twice_unless_asked() {
+        // -preindex is ffmpeg's own "slow (2-pass read)". Measured on a
+        // Pioneer BDR-UD04: 181 seconds for a 723 MB episode with it, 97
+        // without, for byte-identical video. It buys chapter marks accurate to
+        // the frame, and nothing needs them - a disc's chapter times come from
+        // its IFO tables, which cost no reading.
+        let fast = rip_command(Path::new("/dev/sr0"), 9, Path::new("/rip/t09.mkv"));
+        assert_eq!(fast.value_of("-preindex"), None, "{}", fast.display());
+
+        let exact = rip_command_full(
+            Path::new("/dev/sr0"),
+            9,
+            Path::new("/rip/t09.mkv"),
+            "key",
+            None,
+            true,
+        );
+        assert_eq!(exact.value_of("-preindex"), Some("true"));
     }
 
     #[test]
@@ -800,7 +847,7 @@ pub(crate) mod tests {
                 Ok(crate::host::Output::default())
             }
         }
-        let d = DvdVideo { runner: &Progress, max_title: 1 };
+        let d = DvdVideo { runner: &Progress, max_title: 1, accurate_chapters: false };
         let title = parse_title(EPISODE, 9).unwrap();
         let mut seen = Vec::new();
         let dir = std::env::temp_dir().join("riplika-dvd-progress-test");
@@ -825,7 +872,7 @@ pub(crate) mod tests {
                 Ok(crate::host::Output::default())
             }
         }
-        let d = DvdVideo { runner: &Failing, max_title: 1 };
+        let d = DvdVideo { runner: &Failing, max_title: 1, accurate_chapters: false };
         let title = parse_title(EPISODE, 9).unwrap();
         let mut messages = Vec::new();
         let dir = std::env::temp_dir().join("riplika-dvd-retry-test");
@@ -918,7 +965,7 @@ mod health_tests {
     fn scanning_stops_as_soon_as_decryption_fails() {
         // pressing on would spend minutes building a list we know is short
         let r = FakeRunner::new().fail("ffprobe", CSS_FAILURE);
-        let d = DvdVideo { runner: &r, max_title: 58 };
+        let d = DvdVideo { runner: &r, max_title: 58, accurate_chapters: false };
         let (_, health) = d.scan_checked(&drive(), &mut |_, _| {}).unwrap();
         assert!(!health.is_trustworthy());
         // one probe per decryption method: each attempt is abandoned the moment
@@ -930,7 +977,7 @@ mod health_tests {
     #[test]
     fn the_plain_scan_still_succeeds_on_a_healthy_disc() {
         let r = FakeRunner::new().on("-title 1 ", super::tests::EPISODE);
-        let d = DvdVideo { runner: &r, max_title: 3 };
+        let d = DvdVideo { runner: &r, max_title: 3, accurate_chapters: false };
         assert_eq!(d.scan(&drive(), &mut |_, _| {}).unwrap().titles.len(), 1);
     }
 }
@@ -1189,7 +1236,7 @@ mod scan_progress_tests {
         for n in 1..=8 {
             r = r.on(&format!("-title {n} "), tests::EPISODE);
         }
-        let d = DvdVideo { runner: &r, max_title: 8 };
+        let d = DvdVideo { runner: &r, max_title: 8, accurate_chapters: false };
         let mut seen: Vec<f32> = Vec::new();
         d.scan(&drive(), &mut |f, _| seen.push(f)).unwrap();
 
@@ -1202,7 +1249,7 @@ mod scan_progress_tests {
     #[test]
     fn progress_names_the_title_being_probed() {
         let r = FakeRunner::new().on("-title 1 ", tests::EPISODE);
-        let d = DvdVideo { runner: &r, max_title: 3 };
+        let d = DvdVideo { runner: &r, max_title: 3, accurate_chapters: false };
         let mut messages: Vec<String> = Vec::new();
         d.scan(&drive(), &mut |_, m| {
             if let Some(m) = m {
@@ -1309,7 +1356,7 @@ mod health_enforcement_tests {
         // missing and nothing to say they existed. On a real disc that came out
         // as twenty-three short extras and no episodes at all.
         let r = FakeRunner::new().fail("ffprobe", CSS_FAILURE);
-        let d = DvdVideo { runner: &r, max_title: 8 };
+        let d = DvdVideo { runner: &r, max_title: 8, accurate_chapters: false };
         let e = d.scan(&drive(), &mut |_, _| {}).unwrap_err();
         assert!(e.0.contains("decrypt"), "{}", e.0);
         assert!(e.0.contains("--reader auto"), "must say what to do: {}", e.0);
@@ -1318,7 +1365,7 @@ mod health_enforcement_tests {
     #[test]
     fn a_clean_scan_still_comes_back_normally() {
         let r = FakeRunner::new().on("-title 1 ", tests::EPISODE);
-        let d = DvdVideo { runner: &r, max_title: 3 };
+        let d = DvdVideo { runner: &r, max_title: 3, accurate_chapters: false };
         assert_eq!(d.scan(&drive(), &mut |_, _| {}).unwrap().titles.len(), 1);
     }
 }
