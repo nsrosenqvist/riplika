@@ -324,6 +324,27 @@ pub struct Event {
     pub spu: Spu,
 }
 
+/// Decode packets that arrive whole, rather than as offsets into a `.sub`.
+///
+/// A Matroska block *is* one SPU, so there is no file to seek within and no
+/// index to consult - the timing comes with the packet.
+pub fn decode_packets(packets: &[crate::subs::matroska::Packet]) -> Vec<Event> {
+    let mut out = Vec::new();
+    for packet in packets {
+        let Some(spu) = decode_spu(&packet.data) else {
+            continue;
+        };
+        let start = packet.start_ms + spu.start_delay_ms;
+        let end = spu.stop_ms.map(|s| packet.start_ms + s);
+        out.push(Event {
+            start_ms: start,
+            end_ms: end,
+            spu,
+        });
+    }
+    out
+}
+
 pub fn decode_all(idx: &Idx, sub: &[u8]) -> Vec<Event> {
     let mut out = Vec::new();
     for ev in &idx.events {

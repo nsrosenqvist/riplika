@@ -26,10 +26,10 @@ There is a window and a command line. Both do the same things.
 
 ## Getting started
 
-You need `ffmpeg`, `ffprobe` and `mkvextract`. For Blu-ray you also need MakeMKV. On Arch:
+You need `ffmpeg` and `ffprobe`. For Blu-ray you also need MakeMKV. On Arch:
 
 ```sh
-sudo pacman -S ffmpeg mkvtoolnix-cli libdvdcss libdvdread libdvdnav
+sudo pacman -S ffmpeg libdvdcss libdvdread libdvdnav
 cargo build --release
 ```
 

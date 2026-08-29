@@ -517,11 +517,11 @@ pub fn ocr(
 }
 
 pub fn inspect(input: &Path, at: u64, table: &Path, stream: usize) -> Result<(), String> {
-    use riplika_core::subs::{segment, source, vobsub};
+    use riplika_core::subs::{segment, source};
     let runner = RealRunner::default();
     let t = subs::table::Table::load(table).unwrap_or_default();
     let src = source::load(&runner, input, stream).map_err(|e| e.to_string())?;
-    let events = vobsub::decode_all(&src.idx, &src.sub);
+    let events = src.events();
     let opts = segment::SegOpts::default();
     let Some(ev) = events.iter().min_by_key(|e| e.start_ms.abs_diff(at)) else {
         return Err("no subtitle events".into());

@@ -12,6 +12,7 @@
 //! 99.0% character accuracy, no unrecognised glyphs. Where the two disagree
 //! this is right 16.5% of the time and the reference 0.6%.
 
+pub mod matroska;
 pub mod recognize;
 pub mod resolve;
 pub mod segment;
@@ -67,7 +68,7 @@ pub fn recognise(
     placeholder: char,
 ) -> Result<Recognition> {
     let src = source::load(runner, input, stream)?;
-    let events = vobsub::decode_all(&src.idx, &src.sub);
+    let events = src.events();
     let opts = SegOpts::default();
 
     // Segment everything first, so the word gap is measured over the whole

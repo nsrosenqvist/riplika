@@ -7,7 +7,7 @@
 //! the building ones: the one manual step is where the mistakes come from.
 
 use riplika_core::host::RealRunner;
-use riplika_core::subs::{segment, source, srt, table, vobsub};
+use riplika_core::subs::{segment, source, srt, table};
 use segment::SegOpts;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -46,7 +46,7 @@ pub fn build(
                 continue;
             }
         };
-        let events = vobsub::decode_all(&src.idx, &src.sub);
+        let events = src.events();
 
         // reference cues keyed by start time - our SRTs share the stream's timing
         let refmap: BTreeMap<u64, String> = match reference {

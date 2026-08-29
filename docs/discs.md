@@ -195,7 +195,7 @@ It builds, and building it found four things wrong with it that reading it never
 
 Verified in the sandbox afterwards: the `dvdvideo` demuxer is present, `libx264` is present, and `libdvdcss.so.2` is where libdvdread expects it. Those three are what decide whether it can read a disc and encode it at all.
 
-**Subtitle recognition is missing from the Flatpak.** It needs `mkvextract` to split a VobSub track into its `.idx`/`.sub` pair - ffmpeg can read that format but has no muxer to write it - and MKVToolNix requires Qt for every one of its tools, not only its window. Bundling Qt to obtain one binary is a poor trade, so the honest fix is to read the subtitle track out of Matroska directly, which would drop the dependency from the native build as well.
+It has subtitle recognition, which took removing a dependency to get. That needed `mkvextract` to split a VobSub track into its `.idx`/`.sub` pair - ffmpeg reads that format but has no muxer to write it - and MKVToolNix requires Qt for every one of its tools, not only its window. Rather than bundle Qt for one binary, the track is now read out of Matroska directly, which dropped the dependency from every build. See [subtitles](subtitles.md#reading-the-track).
 
 ```sh
 flatpak run org.flatpak.Builder --user --force-clean --repo=repo build packaging/com.nsrosenqvist.Riplika.yml
