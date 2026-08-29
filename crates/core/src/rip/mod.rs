@@ -594,7 +594,7 @@ mod eject_tests {
     fn the_wait_is_bounded() {
         // A drive still finishing a read does not answer, and on a wedged one
         // it never will. Waiting forever would hang whoever asked.
-        assert!(EJECT_TIMEOUT_SECONDS > 0 && EJECT_TIMEOUT_SECONDS <= 60);
+        const { assert!(EJECT_TIMEOUT_SECONDS > 0 && EJECT_TIMEOUT_SECONDS <= 60) };
     }
 }
 

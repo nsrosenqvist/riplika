@@ -187,7 +187,6 @@ pub fn search(query: String, season: Option<u32>, tx: Sender<Msg>) {
 
 /// Rip, sort out and produce - the long one.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub fn run(
     scan: DiscScan,
     media: Media,

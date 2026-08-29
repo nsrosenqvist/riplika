@@ -1918,7 +1918,6 @@ mod locking_tests {
 
 #[cfg(test)]
 mod language_choice_tests {
-    use super::*;
     use riplika_core::lang::LanguageSet;
     use riplika_core::model::TrackKind;
 
