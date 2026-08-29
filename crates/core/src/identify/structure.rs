@@ -73,6 +73,25 @@ fn chapters_match(a: &[Millis], b: &[Millis]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.abs_diff(*y) <= CHAPTER_TOLERANCE)
 }
 
+/// A closing chapter too short to be anything a person would watch.
+const SLIVER: Millis = 2_000;
+
+/// An episode's chapters, without the closing cell that only it has.
+///
+/// DVDs end a title with a cell of about a second - a fade, or a marker to
+/// return to the menu. It belongs to the episode played on its own and not to
+/// the play-all, which runs straight on into the next episode. Matching on it
+/// means an episode never matches its own copy inside the play-all, and the
+/// whole disc then reads as one enormous extra: on Parks and Recreation series
+/// six disc one, three and a quarter hours of duplicate video, ripped and
+/// transcoded for nothing.
+fn without_closing_sliver(chapters: &[Millis]) -> &[Millis] {
+    match chapters.split_last() {
+        Some((last, rest)) if *last <= SLIVER && !rest.is_empty() => rest,
+        _ => chapters,
+    }
+}
+
 /// Sort a disc's titles into episodes, play-alls and extras.
 pub fn decompose(titles: &[TitleShape], range: EpisodeRange) -> Structure {
     // Only episode-length titles with chapters can be *parts* of a play-all.
@@ -100,8 +119,9 @@ pub fn decompose(titles: &[TitleShape], range: EpisodeRange) -> Structure {
                     // whichever comes first, and the second is lost.
                     continue;
                 }
-                let n = p.chapters.len();
-                if n > 0 && n <= rest.len() && chapters_match(&rest[..n], &p.chapters) {
+                let want = without_closing_sliver(&p.chapters);
+                let n = want.len();
+                if n > 0 && n <= rest.len() && chapters_match(&rest[..n], want) {
                     seq.push(p.key.clone());
                     rest = &rest[n..];
                     matched = true;
@@ -113,8 +133,10 @@ pub fn decompose(titles: &[TitleShape], range: EpisodeRange) -> Structure {
             }
         }
         // Two or more parts, fully consumed, and not itself: anything less is a
-        // coincidence rather than a play-all.
-        if seq.len() >= 2 && rest.is_empty() && !seq.contains(&t.key) {
+        // coincidence rather than a play-all. The play-all has a closing cell
+        // of its own, so what is left over may be a sliver rather than nothing.
+        let consumed = rest.iter().all(|c| *c <= SLIVER);
+        if seq.len() >= 2 && consumed && !seq.contains(&t.key) {
             play_alls.push((t.key.clone(), seq));
         }
     }
@@ -301,6 +323,54 @@ mod tests {
         assert_eq!(s.play_alls[0].0, "play.mkv");
         assert_eq!(s.episodes, vec!["ep1.mkv", "ep2.mkv"]);
         assert_eq!(s.extras, vec!["extra.mkv"]);
+    }
+
+    /// Parks and Recreation series six, disc one, as it actually reads.
+    ///
+    /// Every title ends with a cell of about a second; the play-all does not
+    /// have them between episodes, because it runs straight on. The numbers are
+    /// the disc's own, taken from the ripped files.
+    fn disc_with_closing_slivers() -> Vec<TitleShape> {
+        // "London", the double-length opener: four chapters and a 1.13s close
+        let london = [275_780, 821_320, 754_780, 733_040, 1_130];
+        // an ordinary episode, likewise
+        let ep = [135_460, 310_510, 464_500, 383_640, 1_130];
+        let mut play_all: Vec<Millis> = Vec::new();
+        play_all.extend_from_slice(&london[..4]);
+        play_all.extend_from_slice(&ep[..4]);
+        play_all.push(1_130); // and one closing cell of its own, at the end
+        vec![
+            t("title_t04.mkv", 4, play_all.iter().sum::<u64>(), &play_all),
+            t("title_t05.mkv", 5, london.iter().sum::<u64>(), &london),
+            t("title_t06.mkv", 6, ep.iter().sum::<u64>(), &ep),
+        ]
+    }
+
+    #[test]
+    fn a_closing_cell_does_not_hide_a_play_all() {
+        // The bug this replaces: chapter lists had to match whole, so an
+        // episode never matched its own copy inside the play-all, and three
+        // and a quarter hours of duplicate video was read and transcoded as
+        // an extra.
+        let s = decompose(&disc_with_closing_slivers(), EpisodeRange::default());
+        assert_eq!(s.play_alls.len(), 1, "the play-all was not recognised");
+        assert_eq!(s.play_alls[0].0, "title_t04.mkv");
+        assert_eq!(s.episodes, vec!["title_t05.mkv", "title_t06.mkv"]);
+        assert!(s.extras.is_empty(), "nothing here is an extra: {:?}", s.extras);
+    }
+
+    #[test]
+    fn a_chapter_long_enough_to_watch_still_has_to_match() {
+        // Only a sliver is forgiven. A title whose last chapter is real
+        // content is a different title, not the same one with a close on it.
+        let mut titles = disc_with_closing_slivers();
+        titles[1].chapters.pop();
+        titles[1].chapters.push(90_000);
+        titles[1].duration += 90_000;
+        assert!(
+            decompose(&titles, EpisodeRange::default()).play_alls.is_empty(),
+            "a minute and a half is not a closing cell"
+        );
     }
 
     #[test]
