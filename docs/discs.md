@@ -197,6 +197,12 @@ Verified in the sandbox afterwards: the `dvdvideo` demuxer is present, `libx264`
 
 It has subtitle recognition, which took removing a dependency to get. That needed `mkvextract` to split a VobSub track into its `.idx`/`.sub` pair - ffmpeg reads that format but has no muxer to write it - and MKVToolNix requires Qt for every one of its tools, not only its window. Rather than bundle Qt for one binary, the track is now read out of Matroska directly, which dropped the dependency from every build. See [subtitles](subtitles.md#reading-the-track).
 
+### Two things about running it
+
+Its data directory is the sandbox's own, so a glyph table installed on the host is not visible to it. Put one in `~/.var/app/com.nsrosenqvist.Riplika/data/riplika/` - or build one from inside the flatpak, which puts it there anyway.
+
+A flatpak inherits the host's `LANG` but its runtime carries only the languages it was configured for, so an uncommon locale - `en_SE`, say - arrives with nothing to set it to. Riplika borrows an installed locale and keeps the language in `LANGUAGE`, which is enough for gettext to still read the right catalogue, so this costs nothing but a missing territory's date and number formats. `flatpak config --user --set languages "en;sv"` installs the real thing.
+
 ```sh
 flatpak run org.flatpak.Builder --user --force-clean --repo=repo build packaging/com.nsrosenqvist.Riplika.yml
 flatpak build-update-repo repo
