@@ -1,0 +1,3 @@
+crates/gui/src/main.rs
+crates/gui/src/show_picker.rs
+crates/gui/src/prefs_dialog.rs

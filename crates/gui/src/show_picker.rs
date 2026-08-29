@@ -6,6 +6,7 @@
 //! number - further down. So the page states what it settled on, and the
 //! alternatives live in a dialog you open when that is wrong.
 
+use crate::i18n::tr;
 use adw::prelude::*;
 use riplika_core::model::Candidate;
 
@@ -22,8 +23,8 @@ impl Picker {
         self.clear();
         if candidates.is_empty() {
             let row = adw::ActionRow::builder()
-                .title("Nothing found")
-                .subtitle("Try a different spelling, or part of the title")
+                .title(tr("Nothing found"))
+                .subtitle(tr("Try a different spelling, or part of the title"))
                 .build();
             row.set_sensitive(false);
             self.list.append(&row);
@@ -55,7 +56,7 @@ impl Picker {
     /// Say that a search is under way, where its answer will appear.
     pub fn show_searching(&self) {
         self.clear();
-        let row = adw::ActionRow::builder().title("Searching...").build();
+        let row = adw::ActionRow::builder().title(tr("Searching...")).build();
         row.add_suffix(&gtk::Spinner::builder().spinning(true).build());
         row.set_sensitive(false);
         self.list.append(&row);
@@ -82,7 +83,7 @@ pub fn present(
     on_search: impl Fn(String) + 'static,
 ) -> Picker {
     let dialog = adw::Dialog::builder()
-        .title("Which show is this?")
+        .title(tr("Which show is this?"))
         .content_width(520)
         .content_height(620)
         .build();

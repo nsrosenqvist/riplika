@@ -5,10 +5,12 @@
 //! that justifies a window at all - identification is a guess, and a guess is
 //! only safe if it is easy to overrule.
 
+mod i18n;
 mod prefs_dialog;
 mod show_picker;
 mod worker;
 
+use crate::i18n::tr;
 use adw::prelude::*;
 use gtk::glib;
 use riplika_core::job::{Event, Report};
@@ -159,6 +161,9 @@ fn main() -> glib::ExitCode {
     // it is not an option GTK knows.
     let handed: Option<String> = std::env::args().nth(1).filter(|a| !a.starts_with('-'));
 
+    // Before any string is asked for.
+    i18n::init();
+
     let app = adw::Application::builder().application_id(APP_ID).build();
     app.connect_activate(move |app| build(app, handed.clone()));
     app.run_with_args::<&str>(&[])
@@ -202,8 +207,8 @@ fn labelled_button(icon: &str, label: &str, name: &str) -> gtk::Button {
         .icon_name(icon)
         .label(label)
         .build();
-    let button = gtk::Button::builder().name(name).child(&content).build();
-    button
+    
+    gtk::Button::builder().name(name).child(&content).build()
 }
 
 /// Change a labelled button's text, whichever kind it is.
@@ -230,7 +235,7 @@ fn page_clamped(
     // wrong at the moment the rip page shows them ticked the wrong way.
     let prefs_button = gtk::Button::builder()
         .icon_name("emblem-system-symbolic")
-        .tooltip_text("Preferences")
+        .tooltip_text(tr("Preferences"))
         .name("preferences")
         .build();
     header.pack_end(&prefs_button);
@@ -277,7 +282,7 @@ fn build(app: &adw::Application, handed: Option<String>) {
     let ui = build_ui();
     let window = adw::ApplicationWindow::builder()
         .application(app)
-        .title("Riplika")
+        .title(tr("Riplika"))
         .default_width(720)
         .default_height(720)
         .content(&ui.toasts)
@@ -312,7 +317,7 @@ fn build_ui() -> Ui {
     // make.
     let drive_page = adw::StatusPage::builder()
         .icon_name("media-optical-symbolic")
-        .title("No disc")
+        .title(tr("No disc"))
         .vexpand(true)
         .build();
 
@@ -323,19 +328,19 @@ fn build_ui() -> Ui {
         .build();
 
     let drive_group = adw::PreferencesGroup::builder().build();
-    let drive_combo = adw::ComboRow::builder().title("Drive").build();
+    let drive_combo = adw::ComboRow::builder().title(tr("Drive")).build();
     drive_group.add(&drive_combo);
     // Hidden unless there is more than one: a chooser offering one option is
     // a decision the user does not have.
     drive_group.set_visible(false);
 
     let drive_next = gtk::Button::builder()
-        .label("Analyse disc")
+        .label(tr("Analyse disc"))
         .sensitive(false)
         .halign(gtk::Align::Center)
         .css_classes(vec!["pill".to_string(), "suggested-action".to_string()])
         .build();
-    let refresh = labelled_button("view-refresh-symbolic", "Look again", "refresh");
+    let refresh = labelled_button("view-refresh-symbolic", &tr("Look again"), "refresh");
     refresh.set_halign(gtk::Align::Center);
     refresh.add_css_class("flat");
 
@@ -347,7 +352,7 @@ fn build_ui() -> Ui {
     drive_secondary.append(&refresh);
     // Swapping discs is what you do most on this page, and reaching for the
     // tray button on an external drive is not always possible.
-    let eject = labelled_button("media-eject-symbolic", "Eject", "eject");
+    let eject = labelled_button("media-eject-symbolic", &tr("Eject"), "eject");
     eject.add_css_class("flat");
     drive_secondary.append(&eject);
 
@@ -366,11 +371,11 @@ fn build_ui() -> Ui {
     // wrong.
     let id_body = body();
     let id_group = adw::PreferencesGroup::builder()
-        .title("Identified as")
+        .title(tr("Identified as"))
         .build();
     let chosen_row = adw::ActionRow::builder()
-        .title("Not identified")
-        .subtitle("Choose the show")
+        .title(tr("Not identified"))
+        .subtitle(tr("Choose the show"))
         .activatable(true)
         .build();
     chosen_row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
@@ -378,16 +383,16 @@ fn build_ui() -> Ui {
 
     // Applies to whichever show is chosen above; changing it needs no search.
     let detail_group = adw::PreferencesGroup::builder()
-        .title("This disc")
+        .title(tr("This disc"))
         .description("Which part of the show it holds. The disc number decides where episode numbering starts.")
         .build();
-    let season_entry = adw::EntryRow::builder().title("Season").build();
-    let disc_entry = adw::EntryRow::builder().title("Disc").build();
+    let season_entry = adw::EntryRow::builder().title(tr("Season")).build();
+    let disc_entry = adw::EntryRow::builder().title(tr("Disc")).build();
     detail_group.add(&season_entry);
     detail_group.add(&disc_entry);
 
     let identify_next = gtk::Button::builder()
-        .label("Continue")
+        .label(tr("Continue"))
         .sensitive(false)
         .css_classes(vec!["suggested-action".to_string()])
         .halign(gtk::Align::End)
@@ -399,24 +404,24 @@ fn build_ui() -> Ui {
 
     // --- step three: how to encode it ------------------------------------
     let set_body = body();
-    let quality = adw::PreferencesGroup::builder().title("Quality").build();
+    let quality = adw::PreferencesGroup::builder().title(tr("Quality")).build();
     let tiers = gtk::StringList::new(&["High", "Medium", "Low"]);
     let video = adw::ComboRow::builder()
-        .title("Picture")
-        .subtitle("Medium is the sweet spot for DVD: about 170 MB an episode")
+        .title(tr("Picture"))
+        .subtitle(tr("Medium is the sweet spot for DVD: about 170 MB an episode"))
         .model(&tiers)
         .selected(1)
         .build();
     let audio_tiers = gtk::StringList::new(&["High", "Medium", "Low"]);
     let audio = adw::ComboRow::builder()
-        .title("Sound")
-        .subtitle("High keeps the original AC3 untouched; browsers cannot decode it")
+        .title(tr("Sound"))
+        .subtitle(tr("High keeps the original AC3 untouched; browsers cannot decode it"))
         .model(&audio_tiers)
         .selected(0)
         .build();
     let containers = gtk::StringList::new(&["MP4", "Matroska"]);
     let container = adw::ComboRow::builder()
-        .title("Container")
+        .title(tr("Container"))
         .model(&containers)
         .selected(0)
         .build();
@@ -428,7 +433,7 @@ fn build_ui() -> Ui {
     // Offering a text field instead means guessing at spellings and finding out
     // afterwards that nothing matched.
     let language_group = adw::PreferencesGroup::builder()
-        .title("Languages")
+        .title(tr("Languages"))
         .description("What this disc carries. Your preferred languages start ticked; the first becomes the default track.")
         .build();
 
@@ -436,26 +441,26 @@ fn build_ui() -> Ui {
     // material against seven episodes, so this is most of the reading as well
     // as most of the files.
     let contents_group = adw::PreferencesGroup::builder()
-        .title("What to take")
+        .title(tr("What to take"))
         .description("Episodes are always taken. Anything unticked is not read at all.")
         .build();
     let include_extended = adw::SwitchRow::builder()
-        .title("Extended episodes")
+        .title(tr("Extended episodes"))
         .subtitle("Longer cuts some discs carry alongside the broadcast versions")
         .build();
     let include_extras = adw::SwitchRow::builder()
-        .title("Bonus material")
-        .subtitle("Featurettes, deleted scenes, gag reels")
+        .title(tr("Bonus material"))
+        .subtitle(tr("Featurettes, deleted scenes, gag reels"))
         .build();
     contents_group.add(&include_extended);
     contents_group.add(&include_extras);
 
-    let folders = adw::PreferencesGroup::builder().title("Output").build();
-    let output_dir = adw::ActionRow::builder().title("Folder").activatable(true).build();
+    let folders = adw::PreferencesGroup::builder().title(tr("Output")).build();
+    let output_dir = adw::ActionRow::builder().title(tr("Folder")).activatable(true).build();
     folders.add(&output_dir);
 
     let start = gtk::Button::builder()
-        .label("Start")
+        .label(tr("Start"))
         .name("start")
         .css_classes(vec!["suggested-action".to_string()])
         .halign(gtk::Align::End)
@@ -470,7 +475,7 @@ fn build_ui() -> Ui {
     // --- step four: watching it happen -----------------------------------
     let prog_body = body();
     let stage_label = gtk::Label::builder()
-        .label("Starting")
+        .label(tr("Starting"))
         .justify(gtk::Justification::Center)
         .wrap(true)
         .build();
@@ -518,7 +523,7 @@ fn build_ui() -> Ui {
     // Stopping work is not a dialog's "Cancel", and the icon says which of the
     // two this is - the same word means "discard what I typed" three pages
     // back.
-    let cancel_button = labelled_button("process-stop-symbolic", "Cancel", "cancel");
+    let cancel_button = labelled_button("process-stop-symbolic", &tr("Cancel"), "cancel");
     cancel_button.add_css_class("pill");
     cancel_button.add_css_class("destructive-action");
     cancel_button.set_halign(gtk::Align::Center);
@@ -558,8 +563,8 @@ fn build_ui() -> Ui {
 
     // --- and what came out ------------------------------------------------
     let res_body = body();
-    let results_status = adw::StatusPage::builder().title("Done").build();
-    let results = adw::PreferencesGroup::builder().title("Files").build();
+    let results_status = adw::StatusPage::builder().title(tr("Done")).build();
+    let results = adw::PreferencesGroup::builder().title(tr("Files")).build();
     // The disc is finished with, and the next one is the point.
     let results_actions = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -567,9 +572,9 @@ fn build_ui() -> Ui {
         .halign(gtk::Align::Center)
         .margin_top(12)
         .build();
-    let eject_done = labelled_button("media-eject-symbolic", "Eject", "eject");
+    let eject_done = labelled_button("media-eject-symbolic", &tr("Eject"), "eject");
     eject_done.add_css_class("pill");
-    let another = labelled_button("media-optical-symbolic", "Rip another disc", "another");
+    let another = labelled_button("media-optical-symbolic", &tr("Rip another disc"), "another");
     another.add_css_class("pill");
     another.add_css_class("suggested-action");
     results_actions.append(&eject_done);
@@ -756,7 +761,7 @@ impl App {
 
         if available.is_empty() {
             let row = adw::SwitchRow::builder()
-                .title("No language tracks found")
+                .title(tr("No language tracks found"))
                 .sensitive(false)
                 .build();
             self.ui.language_group.add(&row);
@@ -948,8 +953,8 @@ impl App {
                 self.ui.identify_next.set_sensitive(!self.is_busy());
             }
             None => {
-                self.ui.chosen_row.set_title("Not identified");
-                self.ui.chosen_row.set_subtitle("Choose the show");
+                self.ui.chosen_row.set_title(&tr("Not identified"));
+                self.ui.chosen_row.set_subtitle(&tr("Choose the show"));
                 self.ui.identify_next.set_sensitive(false);
             }
         }
@@ -1078,7 +1083,7 @@ impl App {
                     state.items.clear();
                 }
                 self.show_choice();
-                self.toast("Drive open");
+                self.toast(&tr("Drive open"));
                 self.go(Step::Drive);
                 worker::list_drives(true, self.sender());
             }
@@ -1241,7 +1246,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 return;
             };
             if app.is_busy() {
-                app.toast("Already working - wait for it, or cancel it first");
+                app.toast(&tr("Already working - wait for it, or cancel it first"));
                 return;
             }
             app.ui.stage_label.set_label("Scanning disc");
@@ -1274,7 +1279,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                     app.state.borrow_mut().chosen = Some(media);
                     app.go(Step::Settings);
                 }
-                None => app.toast("Choose what this disc is first"),
+                None => app.toast(&tr("Choose what this disc is first")),
             }
         });
     }
@@ -1342,11 +1347,11 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 (s.scan.clone(), s.chosen.clone())
             };
             let (Some(scan), Some(media)) = (scan, media) else {
-                app.toast("Nothing to rip yet");
+                app.toast(&tr("Nothing to rip yet"));
                 return;
             };
             if app.is_busy() {
-                app.toast("Already working - wait for it, or cancel it first");
+                app.toast(&tr("Already working - wait for it, or cancel it first"));
                 return;
             }
             let disc = app.ui.disc_entry.text().trim().parse::<u32>().ok();
@@ -1388,7 +1393,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
         let tx = tx.clone();
         button.connect_clicked(move |_| {
             if app.is_busy() {
-                app.toast("Not while the drive is being read");
+                app.toast(&tr("Not while the drive is being read"));
                 return;
             }
             let device = app
@@ -1399,10 +1404,10 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 .map(|d| d.device.clone());
             match device {
                 Some(device) => {
-                    app.toast("Opening the drive");
+                    app.toast(&tr("Opening the drive"));
                     worker::eject(device, tx.clone());
                 }
-                None => app.toast("No drive to open"),
+                None => app.toast(&tr("No drive to open")),
             }
         });
     }
@@ -1432,7 +1437,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 return;
             }
             app.state.borrow().cancel.cancel();
-            app.toast("Stopping after the current step");
+            app.toast(&tr("Stopping after the current step"));
             set_button_label(b, "Close");
             // The job will not stop this instant - it stops at the next command
             // boundary - but nothing new should be startable in the meantime.
@@ -1940,7 +1945,7 @@ mod language_choice_tests {
         // nothing to tick is fine; ticking nothing is not
         let empty: Vec<(String, bool)> = Vec::new();
         let has_none_to_offer = empty.is_empty();
-        let offered_but_unticked = vec![("eng".to_string(), false)];
+        let offered_but_unticked = [("eng".to_string(), false)];
         assert!(has_none_to_offer, "a disc with no tracks may still be ripped");
         assert!(
             !offered_but_unticked.iter().any(|(_, on)| *on),

@@ -12,3 +12,4 @@ path = "src/main.rs"
 riplika-core.workspace = true
 gtk = { package = "gtk4", version = "0.10", features = ["v4_10"] }
 adw = { package = "libadwaita", version = "0.8", features = ["v1_5"] }
+gettext-rs = { version = "0.8.0", features = ["gettext-system"] }

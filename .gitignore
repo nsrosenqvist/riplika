@@ -3,3 +3,4 @@ work/
 .flatpak-builder/
 build/
 repo/
+po/*.mo

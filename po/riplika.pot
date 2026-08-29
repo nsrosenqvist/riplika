@@ -1,0 +1,219 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR Niklas Rosenqvist
+# This file is distributed under the same license as the Riplika package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: Riplika 0.2.0\n"
+"Report-Msgid-Bugs-To: https://github.com/nsrosenqvist/riplika/issues\n"
+"POT-Creation-Date: 2026-08-29 08:21+0200\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=CHARSET\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: crates/gui/src/main.rs:238 crates/gui/src/prefs_dialog.rs:61
+msgid "Preferences"
+msgstr ""
+
+#: crates/gui/src/main.rs:285 data/com.nsrosenqvist.Riplika.desktop:3
+msgid "Riplika"
+msgstr ""
+
+#: crates/gui/src/main.rs:320
+msgid "No disc"
+msgstr ""
+
+#: crates/gui/src/main.rs:331
+msgid "Drive"
+msgstr ""
+
+#: crates/gui/src/main.rs:338
+msgid "Analyse disc"
+msgstr ""
+
+#: crates/gui/src/main.rs:343
+msgid "Look again"
+msgstr ""
+
+#. Swapping discs is what you do most on this page, and reaching for the
+#. tray button on an external drive is not always possible.
+#: crates/gui/src/main.rs:355 crates/gui/src/main.rs:575
+msgid "Eject"
+msgstr ""
+
+#: crates/gui/src/main.rs:374
+msgid "Identified as"
+msgstr ""
+
+#: crates/gui/src/main.rs:377 crates/gui/src/main.rs:956
+msgid "Not identified"
+msgstr ""
+
+#: crates/gui/src/main.rs:378 crates/gui/src/main.rs:957
+msgid "Choose the show"
+msgstr ""
+
+#: crates/gui/src/main.rs:386
+msgid "This disc"
+msgstr ""
+
+#: crates/gui/src/main.rs:389
+msgid "Season"
+msgstr ""
+
+#: crates/gui/src/main.rs:390
+msgid "Disc"
+msgstr ""
+
+#: crates/gui/src/main.rs:395
+msgid "Continue"
+msgstr ""
+
+#: crates/gui/src/main.rs:407
+msgid "Quality"
+msgstr ""
+
+#: crates/gui/src/main.rs:410
+msgid "Picture"
+msgstr ""
+
+#: crates/gui/src/main.rs:411
+msgid "Medium is the sweet spot for DVD: about 170 MB an episode"
+msgstr ""
+
+#: crates/gui/src/main.rs:417
+msgid "Sound"
+msgstr ""
+
+#: crates/gui/src/main.rs:418
+msgid "High keeps the original AC3 untouched; browsers cannot decode it"
+msgstr ""
+
+#: crates/gui/src/main.rs:424
+msgid "Container"
+msgstr ""
+
+#: crates/gui/src/main.rs:436 crates/gui/src/prefs_dialog.rs:107
+msgid "Languages"
+msgstr ""
+
+#: crates/gui/src/main.rs:444
+msgid "What to take"
+msgstr ""
+
+#: crates/gui/src/main.rs:448
+msgid "Extended episodes"
+msgstr ""
+
+#: crates/gui/src/main.rs:452
+msgid "Bonus material"
+msgstr ""
+
+#: crates/gui/src/main.rs:453
+msgid "Featurettes, deleted scenes, gag reels"
+msgstr ""
+
+#: crates/gui/src/main.rs:458
+msgid "Output"
+msgstr ""
+
+#: crates/gui/src/main.rs:459
+msgid "Folder"
+msgstr ""
+
+#: crates/gui/src/main.rs:463
+msgid "Start"
+msgstr ""
+
+#: crates/gui/src/main.rs:478
+msgid "Starting"
+msgstr ""
+
+#. Stopping work is not a dialog's "Cancel", and the icon says which of the
+#. two this is - the same word means "discard what I typed" three pages
+#. back.
+#: crates/gui/src/main.rs:526
+msgid "Cancel"
+msgstr ""
+
+#: crates/gui/src/main.rs:566
+msgid "Done"
+msgstr ""
+
+#: crates/gui/src/main.rs:567
+msgid "Files"
+msgstr ""
+
+#: crates/gui/src/main.rs:577
+msgid "Rip another disc"
+msgstr ""
+
+#: crates/gui/src/main.rs:764
+msgid "No language tracks found"
+msgstr ""
+
+#: crates/gui/src/main.rs:1086
+msgid "Drive open"
+msgstr ""
+
+#: crates/gui/src/main.rs:1249 crates/gui/src/main.rs:1354
+msgid "Already working - wait for it, or cancel it first"
+msgstr ""
+
+#: crates/gui/src/main.rs:1282
+msgid "Choose what this disc is first"
+msgstr ""
+
+#: crates/gui/src/main.rs:1350
+msgid "Nothing to rip yet"
+msgstr ""
+
+#: crates/gui/src/main.rs:1396
+msgid "Not while the drive is being read"
+msgstr ""
+
+#: crates/gui/src/main.rs:1407
+msgid "Opening the drive"
+msgstr ""
+
+#: crates/gui/src/main.rs:1410
+msgid "No drive to open"
+msgstr ""
+
+#: crates/gui/src/main.rs:1440
+msgid "Stopping after the current step"
+msgstr ""
+
+#: crates/gui/src/show_picker.rs:26
+msgid "Nothing found"
+msgstr ""
+
+#: crates/gui/src/show_picker.rs:27
+msgid "Try a different spelling, or part of the title"
+msgstr ""
+
+#: crates/gui/src/show_picker.rs:59
+msgid "Searching..."
+msgstr ""
+
+#: crates/gui/src/show_picker.rs:86
+msgid "Which show is this?"
+msgstr ""
+
+#: data/com.nsrosenqvist.Riplika.desktop:4
+msgid "Disc Ripper"
+msgstr ""
+
+#: data/com.nsrosenqvist.Riplika.desktop:5
+msgid "Turn a disc into a tagged, subtitled library"
+msgstr ""
+
+#: data/com.nsrosenqvist.Riplika.desktop:14
+msgid "DVD;Blu-ray;disc;rip;subtitles;transcode;"
+msgstr ""

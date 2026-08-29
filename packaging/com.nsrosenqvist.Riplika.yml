@@ -120,6 +120,9 @@ modules:
       - install -Dm755 target/release/riplika /app/bin/riplika
       - install -Dm644 data/com.nsrosenqvist.Riplika.desktop
           /app/share/applications/com.nsrosenqvist.Riplika.desktop
+      # the translations, where i18n::init looks inside a sandbox
+      - ./po/install.sh /app/share
+
     sources:
       - type: dir
         path: ..

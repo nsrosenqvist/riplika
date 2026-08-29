@@ -63,6 +63,14 @@ So: **prefer failing loudly over carrying on**, and when something cannot be ver
 
 **Do not read process-global state in a testable function.** Environment variables are shared, so a test that sets `XDG_DATA_HOME` races every other test — which it duly did. Take the value as an argument and read the environment at the edge; `prefs::xdg_dir` is the pattern.
 
+## Strings people read
+
+Every one goes through `tr()` in `crates/gui/src/i18n.rs`, so `xgettext` can find it and a translator can change it without touching Rust. After adding or changing one, run `./po/build.sh` - it refreshes the template and merges every catalogue, so existing translations survive.
+
+Wrap prose, not identifiers. Icon names, CSS classes, widget names and device paths are not read as language and must stay bare, which is why the marking was done by hand rather than by a regex over every string literal.
+
+English is a catalogue like any other. It looks redundant, and it is what proves the machinery works: without it, a broken catalogue path is invisible because English keeps working anyway.
+
 ## Conventions
 
 Comments explain **why**, and are worth writing when the reason is not recoverable from the code — a constant chosen from a measurement, an ordering that matters, a fallback that exists because of a specific disc. Do not paraphrase the code.

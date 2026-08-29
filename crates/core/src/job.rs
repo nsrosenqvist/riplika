@@ -1364,7 +1364,7 @@ impl Eta {
         self.last = Some((now, fraction));
 
         let rate = self.rate?;
-        if fraction < 0.02 || fraction >= 1.0 {
+        if !(0.02..1.0).contains(&fraction) {
             return None;
         }
         let remaining = rate * (1.0 - fraction as f64);

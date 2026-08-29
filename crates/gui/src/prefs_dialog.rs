@@ -6,6 +6,7 @@
 //! stays on the rip page is what can differ between one disc and the next:
 //! quality, the output folder, and which of *this* disc's languages to take.
 
+use crate::i18n::tr;
 use adw::prelude::*;
 use riplika_core::host;
 use riplika_core::lang;
@@ -57,7 +58,7 @@ where
     F: Fn() + Clone + 'static,
 {
     let dialog = adw::PreferencesDialog::builder()
-        .title("Preferences")
+        .title(tr("Preferences"))
         .build();
     let page = adw::PreferencesPage::builder().title("General").build();
 
@@ -103,7 +104,7 @@ where
         )
         .build();
 
-    let expander = adw::ExpanderRow::builder().title("Languages").build();
+    let expander = adw::ExpanderRow::builder().title(tr("Languages")).build();
     let summary = |p: &Preferences| {
         let names: Vec<String> = p
             .languages()
@@ -151,7 +152,7 @@ where
     // --- naming -----------------------------------------------------------
     let naming_group = adw::PreferencesGroup::builder()
         .title("Episode filenames")
-        .description(&format!(
+        .description(format!(
             "Tokens: {}",
             naming::TOKENS.iter().map(|(t, _)| *t).collect::<Vec<_>>().join("  ")
         ))
@@ -214,7 +215,7 @@ where
     // small home partition is a good reason to put it elsewhere.
     let folders = adw::PreferencesGroup::builder()
         .title("Working folder")
-        .description(&format!(
+        .description(format!(
             "Where a disc lands before it is encoded - tens of gigabytes, deleted afterwards. \
              Subtitle data lives in {}.",
             Preferences::data_dir().display()

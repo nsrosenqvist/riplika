@@ -383,13 +383,12 @@ impl Catalogue for Catalogues<'_> {
     fn episodes(&self, provider_id: &str, season: u32) -> Result<Vec<Episode>> {
         let origin = provider_id.split_once(':').map(|(p, _)| p);
         for c in &self.0 {
-            if origin.is_none() || origin == Some(c.prefix()) {
-                if let Ok(e) = c.episodes(provider_id, season)
+            if (origin.is_none() || origin == Some(c.prefix()))
+                && let Ok(e) = c.episodes(provider_id, season)
                     && !e.is_empty()
                 {
                     return Ok(e);
                 }
-            }
         }
         Ok(Vec::new())
     }
