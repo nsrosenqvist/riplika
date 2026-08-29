@@ -21,6 +21,7 @@
 pub mod host;
 pub mod identify;
 pub mod job;
+pub mod joblog;
 pub mod lang;
 pub mod media;
 pub mod model;

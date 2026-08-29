@@ -8,6 +8,7 @@
 use riplika_core::host::{Cancel, Fs, RealFs, RealRunner};
 use riplika_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, UreqHttp, Wikidata};
 use riplika_core::job::{Event, Pipeline, Ports, Report, Stage};
+use riplika_core::joblog::JobLog;
 use riplika_core::media::FfProbe;
 use riplika_core::model::{Candidate, Drive, JobSettings, Item, Media, Role};
 use riplika_core::prefs::Preferences;
@@ -367,6 +368,15 @@ pub fn rip(
 
     let mut events = reporter();
     let scan = pipeline.scan(&d, &mut events).map_err(|e| e.to_string())?;
+
+    // One file per disc, so a season can be read back afterwards.
+    let mut log = JobLog::for_disc(&scan, &riplika_core::joblog::now());
+    println!("  log: {}", log.path().display());
+    let mut events = |e: Event| {
+        log.record(&e);
+        events(e);
+    };
+
     let media = decide_media(title, season, &cat, Some(&scan))?;
     let disc = disc.or_else(|| riplika_core::identify::label::parse(&scan.label).disc);
 
@@ -413,11 +423,34 @@ pub fn rip(
     let report = pipeline
         .produce(&items, &media, &mut events)
         .map_err(|e| e.to_string())?;
+    log.finish(&summarise(&report));
     show_report(&report);
     if !report.is_complete() {
         return Err(format!("{} titles failed", report.skipped.len()));
     }
     Ok(())
+}
+
+fn summarise(r: &Report) -> String {
+    let mut lines = vec![format!(
+        "{} files, {}",
+        r.produced.len(),
+        mib(r.total_bytes())
+    )];
+    for p in &r.produced {
+        lines.push(format!(
+            "  {}  {}",
+            p.destination.file_name().unwrap_or_default().to_string_lossy(),
+            mib(p.bytes)
+        ));
+    }
+    for (f, why) in &r.skipped {
+        lines.push(format!(
+            "  FAILED {}: {why}",
+            f.file_name().unwrap_or_default().to_string_lossy()
+        ));
+    }
+    lines.join("\n")
 }
 
 pub fn process(
@@ -464,16 +497,25 @@ pub fn process(
     );
 
     let mut events = reporter();
+    let mut log = JobLog::for_folder(dir, files.len(), &riplika_core::joblog::now());
+    println!("  log: {}", log.path().display());
+    let mut events = |e: Event| {
+        log.record(&e);
+        events(e);
+    };
+
     let items = pipeline
         .organise(&files, &media, disc, &mut events)
         .map_err(|e| e.to_string())?;
     show_plan(&items);
     if dry_run {
+        log.finish("dry run: nothing was read");
         return Ok(());
     }
     let report = pipeline
         .produce(&items, &media, &mut events)
         .map_err(|e| e.to_string())?;
+    log.finish(&summarise(&report));
     show_report(&report);
     if !report.is_complete() {
         return Err(format!("{} titles failed", report.skipped.len()));

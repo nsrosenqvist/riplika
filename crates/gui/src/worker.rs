@@ -11,6 +11,7 @@
 use riplika_core::host::{Cancel, RealFs, RealRunner, Runner};
 use riplika_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, UreqHttp, Wikidata};
 use riplika_core::job::{Event, Pipeline, Ports, Report};
+use riplika_core::joblog::JobLog;
 use riplika_core::media::FfProbe;
 use riplika_core::model::{Candidate, DiscScan, Drive, Item, JobSettings, Media};
 use riplika_core::rip::Auto;
@@ -186,6 +187,7 @@ pub fn search(query: String, season: Option<u32>, tx: Sender<Msg>) {
 
 /// Rip, sort out and produce - the long one.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     scan: DiscScan,
     media: Media,
@@ -193,6 +195,7 @@ pub fn run(
     rip_dir: PathBuf,
     settings: JobSettings,
     allow_makemkv: bool,
+    stamp: String,
     cancel: Cancel,
     tx: Sender<Msg>,
 ) {
@@ -216,8 +219,11 @@ pub fn run(
             },
             settings,
         );
+        // One file per disc, so a season can be read back afterwards.
+        let mut log = JobLog::for_disc(&scan, &stamp);
         let t = tx.clone();
         let mut events = move |e: Event| {
+            log.record(&e);
             let _ = t.send(Msg::Event(e));
         };
         report(

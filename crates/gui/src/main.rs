@@ -1361,7 +1361,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             set_button_label(&app.ui.cancel_button, "Cancel");
             app.go(Step::Progress);
             let allow = app.prefs.prefs.borrow().use_makemkv();
-            worker::run(scan, media, disc, rip_dir, settings, allow, cancel, tx.clone());
+            worker::run(scan, media, disc, rip_dir, settings, allow, riplika_core::joblog::now(), cancel, tx.clone());
         });
     }
 
