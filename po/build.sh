@@ -7,6 +7,17 @@
 set -eu
 cd "$(dirname "$0")/.."
 
+# Rust support arrived late in gettext, and the error without it names the
+# language rather than the tool.
+if ! printf 'fn main() {}\n' > /tmp/riplika-probe.rs \
+   || ! xgettext --language=Rust -o /dev/null /tmp/riplika-probe.rs 2>/dev/null; then
+  echo "this xgettext ($(xgettext --version | head -1)) does not know Rust." >&2
+  echo "po/check.py checks the catalogues without it; regenerating needs a newer gettext." >&2
+  rm -f /tmp/riplika-probe.rs
+  exit 1
+fi
+rm -f /tmp/riplika-probe.rs
+
 xgettext --files-from=po/POTFILES.in --directory=. \
   --keyword=tr --keyword=tr_n:1,2 --language=Rust --from-code=UTF-8 --add-comments \
   --package-name=Riplika --package-version=0.2.0 \

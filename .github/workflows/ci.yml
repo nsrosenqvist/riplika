@@ -63,18 +63,11 @@ jobs:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gettext
       - name: Every string a person reads is in the template
-        # Compare the set of strings rather than the file: xgettext writes its
-        # own version and a timestamp into the header, and wraps lines to its
-        # own taste, so file equality would fail on gettext's version and not
-        # on anything about this repository.
-        run: |
-          grep '^msgid' po/riplika.pot | sort -u > /tmp/msgids-committed
-          ./po/build.sh
-          grep '^msgid' po/riplika.pot | sort -u > /tmp/msgids-rebuilt
-          if ! diff -u /tmp/msgids-committed /tmp/msgids-rebuilt; then
-            echo "::error::po/riplika.pot is out of date - run ./po/build.sh"
-            exit 1
-          fi
+        # Not by regenerating it: that needs an xgettext new enough to know
+        # Rust, which is newer than the distributions carry, and building
+        # gettext here would cost five minutes to answer a question that can
+        # be asked of the source directly.
+        run: ./po/check.py
       - name: Every catalogue compiles and none has holes
         # English is generated from the template, so a hole in it means the
         # generation is broken - and a missing catalogue is invisible in
@@ -82,9 +75,13 @@ jobs:
         run: |
           while read -r lang; do
             [ -n "$lang" ] || continue
-            msgfmt --check --statistics "po/$lang.po" -o /dev/null 2>&1 | tee /tmp/stats
+            # Separate calls on purpose: piping msgfmt into tee would hide its
+            # exit status, since pipefail is not on by default here.
+            msgfmt --check "po/$lang.po" -o /dev/null
+            msgfmt --statistics "po/$lang.po" -o /dev/null 2> /tmp/stats
+            cat /tmp/stats
             if grep -qE 'untranslated|fuzzy' /tmp/stats; then
-              echo "::error::po/$lang.po is incomplete"
+              echo "::error::po/$lang.po is incomplete - it is generated, so run ./po/build.sh"
               exit 1
             fi
           done < po/LINGUAS
@@ -118,7 +115,7 @@ jobs:
       - name: Install flatpak
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder ca-certificates
+          sudo apt-get install -y --no-install-recommends flatpak ca-certificates
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
       - name: Cache the built modules
         # ffmpeg and x264 are built from source and change far less often than
@@ -128,14 +125,19 @@ jobs:
           path: .flatpak-builder
           key: flatpak-${{ runner.os }}-${{ hashFiles('packaging/com.nsrosenqvist.Riplika.yml') }}
           restore-keys: flatpak-${{ runner.os }}-
-      - name: Install the runtime it builds against
+      - name: Install the runtime and the builder
+        # org.flatpak.Builder rather than the distribution's flatpak-builder:
+        # it is the one this manifest is developed against, and it brings its
+        # own eu-strip, which the apt package expects to find on the host and
+        # ubuntu-24.04 does not have.
         run: |
           flatpak install --user --noninteractive flathub \
+            org.flatpak.Builder \
             org.gnome.Platform//50 org.gnome.Sdk//50 \
             org.freedesktop.Sdk.Extension.rust-stable//25.08
       - name: Build
         run: |
-          flatpak-builder --user --install --force-clean \
+          flatpak run org.flatpak.Builder --user --install --force-clean \
             build packaging/com.nsrosenqvist.Riplika.yml
       - name: Check what was built
         # The manifest can lose a module and still produce an application that

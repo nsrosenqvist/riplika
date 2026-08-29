@@ -81,7 +81,8 @@ CI runs these, and running them first is faster than waiting for it:
 cargo fmt --check                                   # the tree is rustfmt-clean; rustfmt.toml keeps the wide style
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets && cargo test --workspace --doc
-./po/build.sh                                       # then check git diff: new strings must appear
+./po/check.py                                       # every string is extractable and in the template
+./po/build.sh                                       # regenerates it; needs a gettext that knows Rust
 packaging/regenerate-cargo-sources.sh               # only after Cargo.lock changes
 ```
 

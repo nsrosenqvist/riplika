@@ -45,6 +45,11 @@ modules:
   # VideoLAN moved these three to meson; flatpak-builder assumes autotools.
   - name: libdvdcss
     buildsystem: meson
+    # ffmpeg and x264 install to /app/lib, and meson picks its own libdir from
+    # the host it thinks it is on - lib on one builder, lib64 on another. Saying
+    # it means the build does not depend on which builder ran it.
+    config-opts:
+      - --libdir=lib
     sources:
       - type: archive
         url: https://download.videolan.org/pub/videolan/libdvdcss/1.6.0/libdvdcss-1.6.0.tar.xz
@@ -57,6 +62,7 @@ modules:
       # name at runtime, which inside a sandbox depends on it being on the
       # loader path - linking removes the question.
       - -Dlibdvdcss=enabled
+      - --libdir=lib
     sources:
       - type: archive
         url: https://download.videolan.org/pub/videolan/libdvdread/7.1.1/libdvdread-7.1.1.tar.xz
@@ -64,6 +70,8 @@ modules:
 
   - name: libdvdnav
     buildsystem: meson
+    config-opts:
+      - --libdir=lib
     sources:
       - type: archive
         url: https://download.videolan.org/pub/videolan/libdvdnav/7.0.0/libdvdnav-7.0.0.tar.xz
