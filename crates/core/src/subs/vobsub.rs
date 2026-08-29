@@ -238,8 +238,8 @@ pub fn decode_spu(spu: &[u8]) -> Option<Spu> {
     }
 
     let mut pixels = vec![0u8; w * h];
-    for field in 0..2usize {
-        let mut nib = rle_off[field] * 2; // nibble cursor
+    for (field, &off) in rle_off.iter().enumerate() {
+        let mut nib = off * 2; // nibble cursor
         let mut y = field;
         let mut x = 0usize;
         while y < h && (nib >> 1) < size {
@@ -263,9 +263,7 @@ pub fn decode_spu(spu: &[u8]) -> Option<Spu> {
                 cnt = w - x; // run to end of line
             }
             let row = y * w;
-            for i in row + x..row + x + cnt {
-                pixels[i] = col;
-            }
+            pixels[row + x..row + x + cnt].fill(col);
             x += cnt;
             if x >= w {
                 x = 0;

@@ -10,7 +10,7 @@ mod prefs_dialog;
 mod show_picker;
 mod worker;
 
-use crate::i18n::tr;
+use crate::i18n::{tr, tr_n};
 use adw::prelude::*;
 use gtk::glib;
 use riplika_core::job::{Event, Report};
@@ -615,6 +615,41 @@ fn build_ui() -> Ui {
     }
 }
 
+/// What the disc holds, as the lines a person reads before starting.
+///
+/// Separated from showing it so the phrasing can be tested. It counted in one
+/// breath and spelled in another once - "1 episodes", "2 feature" - which is
+/// invisible until the disc happens to hold exactly one of something.
+fn plan_lines(items: &[Item]) -> Vec<String> {
+    let count = |f: fn(&Role) -> bool| items.iter().filter(|i| f(&i.role)).count() as u32;
+    let play_alls = count(|r| matches!(r, Role::PlayAll));
+
+    let mut parts = Vec::new();
+    for (n, one, many) in [
+        (count(|r| matches!(r, Role::Episode { .. })), "%d episode", "%d episodes"),
+        (count(|r| matches!(r, Role::Feature)), "%d feature", "%d features"),
+        (count(|r| matches!(r, Role::ExtendedCut { .. })), "%d extended cut", "%d extended cuts"),
+        (count(|r| matches!(r, Role::Extra)), "%d extra", "%d extras"),
+    ] {
+        if n > 0 {
+            parts.push(tr_n(one, many, n));
+        }
+    }
+
+    let mut lines = Vec::new();
+    if !parts.is_empty() {
+        lines.push(tr("This disc holds %s").replace("%s", &parts.join(", ")));
+    }
+    if play_alls > 0 {
+        lines.push(tr_n(
+            "%d play-all title will be skipped - the same video again",
+            "%d play-all titles will be skipped - the same video again",
+            play_alls,
+        ));
+    }
+    lines
+}
+
 impl App {
     /// Switch off everything that would start a second job, or switch it back on.
     ///
@@ -1027,33 +1062,8 @@ impl App {
     /// material - rather than "47 titles" - is the difference between watching
     /// a progress bar and knowing what is being made.
     fn show_plan(&self, items: &[Item]) {
-        let count = |f: fn(&Role) -> bool| items.iter().filter(|i| f(&i.role)).count();
-        let episodes = count(|r| matches!(r, Role::Episode { .. }));
-        let cuts = count(|r| matches!(r, Role::ExtendedCut { .. }));
-        let features = count(|r| matches!(r, Role::Feature));
-        let extras = count(|r| matches!(r, Role::Extra));
-        let play_alls = count(|r| matches!(r, Role::PlayAll));
-
-        let mut parts = Vec::new();
-        if episodes > 0 {
-            parts.push(format!("{episodes} episodes"));
-        }
-        if features > 0 {
-            parts.push(format!("{features} feature"));
-        }
-        if cuts > 0 {
-            parts.push(format!("{cuts} extended cuts"));
-        }
-        if extras > 0 {
-            parts.push(format!("{extras} extras"));
-        }
-        if !parts.is_empty() {
-            self.log_line(&format!("This disc holds {}", parts.join(", ")));
-        }
-        if play_alls > 0 {
-            self.log_line(&format!(
-                "{play_alls} play-all title(s) will be skipped - the same video again"
-            ));
+        for line in plan_lines(items) {
+            self.log_line(&line);
         }
         for i in items.iter().filter(|i| matches!(i.role, Role::Episode { .. })) {
             if let Some(d) = &i.destination {
@@ -1613,8 +1623,7 @@ mod busy_tests {
         // success, failure and cancellation all have to release the buttons;
         // missing one leaves the window permanently unusable
         for outcome in ["finished", "failed", "cancelled"] {
-            let mut state = State::default();
-            state.busy = Some("Ripping...".into());
+            let mut state = State { busy: Some("Ripping...".into()), ..Default::default() };
             match outcome {
                 "finished" | "failed" => state.busy = None,
                 _ => state.busy = Some("Stopping...".into()),
@@ -1798,8 +1807,8 @@ mod picker_tests {
     fn a_later_identification_does_not_override_what_the_user_picked() {
         // reopening the picker and searching must not have its result quietly
         // replaced by the disc's original guess
-        let mut state = State::default();
-        state.selected = Some(candidate("The Office", 3, 0.4));
+        let mut state =
+            State { selected: Some(candidate("The Office", 3, 0.4)), ..Default::default() };
         let cands = [candidate("Parks and Recreation", 1, 0.85)];
         if state.selected.is_none() {
             state.selected = cands.first().cloned();
@@ -1822,8 +1831,10 @@ mod picker_tests {
     #[test]
     fn choosing_an_index_that_is_gone_changes_nothing() {
         // results can be replaced by a newer search while a row is being tapped
-        let mut state = State::default();
-        state.selected = Some(candidate("Parks and Recreation", 1, 0.85));
+        let mut state = State {
+            selected: Some(candidate("Parks and Recreation", 1, 0.85)),
+            ..Default::default()
+        };
         let chosen = state.candidates.get(7).cloned();
         if chosen.is_some() {
             state.selected = chosen;
@@ -1896,9 +1907,8 @@ mod locking_tests {
     /// way to return - the window looked idle while the drive was still going.
     #[test]
     fn a_running_job_pins_the_page_and_finishing_releases_it() {
-        let mut state = State::default();
+        let mut state = State { busy: Some("Ripping...".into()), ..Default::default() };
 
-        state.busy = Some("Ripping...".into());
         assert!(state.busy.is_some(), "can_pop is false while this holds");
 
         for ending in ["finished", "failed", "cancelled"] {
@@ -1913,6 +1923,76 @@ mod locking_tests {
         // the others are forms; leaving them loses nothing
         assert_eq!(Step::Progress.tag(), "progress");
         assert_ne!(Step::Settings.tag(), Step::Progress.tag());
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::*;
+
+    fn with(role: Role) -> Item {
+        Item {
+            source: PathBuf::from("/rip/a.mkv"),
+            role,
+            title: String::new(),
+            air_date: None,
+            duration: 0,
+            destination: None,
+        }
+    }
+
+    fn episodes(n: u32) -> Vec<Item> {
+        (0..n).map(|i| with(Role::Episode { season: 1, number: i + 1 })).collect()
+    }
+
+    #[test]
+    fn one_of_something_reads_as_one() {
+        // the bug this replaced: the count was formatted into a noun that was
+        // spelled for the other case, so a single-episode disc said
+        // "1 episodes" and a two-feature disc said "2 feature"
+        let line = &plan_lines(&episodes(1))[0];
+        assert!(line.contains("1 episode"), "{line}");
+        assert!(!line.contains("1 episodes"), "{line}");
+    }
+
+    #[test]
+    fn more_than_one_reads_as_many() {
+        let line = &plan_lines(&episodes(7))[0];
+        assert!(line.contains("7 episodes"), "{line}");
+    }
+
+    #[test]
+    fn a_lone_feature_is_singular_too() {
+        let line = &plan_lines(&[with(Role::Feature)])[0];
+        assert!(line.contains("1 feature") && !line.contains("1 features"), "{line}");
+    }
+
+    #[test]
+    fn every_kind_the_disc_holds_is_named_once() {
+        let mut items = episodes(2);
+        items.push(with(Role::Feature));
+        items.push(with(Role::Extra));
+        let line = &plan_lines(&items)[0];
+        for expected in ["2 episodes", "1 feature", "1 extra"] {
+            assert!(line.contains(expected), "{expected} missing from {line}");
+        }
+    }
+
+    #[test]
+    fn a_disc_of_nothing_it_can_name_says_nothing() {
+        // an empty line in the log would read as something having gone wrong
+        assert!(plan_lines(&[]).is_empty());
+    }
+
+    #[test]
+    fn skipped_play_alls_are_reported_apart_from_the_holdings() {
+        // they are not part of what is being made, so they get their own line
+        let mut items = episodes(3);
+        items.push(with(Role::PlayAll));
+        let lines = plan_lines(&items);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("3 episodes"), "{}", lines[0]);
+        assert!(lines[1].contains("1 play-all title will"), "{}", lines[1]);
     }
 }
 

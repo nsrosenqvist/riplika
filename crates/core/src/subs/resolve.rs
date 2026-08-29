@@ -6,6 +6,7 @@
 //! The only recoverable signal is context, so we resolve per word using a
 //! wordlist plus a few structural rules.
 
+use super::recognize::Word;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -193,10 +194,10 @@ impl Resolver {
             // the candidate's own guesses vote turns "We'll" into "We'II".
             let mut fixed_alpha = 0;
             let mut fixed_upper = 0;
-            for j in start..i {
-                if chars[j].is_alphabetic() && fixed.get(j).copied().unwrap_or(true) {
+            for (j, ch) in chars.iter().enumerate().take(i).skip(start) {
+                if ch.is_alphabetic() && fixed.get(j).copied().unwrap_or(true) {
                     fixed_alpha += 1;
-                    if chars[j].is_uppercase() {
+                    if ch.is_uppercase() {
                         fixed_upper += 1;
                     }
                 }
@@ -306,7 +307,7 @@ impl Resolver {
     }
 
     /// Resolve a whole line, preserving the spaces already decided by spacing.
-    pub fn resolve_line(&self, words: &[(Vec<Slot>, Vec<(i32, i32)>)]) -> String {
+    pub fn resolve_line(&self, words: &[Word]) -> String {
         let mut out: Vec<String> = Vec::new();
         let mut at_start = true; // the first word on a line opens a sentence
         for (slots, gaps) in words {

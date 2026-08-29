@@ -55,9 +55,10 @@ pub fn tr(s: &str) -> String {
 ///
 /// A separate call because the rule differs by language: some have one form,
 /// some two, some six, and choosing between them in Rust with an `if` would be
-/// wrong everywhere except English.
+/// wrong everywhere except English. `%d` in either form becomes the number, so
+/// a translator can move it to wherever the sentence needs it.
 pub fn tr_n(singular: &str, plural: &str, n: u32) -> String {
-    gettextrs::ngettext(singular, plural, n)
+    gettextrs::ngettext(singular, plural, n).replace("%d", &n.to_string())
 }
 
 #[cfg(test)]
@@ -73,8 +74,8 @@ mod tests {
 
     #[test]
     fn plurals_pick_a_form() {
-        assert_eq!(tr_n("%d file", "%d files", 1), "%d file");
-        assert_eq!(tr_n("%d file", "%d files", 4), "%d files");
+        assert_eq!(tr_n("%d file", "%d files", 1), "1 file");
+        assert_eq!(tr_n("%d file", "%d files", 4), "4 files");
     }
 
     #[test]

@@ -52,9 +52,9 @@ pub fn estimate_space_gap(all: &[Vec<Line>], fallback: i32) -> i32 {
         .sum();
     let (mut w0, mut sum0) = (0u32, 0f64);
     let (mut best_t, mut best_var) = (fallback, -1f64);
-    for t in 0..hist.len() {
-        w0 += hist[t];
-        sum0 += t as f64 * hist[t] as f64;
+    for (t, &count) in hist.iter().enumerate() {
+        w0 += count;
+        sum0 += t as f64 * count as f64;
         let w1 = total - w0;
         if w0 == 0 || w1 == 0 {
             continue;
@@ -75,7 +75,7 @@ pub fn estimate_space_gap(all: &[Vec<Line>], fallback: i32) -> i32 {
 }
 
 /// Build the slot sequence for one subtitle, splitting into words on gaps.
-type Word = (Vec<Slot>, Vec<(i32, i32)>);
+pub type Word = (Vec<Slot>, Vec<(i32, i32)>);
 
 fn to_words(
     line: &Line,

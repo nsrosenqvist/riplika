@@ -69,7 +69,7 @@ pub fn parse(s: &str) -> Vec<Cue> {
 }
 
 /// Fill in missing end times and stop cues overlapping the next one.
-pub fn tidy(cues: &mut Vec<Cue>, ends: &[Option<u64>]) {
+pub fn tidy(cues: &mut [Cue], ends: &[Option<u64>]) {
     for i in 0..cues.len() {
         if ends.get(i).copied().flatten().is_none() {
             cues[i].end_ms = if i + 1 < cues.len() {

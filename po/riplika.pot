@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Riplika 0.2.0\n"
 "Report-Msgid-Bugs-To: https://github.com/nsrosenqvist/riplika/issues\n"
-"POT-Creation-Date: 2026-08-29 08:21+0200\n"
+"POT-Creation-Date: 2026-08-29 10:42+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -16,6 +16,7 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
 #: crates/gui/src/main.rs:238 crates/gui/src/prefs_dialog.rs:61
 msgid "Preferences"
@@ -158,35 +159,69 @@ msgstr ""
 msgid "No language tracks found"
 msgstr ""
 
-#: crates/gui/src/main.rs:1086
+#: crates/gui/src/main.rs:1039
+msgid "%d episode"
+msgid_plural "%d episodes"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gui/src/main.rs:1042
+msgid "%d feature"
+msgid_plural "%d features"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gui/src/main.rs:1045
+msgid "%d extended cut"
+msgid_plural "%d extended cuts"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gui/src/main.rs:1048
+msgid "%d extra"
+msgid_plural "%d extras"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gui/src/main.rs:1051
+msgid "This disc holds %s"
+msgstr ""
+
+#: crates/gui/src/main.rs:1055
+msgid "%d play-all title will be skipped - the same video again"
+msgid_plural "%d play-all titles will be skipped - the same video again"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gui/src/main.rs:1088
 msgid "Drive open"
 msgstr ""
 
-#: crates/gui/src/main.rs:1249 crates/gui/src/main.rs:1354
+#: crates/gui/src/main.rs:1251 crates/gui/src/main.rs:1356
 msgid "Already working - wait for it, or cancel it first"
 msgstr ""
 
-#: crates/gui/src/main.rs:1282
+#: crates/gui/src/main.rs:1284
 msgid "Choose what this disc is first"
 msgstr ""
 
-#: crates/gui/src/main.rs:1350
+#: crates/gui/src/main.rs:1352
 msgid "Nothing to rip yet"
 msgstr ""
 
-#: crates/gui/src/main.rs:1396
+#: crates/gui/src/main.rs:1398
 msgid "Not while the drive is being read"
 msgstr ""
 
-#: crates/gui/src/main.rs:1407
+#: crates/gui/src/main.rs:1409
 msgid "Opening the drive"
 msgstr ""
 
-#: crates/gui/src/main.rs:1410
+#: crates/gui/src/main.rs:1412
 msgid "No drive to open"
 msgstr ""
 
-#: crates/gui/src/main.rs:1440
+#: crates/gui/src/main.rs:1442
 msgid "Stopping after the current step"
 msgstr ""
 

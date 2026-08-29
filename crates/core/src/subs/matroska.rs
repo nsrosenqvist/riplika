@@ -15,16 +15,16 @@ use crate::{Error, Result};
 
 /// Element ids, kept with their length marker as the format stores them.
 mod id {
-    pub const SEGMENT: u64 = 0x1853_8067;
-    pub const INFO: u64 = 0x1549_A966;
-    pub const TIMESTAMP_SCALE: u64 = 0x2AD7_B1;
-    pub const TRACKS: u64 = 0x1654_AE6B;
+    pub const SEGMENT: u64 = 0x18_53_80_67;
+    pub const INFO: u64 = 0x15_49_A9_66;
+    pub const TIMESTAMP_SCALE: u64 = 0x2A_D7_B1;
+    pub const TRACKS: u64 = 0x16_54_AE_6B;
     pub const TRACK_ENTRY: u64 = 0xAE;
     pub const TRACK_NUMBER: u64 = 0xD7;
     pub const TRACK_TYPE: u64 = 0x83;
     pub const CODEC_ID: u64 = 0x86;
-    pub const CODEC_PRIVATE: u64 = 0x63A2;
-    pub const CLUSTER: u64 = 0x1F43_B675;
+    pub const CODEC_PRIVATE: u64 = 0x63_A2;
+    pub const CLUSTER: u64 = 0x1F_43_B6_75;
     pub const TIMESTAMP: u64 = 0xE7;
     pub const SIMPLE_BLOCK: u64 = 0xA3;
     pub const BLOCK_GROUP: u64 = 0xA0;
