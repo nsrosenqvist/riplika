@@ -113,9 +113,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install flatpak
+        # elfutils is not implied by flatpak-builder but is needed by it:
+        # without eu-strip it builds every module and then fails stripping the
+        # first one.
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak ca-certificates
+          sudo apt-get install -y --no-install-recommends \
+            flatpak flatpak-builder elfutils ca-certificates
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
       - name: Cache the built modules
         # ffmpeg and x264 are built from source and change far less often than
@@ -125,19 +129,19 @@ jobs:
           path: .flatpak-builder
           key: flatpak-${{ runner.os }}-${{ hashFiles('packaging/com.nsrosenqvist.Riplika.yml') }}
           restore-keys: flatpak-${{ runner.os }}-
-      - name: Install the runtime and the builder
-        # org.flatpak.Builder rather than the distribution's flatpak-builder:
-        # it is the one this manifest is developed against, and it brings its
-        # own eu-strip, which the apt package expects to find on the host and
-        # ubuntu-24.04 does not have.
+      - name: Install the runtime it builds against
         run: |
           flatpak install --user --noninteractive flathub \
-            org.flatpak.Builder \
             org.gnome.Platform//50 org.gnome.Sdk//50 \
             org.freedesktop.Sdk.Extension.rust-stable//25.08
       - name: Build
+        # The distribution's flatpak-builder rather than the org.flatpak.Builder
+        # flatpak used locally: run as a flatpak on the runner it cannot see the
+        # SDK that was just installed for it. The two agree on the result now
+        # that the manifest says where libraries go rather than letting meson
+        # guess from the host.
         run: |
-          flatpak run org.flatpak.Builder --user --install --force-clean \
+          flatpak-builder --user --install --force-clean \
             build packaging/com.nsrosenqvist.Riplika.yml
       - name: Check what was built
         # The manifest can lose a module and still produce an application that
