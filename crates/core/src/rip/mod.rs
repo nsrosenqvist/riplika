@@ -5,7 +5,7 @@ pub mod iso;
 pub mod makemkv;
 
 use crate::host::{Command, Runner};
-use crate::model::{DiscScan, DiscTitle, Drive};
+use crate::model::{DiscScan, DiscTitle, Drive, Warning};
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
 
@@ -402,7 +402,7 @@ TINFO:0,27,0,"title_t00.mkv"
 /// scan succeeds and simply returns fewer titles - so they are detected rather
 /// than waited for.
 /// Somewhere to send an explanation of why a fallback happened.
-pub type Notify<'a> = Box<dyn Fn(&str) + Send + Sync + 'a>;
+pub type Notify<'a> = Box<dyn Fn(Warning) + Send + Sync + 'a>;
 
 pub struct Auto<'a> {
     pub free: dvd::DvdVideo<'a>,
@@ -424,14 +424,14 @@ impl<'a> Auto<'a> {
         }
     }
 
-    pub fn on_fallback(mut self, f: impl Fn(&str) + Send + Sync + 'a) -> Self {
+    pub fn on_fallback(mut self, f: impl Fn(Warning) + Send + Sync + 'a) -> Self {
         self.notify = Some(Box::new(f));
         self
     }
 
-    fn say(&self, message: &str) {
+    fn say(&self, warning: Warning) {
         if let Some(n) = &self.notify {
-            n(message);
+            n(warning);
         }
     }
 
@@ -475,10 +475,7 @@ impl Ripper for Auto<'_> {
             Ok((scan, health)) if health.is_trustworthy() => Ok(scan),
             Ok((_, health)) => match self.take_fallback() {
                 Some(m) => {
-                    self.say(&format!(
-                        "the free reader could not read this disc fully ({}); using MakeMKV",
-                        health.complaint()
-                    ));
+                    self.say(Warning::FreeReaderIncomplete { why: health.complaint() });
                     m.scan(drive, progress)
                 }
                 None => Err(Error(format!(
@@ -488,7 +485,7 @@ impl Ripper for Auto<'_> {
             },
             Err(e) => match self.take_fallback() {
                 Some(m) => {
-                    self.say(&format!("the free reader failed ({e}); using MakeMKV"));
+                    self.say(Warning::FreeReaderFailed { why: e.to_string() });
                     m.scan(drive, progress)
                 }
                 None => Err(e),
@@ -533,10 +530,16 @@ TINFO:0,27,0,"title_t00.mkv"
     fn a_disc_the_free_reader_cannot_decrypt_goes_to_makemkv() {
         let r = FakeRunner::new().fail("ffprobe", CSS_FAILURE).on("makemkvcon", MAKEMKV_INFO);
         let told = std::sync::Mutex::new(Vec::new());
-        let a = Auto::new(&r, true).on_fallback(|m| told.lock().unwrap().push(m.to_string()));
+        let a = Auto::new(&r, true).on_fallback(|w| told.lock().unwrap().push(w));
         let scan = a.scan(&drive(), &mut |_, _| {}).unwrap();
         assert_eq!(scan.titles.len(), 1);
-        assert!(told.lock().unwrap()[0].contains("MakeMKV"), "{:?}", told);
+        // Which fallback, not merely that one happened: a disc that cannot be
+        // decrypted is a different thing from a reader that fell over.
+        assert!(
+            matches!(told.lock().unwrap()[0], Warning::FreeReaderIncomplete { .. }),
+            "{:?}",
+            told
+        );
     }
 
     #[test]

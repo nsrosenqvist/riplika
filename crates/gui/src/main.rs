@@ -597,6 +597,79 @@ fn build_ui() -> Ui {
     }
 }
 
+/// How much longer, in the reader's language.
+///
+/// Core decides what to round to, because that is a judgement about how good
+/// the estimate is; this only says it. The hours-and-minutes form is one string
+/// rather than two joined, so a translator can put them in the order their
+/// language wants.
+fn remaining_text(r: riplika_core::job::Remaining) -> String {
+    use riplika_core::job::Remaining;
+    match r {
+        Remaining::LessThanAMinute => tr("less than a minute left"),
+        Remaining::AboutAMinute => tr("about a minute left"),
+        Remaining::Minutes(m) => {
+            tr_args("about %1$s left", &[&tr_n("%d minute", "%d minutes", m as u32)])
+        }
+        Remaining::Hours(h) => {
+            tr_args("about %1$s left", &[&tr_n("%d hour", "%d hours", h as u32)])
+        }
+        Remaining::HoursAndMinutes(h, m) => tr_args(
+            "about %1$s %2$s left",
+            &[&tr_n("%d hour", "%d hours", h as u32), &tr_n("%d minute", "%d minutes", m as u32)],
+        ),
+    }
+}
+
+/// A warning, in the reader's language.
+///
+/// The counterpart to `Warning::text`, which says the same things in English
+/// for the log and the command line. Both exist because the log is searched and
+/// pasted into bug reports, and the window is read.
+///
+/// Where a warning carries a `why`, that text came from the operating system,
+/// ffmpeg or libdvdcss and is English whatever happens here. Only the sentence
+/// around it is ours to translate.
+fn warning_text(w: &Warning) -> String {
+    match w {
+        Warning::CouldNotIdentify { why } => tr_args("could not identify the disc: %1$s", &[why]),
+        Warning::TitleUnreadable { title, why } => {
+            tr_args("title %1$s could not be read: %2$s", &[&title.to_string(), why])
+        }
+        Warning::NoPlayAll { episodes } => tr_args(
+            "no play-all title on this disc; ordering %1$s by disc layout instead",
+            &[&tr_n("%d episode", "%d episodes", *episodes as u32)],
+        ),
+        Warning::ExtendedCutsUncomparable { why } => {
+            tr_args("could not compare titles for extended cuts: %1$s", &[why])
+        }
+        Warning::GlyphTableUnreadable { path, why } => {
+            tr_args("glyph table %1$s: %2$s", &[&path.display().to_string(), why])
+        }
+        Warning::GlyphTableMissing { path } => {
+            tr_args("glyph table %1$s does not exist", &[&path.display().to_string()])
+        }
+        Warning::NoGlyphTable => tr("no glyph table, so subtitles stay as bitmaps"),
+        // A file name and an error from elsewhere, with no sentence of ours
+        // around them. There is nothing here for a translator to do.
+        Warning::ItemSkipped { .. } => w.text(),
+        Warning::UnrecognisedGlyphs { language, glyphs } => tr_args(
+            "%1$s: %2$s - the table may not cover %1$s",
+            &[language, &tr_n("%d unrecognised glyph", "%d unrecognised glyphs", *glyphs as u32)],
+        ),
+        Warning::PlayAllsSkipped { titles } => tr_args(
+            "skipping %1$s, whose content is on the disc already",
+            &[&tr_n("%d play-all title", "%d play-all titles", *titles as u32)],
+        ),
+        Warning::FreeReaderIncomplete { why } => {
+            tr_args("the free reader could not read this disc fully (%1$s); using MakeMKV", &[why])
+        }
+        Warning::FreeReaderFailed { why } => {
+            tr_args("the free reader failed (%1$s); using MakeMKV", &[why])
+        }
+    }
+}
+
 /// A stage's name, in the reader's language.
 ///
 /// `Stage::label` is in core, which has no gettext binding and should not grow
@@ -1162,7 +1235,7 @@ impl App {
                     parts.push(m);
                 }
                 if let Some(left) = remaining {
-                    parts.push(riplika_core::job::describe_remaining(left));
+                    parts.push(remaining_text(riplika_core::job::remaining(left)));
                 }
                 self.ui.progress_text.set_label(&parts.join("  \u{b7}  "));
             }
@@ -1211,7 +1284,7 @@ impl App {
             // listing that needs them anyway. The event carries it for the log
             // and the command line, which have no items to count.
             Event::Plan(_) => {}
-            Event::Warning(w) => self.log_line(&tr_args("warning: %1$s", &[&w])),
+            Event::Warning(w) => self.log_line(&tr_args("warning: %1$s", &[&warning_text(&w)])),
         }
     }
 }
@@ -1939,6 +2012,103 @@ mod locking_tests {
         // the others are forms; leaving them loses nothing
         assert_eq!(Step::Progress.tag(), "progress");
         assert_ne!(Step::Settings.tag(), Step::Progress.tag());
+    }
+}
+
+#[cfg(test)]
+mod warning_text_tests {
+    use super::*;
+
+    fn all() -> Vec<Warning> {
+        vec![
+            Warning::CouldNotIdentify { why: "no network".into() },
+            Warning::TitleUnreadable { title: 3, why: "i/o error".into() },
+            Warning::NoPlayAll { episodes: 7 },
+            Warning::ExtendedCutsUncomparable { why: "ffmpeg".into() },
+            Warning::GlyphTableUnreadable { path: "/t.json".into(), why: "bad json".into() },
+            Warning::GlyphTableMissing { path: "/t.json".into() },
+            Warning::NoGlyphTable,
+            Warning::ItemSkipped { name: "a.mkv".into(), why: "no space".into() },
+            Warning::UnrecognisedGlyphs { language: "sv".into(), glyphs: 4 },
+            Warning::PlayAllsSkipped { titles: 2 },
+            Warning::FreeReaderIncomplete { why: "encrypted".into() },
+            Warning::FreeReaderFailed { why: "no drive".into() },
+        ]
+    }
+
+    #[test]
+    fn every_kind_of_warning_has_something_to_show() {
+        // the match is exhaustive, so none can be forgotten; what this catches
+        // is one being wired to an empty or placeholder string
+        for w in all() {
+            assert!(!warning_text(&w).trim().is_empty(), "{w:?} shows nothing");
+        }
+    }
+
+    #[test]
+    fn the_reason_from_elsewhere_survives_translation() {
+        // an OS or ffmpeg message is the part a bug report is about, and it is
+        // English wherever it is shown
+        let w = Warning::TitleUnreadable { title: 3, why: "Input/output error".into() };
+        assert!(warning_text(&w).contains("Input/output error"), "{}", warning_text(&w));
+        assert!(warning_text(&w).contains('3'), "the title number is lost");
+    }
+
+    #[test]
+    fn one_of_something_reads_as_one_here_as_well() {
+        // with no catalogue loaded these come back as the source strings, so
+        // this is checking the plural machinery is wired up, not the English
+        assert!(
+            warning_text(&Warning::PlayAllsSkipped { titles: 1 }).contains("1 play-all title,")
+        );
+        assert!(warning_text(&Warning::NoPlayAll { episodes: 1 }).contains("1 episode "));
+    }
+
+    #[test]
+    fn nothing_is_left_saying_percent_one() {
+        // a placeholder reaching the window means an argument was not passed
+        for w in all() {
+            let shown = warning_text(&w);
+            assert!(!shown.contains("%1$s"), "{w:?} shows a placeholder: {shown}");
+            assert!(!shown.contains("%2$s"), "{w:?} shows a placeholder: {shown}");
+            assert!(!shown.contains("%d"), "{w:?} shows a placeholder: {shown}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod remaining_text_tests {
+    use super::*;
+    use riplika_core::job::Remaining;
+
+    #[test]
+    fn every_shape_of_estimate_is_phrased() {
+        let all = [
+            Remaining::LessThanAMinute,
+            Remaining::AboutAMinute,
+            Remaining::Minutes(4),
+            Remaining::Hours(3),
+            Remaining::HoursAndMinutes(2, 30),
+        ];
+        for r in all {
+            let shown = remaining_text(r);
+            assert!(!shown.trim().is_empty(), "{r:?} says nothing");
+            assert!(!shown.contains("%1$s") && !shown.contains("%d"), "{r:?}: {shown}");
+        }
+    }
+
+    #[test]
+    fn an_hour_is_not_hours() {
+        assert!(
+            remaining_text(Remaining::Hours(1)).contains("1 hour "),
+            "{}",
+            remaining_text(Remaining::Hours(1))
+        );
+        assert!(
+            remaining_text(Remaining::Minutes(1)).contains("1 minute "),
+            "{}",
+            remaining_text(Remaining::Minutes(1))
+        );
     }
 }
 

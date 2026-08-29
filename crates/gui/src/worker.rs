@@ -8,6 +8,7 @@
 //! able to intervene between them - to correct a wrong identification, or to
 //! change the quality after seeing how many episodes there are.
 
+use riplika_core::Warning;
 use riplika_core::host::{Cancel, RealFs, RealRunner, Runner};
 use riplika_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, UreqHttp, Wikidata};
 use riplika_core::job::{Event, Pipeline, Ports, Report};
@@ -106,8 +107,8 @@ pub fn analyse(drive: Drive, allow_makemkv: bool, cancel: Cancel, tx: Sender<Msg
     std::thread::spawn(move || {
         let real = Real::new(cancel.clone());
         let notify = tx.clone();
-        let mk = Auto::new(&real.runner, allow_makemkv).on_fallback(move |m| {
-            let _ = notify.send(Msg::Event(Event::Warning(m.to_string())));
+        let mk = Auto::new(&real.runner, allow_makemkv).on_fallback(move |w| {
+            let _ = notify.send(Msg::Event(Event::Warning(w)));
         });
         let prober = FfProbe(&real.runner);
         let cat = real.catalogues();
@@ -194,8 +195,8 @@ pub fn run(
     std::thread::spawn(move || {
         let real = Real::new(cancel.clone());
         let notify = tx.clone();
-        let mk = Auto::new(&real.runner, allow_makemkv).on_fallback(move |m| {
-            let _ = notify.send(Msg::Event(Event::Warning(m.to_string())));
+        let mk = Auto::new(&real.runner, allow_makemkv).on_fallback(move |w| {
+            let _ = notify.send(Msg::Event(Event::Warning(w)));
         });
         let prober = FfProbe(&real.runner);
         let cat = real.catalogues();
@@ -229,10 +230,9 @@ pub fn run(
                     let _ = tx.send(Msg::Organised(items.clone()));
                 }
                 if titles.len() < scan.titles.len() {
-                    events(Event::Warning(format!(
-                        "skipping {} play-all title(s), already covered by the episodes",
-                        scan.titles.len() - titles.len()
-                    )));
+                    events(Event::Warning(Warning::PlayAllsSkipped {
+                        titles: scan.titles.len() - titles.len(),
+                    }));
                 }
                 let files = p.rip(&scan, &titles, &rip_dir, &mut events)?;
                 let items = p.organise(&files, &media, disc, &mut events)?;

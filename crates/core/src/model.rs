@@ -435,6 +435,92 @@ impl Role {
     }
 }
 
+/// Something that went wrong without stopping the run.
+///
+/// Typed rather than a sentence, for three reasons that have all bitten. A
+/// front end cannot tell one kind from another when they are strings, so it
+/// cannot treat an unreadable title differently from a missing glyph table.
+/// Nothing can count or test them by kind. And a count formatted into a fixed
+/// noun is how "1 titles" and "play-all title(s)" got written in the first
+/// place - a shape this makes impossible rather than merely discouraged.
+///
+/// Several carry a `why` that came from the operating system, ffmpeg or
+/// libdvdcss. That text arrives in English and stays English however this is
+/// phrased; only the sentence around it belongs to us.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Warning {
+    /// The catalogues could not say what the disc is.
+    CouldNotIdentify { why: String },
+    /// One title would not read. The rest of the disc still can.
+    TitleUnreadable { title: u32, why: String },
+    /// No play-all title, so the episode order came from the disc layout.
+    NoPlayAll { episodes: usize },
+    /// Extended cuts are found by comparing pictures, and the comparison failed.
+    ExtendedCutsUncomparable { why: String },
+    /// A glyph table was named but could not be read.
+    GlyphTableUnreadable { path: PathBuf, why: String },
+    /// A glyph table was named and is not there.
+    GlyphTableMissing { path: PathBuf },
+    /// No glyph table at all, so subtitles cannot be recognised.
+    NoGlyphTable,
+    /// One file could not be produced. The others still were.
+    ItemSkipped { name: String, why: String },
+    /// Subtitles were recognised, but not all of the glyphs were known.
+    UnrecognisedGlyphs { language: String, glyphs: usize },
+    /// Play-all titles are the same video again, so they are not produced.
+    PlayAllsSkipped { titles: usize },
+    /// The free reader got through the disc, but not well enough to trust.
+    FreeReaderIncomplete { why: String },
+    /// The free reader could not read the disc at all.
+    FreeReaderFailed { why: String },
+}
+
+impl Warning {
+    /// The warning in English, as the log and the command line print it.
+    ///
+    /// English on purpose: a log that changes language with its reader cannot
+    /// be searched, or usefully pasted into a bug report. The window says these
+    /// in the reader's language instead.
+    pub fn text(&self) -> String {
+        let plural = |n: usize, noun: &str| format!("{n} {noun}{}", if n == 1 { "" } else { "s" });
+        match self {
+            Warning::CouldNotIdentify { why } => format!("could not identify the disc: {why}"),
+            Warning::TitleUnreadable { title, why } => {
+                format!("title {title} could not be read: {why}")
+            }
+            Warning::NoPlayAll { episodes } => format!(
+                "no play-all title on this disc; ordering {} by disc layout instead",
+                plural(*episodes, "episode")
+            ),
+            Warning::ExtendedCutsUncomparable { why } => {
+                format!("could not compare titles for extended cuts: {why}")
+            }
+            Warning::GlyphTableUnreadable { path, why } => {
+                format!("glyph table {}: {why}", path.display())
+            }
+            Warning::GlyphTableMissing { path } => {
+                format!("glyph table {} does not exist", path.display())
+            }
+            Warning::NoGlyphTable => "no glyph table, so subtitles stay as bitmaps".to_string(),
+            Warning::ItemSkipped { name, why } => format!("{name}: {why}"),
+            Warning::UnrecognisedGlyphs { language, glyphs } => format!(
+                "{language}: {} - the table may not cover {language}",
+                plural(*glyphs, "unrecognised glyph")
+            ),
+            Warning::PlayAllsSkipped { titles } => format!(
+                "skipping {}, whose content is on the disc already",
+                plural(*titles, "play-all title")
+            ),
+            Warning::FreeReaderIncomplete { why } => {
+                format!("the free reader could not read this disc fully ({why}); using MakeMKV")
+            }
+            Warning::FreeReaderFailed { why } => {
+                format!("the free reader failed ({why}); using MakeMKV")
+            }
+        }
+    }
+}
+
 /// What a disc turned out to hold, counted by role.
 ///
 /// The counting lives here rather than in a front end because there are three
@@ -556,6 +642,58 @@ mod tests {
             duration: 0,
             destination: None,
         }
+    }
+
+    #[test]
+    fn one_of_something_is_written_as_one_in_a_warning_too() {
+        // the same mistake, in the place it was originally made: this warning
+        // used to say "play-all title(s)" because a format string cannot count
+        assert_eq!(
+            Warning::PlayAllsSkipped { titles: 1 }.text(),
+            "skipping 1 play-all title, whose content is on the disc already"
+        );
+        assert_eq!(
+            Warning::PlayAllsSkipped { titles: 4 }.text(),
+            "skipping 4 play-all titles, whose content is on the disc already"
+        );
+        assert_eq!(
+            Warning::NoPlayAll { episodes: 1 }.text(),
+            "no play-all title on this disc; ordering 1 episode by disc layout instead"
+        );
+        assert_eq!(
+            Warning::UnrecognisedGlyphs { language: "en".into(), glyphs: 1 }.text(),
+            "en: 1 unrecognised glyph - the table may not cover en"
+        );
+    }
+
+    #[test]
+    fn every_warning_says_something() {
+        // an empty warning line reads as a bug in the logging, not a warning
+        let all = [
+            Warning::CouldNotIdentify { why: "no network".into() },
+            Warning::TitleUnreadable { title: 3, why: "i/o error".into() },
+            Warning::NoPlayAll { episodes: 7 },
+            Warning::ExtendedCutsUncomparable { why: "ffmpeg".into() },
+            Warning::GlyphTableUnreadable { path: "/t.json".into(), why: "bad json".into() },
+            Warning::GlyphTableMissing { path: "/t.json".into() },
+            Warning::NoGlyphTable,
+            Warning::ItemSkipped { name: "a.mkv".into(), why: "no space".into() },
+            Warning::UnrecognisedGlyphs { language: "sv".into(), glyphs: 4 },
+            Warning::PlayAllsSkipped { titles: 2 },
+            Warning::FreeReaderIncomplete { why: "encrypted".into() },
+            Warning::FreeReaderFailed { why: "no drive".into() },
+        ];
+        for w in &all {
+            assert!(!w.text().trim().is_empty(), "{w:?} says nothing");
+        }
+    }
+
+    #[test]
+    fn the_reason_from_elsewhere_is_carried_through_untouched() {
+        // it comes from the OS, ffmpeg or libdvdcss, and is the part of the
+        // line a bug report is actually about
+        let w = Warning::TitleUnreadable { title: 3, why: "Input/output error".into() };
+        assert!(w.text().contains("Input/output error"), "{}", w.text());
     }
 
     #[test]

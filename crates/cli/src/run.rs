@@ -106,7 +106,8 @@ fn reader<'a>(
             Ok(Box::new(MakeMkv::new(runner)))
         }
         "auto" => Ok(Box::new(
-            Auto::new(runner, Preferences::makemkv_available()).on_fallback(|m| eprintln!("  {m}")),
+            Auto::new(runner, Preferences::makemkv_available())
+                .on_fallback(|w| eprintln!("  {}", w.text())),
         )),
         other => Err(format!("unknown reader {other:?}; use auto, dvd or makemkv")),
     }
@@ -264,7 +265,7 @@ fn reporter() -> impl FnMut(Event) {
             }
             Event::Warning(w) => {
                 clear(&mut on_progress_line);
-                eprintln!("  warning: {w}");
+                eprintln!("  warning: {}", w.text());
             }
         }
     }

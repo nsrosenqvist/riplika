@@ -77,7 +77,7 @@ pub enum Event {
     /// English so it stays the same in a bug report.
     Plan(crate::model::Plan),
     /// Something went wrong that did not stop the run.
-    Warning(String),
+    Warning(Warning),
 }
 
 pub type Events<'a> = &'a mut dyn FnMut(Event);
@@ -96,7 +96,7 @@ pub struct Produced {
 pub struct Report {
     pub produced: Vec<Produced>,
     pub skipped: Vec<(PathBuf, String)>,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<Warning>,
 }
 
 impl Report {
@@ -155,7 +155,7 @@ impl<'a> Pipeline<'a> {
         match identify::identify(scan, self.ports.catalogue) {
             Ok(c) => c,
             Err(e) => {
-                events(Event::Warning(format!("could not identify the disc: {e}")));
+                events(Event::Warning(Warning::CouldNotIdentify { why: e.to_string() }));
                 Vec::new()
             }
         }
@@ -223,7 +223,7 @@ impl<'a> Pipeline<'a> {
         // mostly menus and transitions, and losing one of those should not cost
         // the episodes.
         for (id, why) in &outcome.failed {
-            events(Event::Warning(format!("title {id} could not be read: {why}")));
+            events(Event::Warning(Warning::TitleUnreadable { title: *id, why: why.clone() }));
         }
         if outcome.written.is_empty() {
             return Err(Error(format!(
@@ -258,10 +258,7 @@ impl<'a> Pipeline<'a> {
             let by_duration =
                 structure::episodes_by_duration(&plain, structure::EpisodeRange::default());
             if !by_duration.is_empty() {
-                events(Event::Warning(format!(
-                    "no play-all title on this disc; ordering {} episodes by disc layout instead",
-                    by_duration.len()
-                )));
+                events(Event::Warning(Warning::NoPlayAll { episodes: by_duration.len() }));
                 st.loose.retain(|k| !by_duration.contains(k));
                 st.episodes = by_duration;
             }
@@ -277,9 +274,9 @@ impl<'a> Pipeline<'a> {
             match structure::find_extended_cuts(self.ports.runner, &dir, &st.loose, &st.episodes) {
                 Ok(e) => e,
                 Err(e) => {
-                    events(Event::Warning(format!(
-                        "could not compare titles for extended cuts: {e}"
-                    )));
+                    events(Event::Warning(Warning::ExtendedCutsUncomparable {
+                        why: e.to_string(),
+                    }));
                     Vec::new()
                 }
             }
@@ -413,14 +410,14 @@ impl<'a> Pipeline<'a> {
             Some(p) if self.ports.fs.exists(p) => match Table::load(p) {
                 Ok(t) => Some(t),
                 Err(e) => {
-                    let w = format!("glyph table {}: {e}", p.display());
+                    let w = Warning::GlyphTableUnreadable { path: p.clone(), why: e.to_string() };
                     events(Event::Warning(w.clone()));
                     report.warnings.push(w);
                     None
                 }
             },
             Some(p) => {
-                let w = format!("glyph table {} does not exist", p.display());
+                let w = Warning::GlyphTableMissing { path: p.clone() };
                 events(Event::Warning(w.clone()));
                 report.warnings.push(w);
                 None
@@ -453,10 +450,15 @@ impl<'a> Pipeline<'a> {
                 }
                 Err(e) => {
                     // One bad title must not abandon the other twenty-one.
-                    events(Event::Warning(format!(
-                        "{}: {e}",
-                        item.source.file_name().unwrap_or_default().to_string_lossy()
-                    )));
+                    events(Event::Warning(Warning::ItemSkipped {
+                        name: item
+                            .source
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned(),
+                        why: e.to_string(),
+                    }));
                     report.skipped.push((item.source.clone(), e.0));
                 }
             }
@@ -535,7 +537,7 @@ impl<'a> Pipeline<'a> {
         let wanted = transcode::subtitles_to_recognise(info, &self.settings.languages);
         let Some(table) = table else {
             if !wanted.is_empty() {
-                events(Event::Warning("no glyph table, so subtitles stay as bitmaps".into()));
+                events(Event::Warning(Warning::NoGlyphTable));
             }
             // Without recognition the bitmaps are all there is: keep every one,
             // since dropping them would lose those languages outright.
@@ -572,10 +574,10 @@ impl<'a> Pipeline<'a> {
                         recognised: true,
                     });
                     if r.unknown_glyphs > 0 {
-                        events(Event::Warning(format!(
-                            "{}: {} unrecognised glyphs - the table may not cover {}",
-                            language.name, r.unknown_glyphs, language.name
-                        )));
+                        events(Event::Warning(Warning::UnrecognisedGlyphs {
+                            language: language.name.to_string(),
+                            glyphs: r.unknown_glyphs,
+                        }));
                     }
                     inputs.push(SubtitleInput {
                         path: r.srt_path.clone(),
@@ -628,10 +630,9 @@ impl<'a> Pipeline<'a> {
         let plan = self.preview(&scan, &media, disc, rip_dir);
         let titles = self.titles_to_rip(&scan, plan.as_deref());
         if titles.len() < scan.titles.len() {
-            events(Event::Warning(format!(
-                "skipping {} play-all title(s), whose content is on the disc already",
-                scan.titles.len() - titles.len()
-            )));
+            events(Event::Warning(Warning::PlayAllsSkipped {
+                titles: scan.titles.len() - titles.len(),
+            }));
         }
         let files = self.rip(&scan, &titles, rip_dir, events)?;
         let items = self.organise(&files, &media, disc, events)?;
@@ -863,7 +864,12 @@ mod tests {
     fn without_a_glyph_table_the_bitmaps_are_kept_rather_than_lost() {
         let h = harness();
         let (_, _, events) = run_all(&h, settings());
-        assert!(events.iter().any(|e| matches!(e, Event::Warning(w) if w.contains("glyph table"))));
+        // Asking for the kind rather than for a substring: this used to match
+        // any warning that happened to mention a glyph table.
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Event::Warning(Warning::NoGlyphTable | Warning::GlyphTableMissing { .. })
+        )));
         let encode = h.runner.calls_to("ffmpeg").into_iter().find(|c| c.has("libx264")).unwrap();
         // the English bitmap survives, so the language is not lost
         assert!(encode.values_of("-map").contains(&"0:s:0"), "{}", encode.display());
@@ -1330,28 +1336,51 @@ impl Eta {
     }
 }
 
-/// "about 4 minutes left", or a coarser phrase when that is all that is honest.
-pub fn describe_remaining(d: std::time::Duration) -> String {
+/// How much longer, rounded to what an estimate this soft can support.
+///
+/// The rounding is the decision and stays here; the words are the window's, so
+/// that they can be translated. Below ten minutes to the nearest minute, then
+/// to five - claiming "37 minutes" on an estimate built from read speed is a
+/// precision the number does not have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Remaining {
+    LessThanAMinute,
+    AboutAMinute,
+    Minutes(u64),
+    Hours(u64),
+    HoursAndMinutes(u64, u64),
+}
+
+pub fn remaining(d: std::time::Duration) -> Remaining {
     let s = d.as_secs();
     match s {
-        0..=45 => "less than a minute left".into(),
-        46..=90 => "about a minute left".into(),
-        // To the nearest minute below ten, then to five: claiming "37 minutes"
-        // on an estimate this soft is a precision the number does not have.
-        91..=600 => format!("about {} minutes left", (s + 30) / 60),
+        0..=45 => Remaining::LessThanAMinute,
+        46..=90 => Remaining::AboutAMinute,
+        91..=600 => Remaining::Minutes((s + 30) / 60),
         _ => {
             let minutes = (s + 150) / 300 * 5;
             if minutes >= 120 {
                 // "about 3 hours" for two and a half is a fifth too long, and
                 // long jobs are exactly where a wrong number is noticed.
                 match (minutes / 60, minutes % 60) {
-                    (h, 0) => format!("about {h} hours left"),
-                    (h, m) => format!("about {h} hours {m} minutes left"),
+                    (h, 0) => Remaining::Hours(h),
+                    (h, m) => Remaining::HoursAndMinutes(h, m),
                 }
             } else {
-                format!("about {minutes} minutes left")
+                Remaining::Minutes(minutes)
             }
         }
+    }
+}
+
+/// The estimate in English, for the command line.
+pub fn describe_remaining(d: std::time::Duration) -> String {
+    match remaining(d) {
+        Remaining::LessThanAMinute => "less than a minute left".into(),
+        Remaining::AboutAMinute => "about a minute left".into(),
+        Remaining::Minutes(m) => format!("about {m} minutes left"),
+        Remaining::Hours(h) => format!("about {h} hours left"),
+        Remaining::HoursAndMinutes(h, m) => format!("about {h} hours {m} minutes left"),
     }
 }
 
@@ -1404,6 +1433,11 @@ mod eta_tests {
     #[test]
     fn phrases_are_no_more_precise_than_the_estimate_deserves() {
         use std::time::Duration as D;
+        // the rounding is the part that stayed here, so it is the part tested
+        assert_eq!(remaining(D::from_secs(20)), Remaining::LessThanAMinute);
+        assert_eq!(remaining(D::from_secs(240)), Remaining::Minutes(4));
+        assert_eq!(remaining(D::from_secs(9000)), Remaining::HoursAndMinutes(2, 30));
+        assert_eq!(remaining(D::from_secs(10800)), Remaining::Hours(3));
         assert_eq!(describe_remaining(D::from_secs(20)), "less than a minute left");
         assert_eq!(describe_remaining(D::from_secs(70)), "about a minute left");
         assert_eq!(describe_remaining(D::from_secs(240)), "about 4 minutes left");

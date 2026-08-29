@@ -155,7 +155,7 @@ impl JobLog {
                     format!("   subtitles {language}: not recognised, bitmap kept")
                 }
             }
-            Event::Warning(w) => format!("   warning: {w}"),
+            Event::Warning(w) => format!("   warning: {}", w.text()),
             // The line worth having when reading back a season: six logs, and
             // what each disc actually held. Written here rather than taken
             // from the window because a log that changes language with the
