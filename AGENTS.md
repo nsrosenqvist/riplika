@@ -71,7 +71,11 @@ Wrap prose, not identifiers. Icon names, CSS classes, widget names and device pa
 
 English is a catalogue like any other. It looks redundant, and it is what proves the machinery works: without it, a broken catalogue path is invisible because English keeps working anyway. It is generated from the template by `msgen`, not filled in by hand, because a catalogue with holes reads perfectly in English and only in English.
 
-**Pass the strings to `tr`/`tr_n` literally, at the call site.** `xgettext` reads the source, not the program, so a string that arrives through a variable is a string it cannot see. Collecting four plural forms into a table once dropped all four from the template while the code still compiled and ran - in English, indistinguishably. `tr_n` also substitutes `%d` itself, so call sites do not format around it.
+Strings with more than one value in them use `tr_args` and numbered placeholders - `"wrote %1$s (%2$s)"` - because word order is exactly what differs between languages, and a translator has to be able to move the file name in front of the verb. Counts inside such a sentence are composed from `tr_n` rather than written in, so each keeps its own plural form.
+
+What is *not* translated: the text inside a warning, which is built in core and usually ends in an error from the operating system or ffmpeg, and the per-file log line, which is a position and a file name with no prose in it. The job log on disk is written by core from the events themselves, so it stays English in every locale and stays greppable - that is deliberate.
+
+**Pass the strings to `tr`/`tr_n`/`tr_args` literally, at the call site.** `xgettext` reads the source, not the program, so a string that arrives through a variable is a string it cannot see. Collecting four plural forms into a table once dropped all four from the template while the code still compiled and ran - in English, indistinguishably. `tr_n` also substitutes `%d` itself, so call sites do not format around it.
 
 ## Before pushing
 

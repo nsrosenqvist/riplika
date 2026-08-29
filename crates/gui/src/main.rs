@@ -10,7 +10,7 @@ mod prefs_dialog;
 mod show_picker;
 mod worker;
 
-use crate::i18n::{tr, tr_n};
+use crate::i18n::{tr, tr_args, tr_n};
 use adw::prelude::*;
 use gtk::glib;
 use riplika_core::job::{Event, Report};
@@ -597,6 +597,23 @@ fn build_ui() -> Ui {
     }
 }
 
+/// A stage's name, in the reader's language.
+///
+/// `Stage::label` is in core, which has no gettext binding and should not grow
+/// one - core is driven by the CLI too, and by tests. Translating where it is
+/// displayed keeps that boundary and costs one match.
+fn stage_label(stage: riplika_core::job::Stage) -> String {
+    use riplika_core::job::Stage;
+    match stage {
+        Stage::Scan => tr("Scanning disc"),
+        Stage::Identify => tr("Identifying"),
+        Stage::Rip => tr("Ripping"),
+        Stage::Organise => tr("Sorting titles"),
+        Stage::Subtitles => tr("Reading subtitles"),
+        Stage::Transcode => tr("Transcoding"),
+    }
+}
+
 /// What the disc holds, as the lines a person reads before starting.
 ///
 /// Separated from showing it so the phrasing can be tested. It counted in one
@@ -1119,8 +1136,8 @@ impl App {
             Msg::Failed(e) => {
                 self.set_busy(None);
                 self.toast(&e);
-                self.log_line(&format!("failed: {e}"));
-                set_button_label(&self.ui.cancel_button, "Close");
+                self.log_line(&tr_args("failed: %1$s", &[&e]));
+                set_button_label(&self.ui.cancel_button, &tr("Close"));
             }
         }
     }
@@ -1128,7 +1145,7 @@ impl App {
     fn handle_event(&self, e: Event) {
         match e {
             Event::Stage(s) => {
-                self.ui.stage_label.set_label(s.label());
+                self.ui.stage_label.set_label(&stage_label(s));
                 self.ui.progress.set_fraction(0.0);
                 self.ui.progress_text.set_label("");
                 // Each stage reads at its own rate, so an estimate carried over
@@ -1151,24 +1168,45 @@ impl App {
             }
             Event::ItemStarted { index, total, name } => {
                 self.ui.progress.set_fraction(index as f64 / total.max(1) as f64);
-                self.ui.progress_text.set_label(&format!("{} of {}", index + 1, total));
+                self.ui.progress_text.set_label(&tr_args(
+                    "%1$s of %2$s",
+                    &[&(index + 1).to_string(), &total.to_string()],
+                ));
+                // No prose in this one - a position and a file name - so there
+                // is nothing here for a translator to do.
                 self.log_line(&format!("[{}/{}] {name}", index + 1, total));
             }
             Event::ItemFinished { destination, bytes, .. } => {
-                self.log_line(&format!(
-                    "wrote {} ({})",
-                    destination.file_name().unwrap_or_default().to_string_lossy(),
-                    mib(bytes)
+                self.log_line(&tr_args(
+                    "wrote %1$s (%2$s)",
+                    &[&destination.file_name().unwrap_or_default().to_string_lossy(), &mib(bytes)],
                 ));
             }
             Event::Subtitle { language, cues, recognised, unknown, .. } => {
                 self.log_line(&if recognised {
-                    format!("subtitles {language}: {cues} cues, {unknown} unrecognised glyphs")
+                    // The two counts are composed rather than written into the
+                    // sentence, so each gets its own plural form. "1 cues" is
+                    // the mistake this avoids.
+                    tr_args(
+                        "subtitles %1$s: %2$s, %3$s",
+                        &[
+                            &language,
+                            &tr_n("%d cue", "%d cues", cues as u32),
+                            &tr_n(
+                                "%d unrecognised glyph",
+                                "%d unrecognised glyphs",
+                                unknown as u32,
+                            ),
+                        ],
+                    )
                 } else {
-                    format!("subtitles {language}: not recognised, bitmap kept")
+                    tr_args("subtitles %1$s: not recognised, bitmap kept", &[&language])
                 });
             }
-            Event::Warning(w) => self.log_line(&format!("warning: {w}")),
+            // The text of a warning is built in core and usually ends in an
+            // error from the operating system or ffmpeg, which arrives in
+            // English and stays there. Only the label around it is ours.
+            Event::Warning(w) => self.log_line(&tr_args("warning: %1$s", &[&w])),
         }
     }
 }
@@ -1243,7 +1281,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             // A scan takes minutes and there is nothing to abandon it with on
             // this page, so show the progress page, which has the cancel button.
             app.state.borrow_mut().cancel = riplika_core::host::Cancel::new();
-            set_button_label(&app.ui.cancel_button, "Cancel");
+            set_button_label(&app.ui.cancel_button, &tr("Cancel"));
             app.go(Step::Progress);
             let cancel = app.state.borrow().cancel.clone();
             let allow = app.prefs.prefs.borrow().use_makemkv();
@@ -1346,7 +1384,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             // A fresh token, so a cancelled run does not poison the next one.
             app.state.borrow_mut().cancel = riplika_core::host::Cancel::new();
             let cancel = app.state.borrow().cancel.clone();
-            set_button_label(&app.ui.cancel_button, "Cancel");
+            set_button_label(&app.ui.cancel_button, &tr("Cancel"));
             app.go(Step::Progress);
             let allow = app.prefs.prefs.borrow().use_makemkv();
             worker::run(
@@ -1426,7 +1464,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             }
             app.state.borrow().cancel.cancel();
             app.toast(&tr("Stopping after the current step"));
-            set_button_label(b, "Close");
+            set_button_label(b, &tr("Close"));
             // The job will not stop this instant - it stops at the next command
             // boundary - but nothing new should be startable in the meantime.
             app.set_busy(Some("Stopping..."));
@@ -1896,6 +1934,43 @@ mod locking_tests {
         // the others are forms; leaving them loses nothing
         assert_eq!(Step::Progress.tag(), "progress");
         assert_ne!(Step::Settings.tag(), Step::Progress.tag());
+    }
+}
+
+#[cfg(test)]
+mod stage_label_tests {
+    use super::*;
+    use riplika_core::job::Stage;
+
+    const ALL: [Stage; 6] = [
+        Stage::Scan,
+        Stage::Identify,
+        Stage::Rip,
+        Stage::Organise,
+        Stage::Subtitles,
+        Stage::Transcode,
+    ];
+
+    #[test]
+    fn every_stage_is_named_and_named_differently() {
+        // The match is exhaustive, so a new stage cannot be forgotten. What
+        // this catches is two of them being given the same label by a careless
+        // copy - which shows up as a progress heading that never changes.
+        let mut seen = std::collections::HashSet::new();
+        for stage in ALL {
+            let label = stage_label(stage);
+            assert!(!label.is_empty(), "{stage:?} has no label");
+            assert!(seen.insert(label.clone()), "{stage:?} repeats the label {label:?}");
+        }
+    }
+
+    #[test]
+    fn the_labels_are_the_ones_core_used_to_supply() {
+        // Moving them here must not have changed the words, only who says
+        // them: with no catalogue loaded, tr returns the source string.
+        for stage in ALL {
+            assert_eq!(stage_label(stage), stage.label());
+        }
     }
 }
 

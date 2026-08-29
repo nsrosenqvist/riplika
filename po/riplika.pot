@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Riplika 0.2.0\n"
 "Report-Msgid-Bugs-To: https://github.com/nsrosenqvist/riplika/issues\n"
-"POT-Creation-Date: 2026-08-29 10:56+0200\n"
+"POT-Creation-Date: 2026-08-29 12:36+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -52,11 +52,11 @@ msgstr ""
 msgid "Identified as"
 msgstr ""
 
-#: crates/gui/src/main.rs:367 crates/gui/src/main.rs:974
+#: crates/gui/src/main.rs:367 crates/gui/src/main.rs:991
 msgid "Not identified"
 msgstr ""
 
-#: crates/gui/src/main.rs:368 crates/gui/src/main.rs:975
+#: crates/gui/src/main.rs:368 crates/gui/src/main.rs:992
 msgid "Choose the show"
 msgstr ""
 
@@ -139,7 +139,8 @@ msgstr ""
 #. Stopping work is not a dialog's "Cancel", and the icon says which of the
 #. two this is - the same word means "discard what I typed" three pages
 #. back.
-#: crates/gui/src/main.rs:511
+#: crates/gui/src/main.rs:511 crates/gui/src/main.rs:1287
+#: crates/gui/src/main.rs:1390
 msgid "Cancel"
 msgstr ""
 
@@ -155,73 +156,140 @@ msgstr ""
 msgid "Rip another disc"
 msgstr ""
 
-#: crates/gui/src/main.rs:616
+#: crates/gui/src/main.rs:608
+msgid "Scanning disc"
+msgstr ""
+
+#: crates/gui/src/main.rs:609
+msgid "Identifying"
+msgstr ""
+
+#: crates/gui/src/main.rs:610
+msgid "Ripping"
+msgstr ""
+
+#: crates/gui/src/main.rs:611
+msgid "Sorting titles"
+msgstr ""
+
+#: crates/gui/src/main.rs:612
+msgid "Reading subtitles"
+msgstr ""
+
+#: crates/gui/src/main.rs:613
+msgid "Transcoding"
+msgstr ""
+
+#: crates/gui/src/main.rs:633
 msgid "%d episode"
 msgid_plural "%d episodes"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:620
+#: crates/gui/src/main.rs:637
 msgid "%d feature"
 msgid_plural "%d features"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:624
+#: crates/gui/src/main.rs:641
 msgid "%d extended cut"
 msgid_plural "%d extended cuts"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:628
+#: crates/gui/src/main.rs:645
 msgid "%d extra"
 msgid_plural "%d extras"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:633
+#: crates/gui/src/main.rs:650
 msgid "This disc holds %s"
 msgstr ""
 
-#: crates/gui/src/main.rs:637
+#: crates/gui/src/main.rs:654
 msgid "%d play-all title will be skipped - the same video again"
 msgid_plural "%d play-all titles will be skipped - the same video again"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:785
+#: crates/gui/src/main.rs:802
 msgid "No language tracks found"
 msgstr ""
 
-#: crates/gui/src/main.rs:1073
+#: crates/gui/src/main.rs:1090
 msgid "Drive open"
 msgstr ""
 
-#: crates/gui/src/main.rs:1237 crates/gui/src/main.rs:1337
+#: crates/gui/src/main.rs:1139
+msgid "failed: %1$s"
+msgstr ""
+
+#: crates/gui/src/main.rs:1140 crates/gui/src/main.rs:1470
+msgid "Close"
+msgstr ""
+
+#: crates/gui/src/main.rs:1172
+msgid "%1$s of %2$s"
+msgstr ""
+
+#: crates/gui/src/main.rs:1181
+msgid "wrote %1$s (%2$s)"
+msgstr ""
+
+#: crates/gui/src/main.rs:1197
+msgid "%d cue"
+msgid_plural "%d cues"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gui/src/main.rs:1199
+msgid "%d unrecognised glyph"
+msgid_plural "%d unrecognised glyphs"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gui/src/main.rs:1194
+msgid "subtitles %1$s: %2$s, %3$s"
+msgstr ""
+
+#: crates/gui/src/main.rs:1206
+msgid "subtitles %1$s: not recognised, bitmap kept"
+msgstr ""
+
+#. The text of a warning is built in core and usually ends in an
+#. error from the operating system or ffmpeg, which arrives in
+#. English and stays there. Only the label around it is ours.
+#: crates/gui/src/main.rs:1212
+msgid "warning: %1$s"
+msgstr ""
+
+#: crates/gui/src/main.rs:1278 crates/gui/src/main.rs:1378
 msgid "Already working - wait for it, or cancel it first"
 msgstr ""
 
-#: crates/gui/src/main.rs:1270
+#: crates/gui/src/main.rs:1311
 msgid "Choose what this disc is first"
 msgstr ""
 
-#: crates/gui/src/main.rs:1333
+#: crates/gui/src/main.rs:1374
 msgid "Nothing to rip yet"
 msgstr ""
 
-#: crates/gui/src/main.rs:1389
+#: crates/gui/src/main.rs:1430
 msgid "Not while the drive is being read"
 msgstr ""
 
-#: crates/gui/src/main.rs:1395
+#: crates/gui/src/main.rs:1436
 msgid "Opening the drive"
 msgstr ""
 
-#: crates/gui/src/main.rs:1398
+#: crates/gui/src/main.rs:1439
 msgid "No drive to open"
 msgstr ""
 
-#: crates/gui/src/main.rs:1428
+#: crates/gui/src/main.rs:1469
 msgid "Stopping after the current step"
 msgstr ""
 

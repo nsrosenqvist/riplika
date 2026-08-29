@@ -22,8 +22,8 @@ ROOT = Path(__file__).resolve().parent.parent
 # A Rust string literal, escapes included. `\s*` spans newlines, because these
 # calls are often wrapped across several lines.
 STRING = r'"((?:[^"\\]|\\.)*)"'
-CALL = re.compile(r'\b(tr|tr_n)\(\s*')
-LITERAL_FIRST = re.compile(r'\b(tr|tr_n)\(\s*' + STRING)
+CALL = re.compile(r'\b(tr|tr_n|tr_args)\(\s*')
+LITERAL_FIRST = re.compile(r'\b(tr|tr_n|tr_args)\(\s*' + STRING)
 TR_N_BOTH = re.compile(r'\btr_n\(\s*' + STRING + r'\s*,\s*' + STRING)
 
 

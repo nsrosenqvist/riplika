@@ -19,7 +19,7 @@ fi
 rm -f /tmp/riplika-probe.rs
 
 xgettext --files-from=po/POTFILES.in --directory=. \
-  --keyword=tr --keyword=tr_n:1,2 --language=Rust --from-code=UTF-8 --add-comments \
+  --keyword=tr --keyword=tr_n:1,2 --keyword=tr_args --language=Rust --from-code=UTF-8 --add-comments \
   --package-name=Riplika --package-version=0.2.0 \
   --copyright-holder="Niklas Rosenqvist" \
   --msgid-bugs-address="https://github.com/nsrosenqvist/riplika/issues" \

@@ -59,9 +59,93 @@ pub fn tr_n(singular: &str, plural: &str, n: u32) -> String {
     gettextrs::ngettext(singular, plural, n).replace("%d", &n.to_string())
 }
 
+/// Fill `%1$s`-style placeholders in a string that has already been translated.
+///
+/// Positional rather than a plain `%s`, because word order is exactly what
+/// differs between languages: a translator has to be able to put the file name
+/// before the verb, or the count after the noun it counts. Numbering them is
+/// what makes that possible without touching Rust.
+///
+/// A placeholder with no argument is left standing rather than panicking. A
+/// mistake in a catalogue - which arrives from a translator, not from this
+/// repository - should show up as one odd-looking line, not as a window that
+/// closes.
+pub fn fill(text: &str, args: &[&str]) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if bytes.get(i + 1) == Some(&b'%') {
+                out.push('%');
+                i += 2;
+                continue;
+            }
+            let mut j = i + 1;
+            let mut n = 0usize;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                n = n * 10 + (bytes[j] - b'0') as usize;
+                j += 1;
+            }
+            if j > i + 1 && bytes.get(j) == Some(&b'$') && bytes.get(j + 1) == Some(&b's') {
+                match args.get(n.wrapping_sub(1)) {
+                    Some(a) => out.push_str(a),
+                    None => out.push_str(&text[i..j + 2]),
+                }
+                i = j + 2;
+                continue;
+            }
+        }
+        let ch = text[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// Translate, then fill in the placeholders.
+pub fn tr_args(msgid: &str, args: &[&str]) -> String {
+    fill(&tr(msgid), args)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn placeholders_are_filled_in_order() {
+        assert_eq!(fill("wrote %1$s (%2$s)", &["a.mp4", "412 MB"]), "wrote a.mp4 (412 MB)");
+    }
+
+    #[test]
+    fn a_translation_may_reorder_them() {
+        // the reason they are numbered at all
+        assert_eq!(fill("%2$s: %1$s", &["one", "two"]), "two: one");
+    }
+
+    #[test]
+    fn one_argument_may_be_used_twice() {
+        assert_eq!(fill("%1$s and %1$s", &["it"]), "it and it");
+    }
+
+    #[test]
+    fn a_placeholder_with_no_argument_is_left_alone() {
+        // a catalogue comes from a translator, so this is their mistake to
+        // see, not a reason to take the window down
+        assert_eq!(fill("%1$s then %2$s", &["a"]), "a then %2$s");
+        assert_eq!(fill("%9$s", &["a"]), "%9$s");
+    }
+
+    #[test]
+    fn a_doubled_sign_is_a_literal_one() {
+        assert_eq!(fill("100%% done: %1$s", &["yes"]), "100% done: yes");
+    }
+
+    #[test]
+    fn text_without_placeholders_survives_unchanged() {
+        assert_eq!(fill("Sorting titles", &[]), "Sorting titles");
+        assert_eq!(fill("100% färdig", &[]), "100% färdig");
+    }
 
     #[test]
     fn a_string_survives_with_no_catalogue_loaded() {
