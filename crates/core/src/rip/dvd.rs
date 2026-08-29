@@ -173,13 +173,26 @@ pub fn rip_command(device: &Path, title: u32, dest: &Path) -> Command {
 /// scan said the title was.
 pub const SHORT_RIP_TOLERANCE: f32 = 0.02;
 
+/// How much may be missing outright, whatever the title's length.
+///
+/// A fraction alone scales with the title, so on a twenty-minute episode two
+/// per cent is twenty-six seconds and a real loss goes unremarked. That
+/// happened: a damaged title came back fourteen seconds short and nothing
+/// said so, because fourteen seconds of twenty minutes is one per cent.
+///
+/// Measured on Parks and Recreation series six disc one, forty-six titles: a
+/// healthy rip lands within 0.34s of the length the scan read out of the IFO
+/// tables, and most within a tenth. Three seconds is most of an order of
+/// magnitude above that, and well below the smallest loss worth having.
+pub const SHORT_RIP_ABSOLUTE: Millis = 3_000;
+
 /// Is this rip suspiciously short?
 pub fn is_short(expected: Millis, actual: Millis) -> bool {
     if expected == 0 {
         return false;
     }
-    let missing = expected.saturating_sub(actual) as f32 / expected as f32;
-    missing > SHORT_RIP_TOLERANCE
+    let missing = expected.saturating_sub(actual);
+    missing > SHORT_RIP_ABSOLUTE || missing as f32 / expected as f32 > SHORT_RIP_TOLERANCE
 }
 
 /// Turn one probed title into a [`DiscTitle`].
@@ -1035,10 +1048,22 @@ mod tolerance_tests {
         // downstream would ever notice.
         assert!(is_short(1_289_000, 600_000));
         assert!(is_short(1_289_000, 1_200_000));
-        // but normal rounding is not damage
+
+        // Fourteen seconds off a twenty-minute episode is one per cent, so a
+        // fraction alone let it pass. It is a real loss and this is the case
+        // it was missed on: title 13 of Parks and Recreation series six disc
+        // one, which came back 1207.84s against the 1221s the scan read.
+        assert!(is_short(1_221_000, 1_207_840), "fourteen seconds missing is not rounding");
+        // nine seconds likewise: measured across forty-six titles, a healthy
+        // rip lands within 0.34s of what the scan said
+        assert!(is_short(1_289_000, 1_280_000));
+
+        // What rounding actually looks like at that scale.
         assert!(!is_short(1_289_000, 1_289_000));
-        assert!(!is_short(1_289_000, 1_280_000));
-        // and a title of unknown length cannot be judged
+        assert!(!is_short(1_289_000, 1_288_660));
+        // and a rip a shade longer than the scan said is the common case
+        assert!(!is_short(1_221_000, 1_222_454));
+        // a title of unknown length cannot be judged
         assert!(!is_short(0, 0));
     }
 
