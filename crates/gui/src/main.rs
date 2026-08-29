@@ -620,27 +620,27 @@ fn stage_label(stage: riplika_core::job::Stage) -> String {
 /// breath and spelled in another once - "1 episodes", "2 feature" - which is
 /// invisible until the disc happens to hold exactly one of something.
 fn plan_lines(items: &[Item]) -> Vec<String> {
-    let count = |f: fn(&Role) -> bool| items.iter().filter(|i| f(&i.role)).count() as u32;
-    let play_alls = count(|r| matches!(r, Role::PlayAll));
+    let plan = riplika_core::model::Plan::of(items);
+    let play_alls = plan.play_alls as u32;
 
     // Written out one call at a time on purpose. xgettext reads the strings
     // where tr_n is called, so a table of them - which is otherwise the tidier
     // way to write this - hands it variables it cannot see through, and the
     // entries quietly leave the template. They did, once.
     let mut parts = Vec::new();
-    let episodes = count(|r| matches!(r, Role::Episode { .. }));
+    let episodes = plan.episodes as u32;
     if episodes > 0 {
         parts.push(tr_n("%d episode", "%d episodes", episodes));
     }
-    let features = count(|r| matches!(r, Role::Feature));
+    let features = plan.features as u32;
     if features > 0 {
         parts.push(tr_n("%d feature", "%d features", features));
     }
-    let cuts = count(|r| matches!(r, Role::ExtendedCut { .. }));
+    let cuts = plan.extended_cuts as u32;
     if cuts > 0 {
         parts.push(tr_n("%d extended cut", "%d extended cuts", cuts));
     }
-    let extras = count(|r| matches!(r, Role::Extra));
+    let extras = plan.extras as u32;
     if extras > 0 {
         parts.push(tr_n("%d extra", "%d extras", extras));
     }
@@ -1206,6 +1206,11 @@ impl App {
             // The text of a warning is built in core and usually ends in an
             // error from the operating system or ffmpeg, which arrives in
             // English and stays there. Only the label around it is ours.
+            // Shown already, and in the reader's language: the window builds
+            // this from the items it is given, together with the per-episode
+            // listing that needs them anyway. The event carries it for the log
+            // and the command line, which have no items to count.
+            Event::Plan(_) => {}
             Event::Warning(w) => self.log_line(&tr_args("warning: %1$s", &[&w])),
         }
     }

@@ -435,6 +435,72 @@ impl Role {
     }
 }
 
+/// What a disc turned out to hold, counted by role.
+///
+/// The counting lives here rather than in a front end because there are three
+/// consumers of it - the window, the command line, and the log written for the
+/// run - and three copies of "which roles count as an episode" is three
+/// chances for them to disagree about the same disc.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Plan {
+    pub episodes: usize,
+    pub features: usize,
+    pub extended_cuts: usize,
+    pub extras: usize,
+    /// Not produced: the same video again, reached through a play-all title.
+    pub play_alls: usize,
+}
+
+impl Plan {
+    pub fn of(items: &[Item]) -> Self {
+        let n = |f: fn(&Role) -> bool| items.iter().filter(|i| f(&i.role)).count();
+        Self {
+            episodes: n(|r| matches!(r, Role::Episode { .. })),
+            features: n(|r| matches!(r, Role::Feature)),
+            extended_cuts: n(|r| matches!(r, Role::ExtendedCut { .. })),
+            extras: n(|r| matches!(r, Role::Extra)),
+            play_alls: n(|r| matches!(r, Role::PlayAll)),
+        }
+    }
+
+    /// The summary, in English, as the log and the command line both print it.
+    ///
+    /// English on purpose. The window says this in the reader's language, but a
+    /// log that changes language with its reader is one that cannot be searched
+    /// or usefully pasted into a bug report.
+    pub fn lines(&self) -> Vec<String> {
+        let plural = |n: usize, noun: &str| format!("{n} {noun}{}", if n == 1 { "" } else { "s" });
+        let mut parts = Vec::new();
+        for (n, noun) in [
+            (self.episodes, "episode"),
+            (self.features, "feature"),
+            (self.extended_cuts, "extended cut"),
+            (self.extras, "extra"),
+        ] {
+            if n > 0 {
+                parts.push(plural(n, noun));
+            }
+        }
+        let mut lines = Vec::new();
+        if !parts.is_empty() {
+            lines.push(format!("holds {}", parts.join(", ")));
+        }
+        if self.play_alls > 0 {
+            lines.push(format!(
+                "skipping {} - the same video again",
+                plural(self.play_alls, "play-all title")
+            ));
+        }
+        lines
+    }
+
+    /// Nothing it can name. Play-all titles do not count: they are what is
+    /// being skipped, not what is being made.
+    pub fn holds_nothing(&self) -> bool {
+        self.episodes == 0 && self.features == 0 && self.extended_cuts == 0 && self.extras == 0
+    }
+}
+
 /// One title, what we decided it is, and what it should be called.
 ///
 /// This is the structure the GUI lets you edit before pressing go: change a
@@ -480,6 +546,65 @@ pub struct RecognisedSubtitle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn with(role: Role) -> Item {
+        Item {
+            source: PathBuf::from("/rip/a.mkv"),
+            role,
+            title: String::new(),
+            air_date: None,
+            duration: 0,
+            destination: None,
+        }
+    }
+
+    #[test]
+    fn a_plan_counts_each_role_apart() {
+        let items = vec![
+            with(Role::Episode { season: 1, number: 1 }),
+            with(Role::Episode { season: 1, number: 2 }),
+            with(Role::Feature),
+            with(Role::ExtendedCut { season: 1, number: 1 }),
+            with(Role::Extra),
+            with(Role::Extra),
+            with(Role::PlayAll),
+        ];
+        let p = Plan::of(&items);
+        assert_eq!(
+            (p.episodes, p.features, p.extended_cuts, p.extras, p.play_alls),
+            (2, 1, 1, 2, 1)
+        );
+    }
+
+    #[test]
+    fn a_disc_of_only_play_alls_holds_nothing() {
+        // they are what is being skipped, not what is being made
+        assert!(Plan::of(&[with(Role::PlayAll)]).holds_nothing());
+        assert!(Plan::of(&[]).holds_nothing());
+        assert!(!Plan::of(&[with(Role::Extra)]).holds_nothing());
+    }
+
+    #[test]
+    fn one_of_something_is_written_as_one() {
+        // the same mistake the window made: a count formatted into a noun
+        // spelled for the other case
+        let one = Plan { episodes: 1, features: 1, extended_cuts: 1, extras: 1, play_alls: 1 };
+        assert_eq!(one.lines()[0], "holds 1 episode, 1 feature, 1 extended cut, 1 extra");
+        assert_eq!(one.lines()[1], "skipping 1 play-all title - the same video again");
+    }
+
+    #[test]
+    fn more_than_one_is_written_as_many() {
+        let many = Plan { episodes: 7, features: 0, extended_cuts: 0, extras: 23, play_alls: 2 };
+        assert_eq!(many.lines()[0], "holds 7 episodes, 23 extras");
+        assert_eq!(many.lines()[1], "skipping 2 play-all titles - the same video again");
+    }
+
+    #[test]
+    fn a_plan_with_nothing_in_it_says_nothing() {
+        // an empty line in a log reads as something having gone wrong
+        assert!(Plan::default().lines().is_empty());
+    }
 
     #[test]
     fn bitmap_detection_covers_dvd_and_bluray() {

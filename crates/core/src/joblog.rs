@@ -156,6 +156,18 @@ impl JobLog {
                 }
             }
             Event::Warning(w) => format!("   warning: {w}"),
+            // The line worth having when reading back a season: six logs, and
+            // what each disc actually held. Written here rather than taken
+            // from the window because a log that changes language with the
+            // reader is a log that cannot be searched or pasted into a report.
+            Event::Plan(p) => {
+                // The line worth having when reading back a season: six logs,
+                // and what each disc actually held.
+                for line in p.lines() {
+                    self.write(&format!("   {line}"));
+                }
+                return;
+            }
         };
         self.write(&line);
     }
@@ -197,6 +209,41 @@ mod tests {
         assert_eq!(file_name("t", "A/B: C"), "t-A-B--C.log");
         assert_eq!(file_name("t", ""), "t.log");
         assert_eq!(file_name("t", "///"), "t.log");
+    }
+
+    /// A log to a real file, so what was written can be read back.
+    fn scratch(name: &str) -> (JobLog, PathBuf) {
+        let path =
+            std::env::temp_dir().join(format!("riplika-joblog-{}-{name}.log", std::process::id()));
+        let file = std::fs::File::create(&path).unwrap();
+        (JobLog { file: Some(file), path: path.clone() }, path)
+    }
+
+    #[test]
+    fn the_plan_is_recorded_so_a_season_can_be_read_back() {
+        // six discs, six logs, and this is the line that says which is which
+        let (mut log, path) = scratch("plan");
+        log.record(&Event::Plan(crate::model::Plan {
+            episodes: 7,
+            features: 0,
+            extended_cuts: 0,
+            extras: 23,
+            play_alls: 1,
+        }));
+        let written = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(written.contains("holds 7 episodes, 23 extras"), "{written}");
+        assert!(written.contains("skipping 1 play-all title"), "{written}");
+    }
+
+    #[test]
+    fn a_plan_holding_nothing_writes_no_line() {
+        // a blank line in a log reads as something having gone wrong
+        let (mut log, path) = scratch("empty");
+        log.record(&Event::Plan(crate::model::Plan::default()));
+        let written = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(written, "");
     }
 
     #[test]

@@ -70,6 +70,12 @@ pub enum Event {
         unknown: usize,
         recognised: bool,
     },
+    /// What the disc turned out to hold, once the titles have been sorted.
+    ///
+    /// Carried as counts rather than as a sentence so that each consumer can
+    /// phrase it for itself - the window in the reader's language, the log in
+    /// English so it stays the same in a bug report.
+    Plan(crate::model::Plan),
     /// Something went wrong that did not stop the run.
     Warning(String),
 }
@@ -316,6 +322,7 @@ impl<'a> Pipeline<'a> {
                 ));
             }
         }
+        events(Event::Plan(crate::model::Plan::of(&items)));
         Ok(items)
     }
 

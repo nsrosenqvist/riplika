@@ -256,6 +256,12 @@ fn reporter() -> impl FnMut(Event) {
                     println!("        subs {language}: not recognised, bitmap kept");
                 }
             }
+            Event::Plan(p) => {
+                clear(&mut on_progress_line);
+                for line in p.lines() {
+                    println!("  {line}");
+                }
+            }
             Event::Warning(w) => {
                 clear(&mut on_progress_line);
                 eprintln!("  warning: {w}");
