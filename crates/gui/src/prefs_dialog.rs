@@ -208,7 +208,9 @@ where
         .build();
     let rip = folder_row(
         "Folder",
-        &describe(&Some(store.prefs.borrow().rip_dir()), "System temporary folder"),
+        // Never the system temporary folder: a disc's raw rip is tens of
+        // gigabytes and /tmp is memory on most systems now.
+        &describe(&Some(store.prefs.borrow().rip_dir()), "Cache folder"),
     );
     folders.add(&rip);
     page.add(&folders);

@@ -105,8 +105,11 @@ enum Cmd {
     Rip {
         drive: Option<String>,
         /// Where the raw rip goes. Kept afterwards so it can be re-run.
-        #[arg(long, default_value = "/tmp/riplika-rip")]
-        rip_dir: PathBuf,
+        ///
+        /// Defaults to the cache directory, not /tmp: a season disc's raw rip
+        /// is tens of gigabytes, and /tmp is memory on most systems now.
+        #[arg(long)]
+        rip_dir: Option<PathBuf>,
         #[command(flatten)]
         source: Source,
         /// Skip identification and use this title.
@@ -272,6 +275,19 @@ fn resolve_table(given: Option<PathBuf>) -> PathBuf {
     })
 }
 
+/// Where to put the raw rip.
+///
+/// Not /tmp, which is what this used to be. On this machine and most others
+/// running systemd, /tmp is a tmpfs - memory - and a season disc's raw rip is
+/// tens of gigabytes. Ripping Parks and Recreation series six disc one filled
+/// fourteen gigabytes of RAM and died a third of the way through, having taken
+/// the machine's memory with it. The cache directory is on disk, which is where
+/// something this size belongs, and it is what Preferences already meant by a
+/// default rip directory.
+fn resolve_rip_dir(given: Option<PathBuf>) -> PathBuf {
+    given.unwrap_or_else(|| riplika_core::prefs::Preferences::load().rip_dir())
+}
+
 fn resolve_words(given: Option<PathBuf>) -> Option<PathBuf> {
     given.or_else(|| {
         let installed = riplika_core::prefs::Preferences::default_words_dir();
@@ -301,7 +317,7 @@ fn dispatch() -> Result<(), String> {
         Cmd::Search { query, season } => run::search(&query, season),
         Cmd::Rip { drive, rip_dir, source, title, season, disc, dry_run, output } => run::rip(
             drive.as_deref(),
-            &rip_dir,
+            &resolve_rip_dir(rip_dir),
             title.as_deref(),
             season,
             disc,
@@ -366,5 +382,30 @@ fn dispatch() -> Result<(), String> {
         Cmd::Fingerprint { inputs, min_seconds } => glyphs::fingerprint(&inputs, min_seconds),
         Cmd::Check { table } => glyphs::check(&Table::load(&table).map_err(|e| e.to_string())?),
         Cmd::Verify { produced, reference } => glyphs::verify(&produced, &reference),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_raw_rip_does_not_default_into_memory() {
+        // This defaulted to /tmp, which on this machine and most others
+        // running systemd is a tmpfs. Ripping a season disc filled fourteen
+        // gigabytes of RAM and died a third of the way through. Whatever the
+        // default is, it must not be the system temporary folder.
+        let chosen = resolve_rip_dir(None);
+        assert!(
+            !chosen.starts_with("/tmp"),
+            "the raw rip would go to {}, which is memory",
+            chosen.display()
+        );
+    }
+
+    #[test]
+    fn a_folder_given_by_hand_is_used_as_given() {
+        let mine = PathBuf::from("/mnt/scratch/rip");
+        assert_eq!(resolve_rip_dir(Some(mine.clone())), mine);
     }
 }
