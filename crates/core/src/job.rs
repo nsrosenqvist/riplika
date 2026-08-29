@@ -985,6 +985,11 @@ mod tests {
         let encode = h.runner.calls_to("ffmpeg").into_iter().find(|c| c.has("libx264")).unwrap();
         let target = encode.args.last().unwrap();
         assert!(target.ends_with(".part"), "{target}");
+        // ...which is why the format has to be stated. ffmpeg chooses its muxer
+        // from the extension, and ".part" is not one, so without this it
+        // refuses the output and the run produces nothing at all. These two
+        // assertions belong together: the first is the reason for the second.
+        assert_eq!(encode.value_of("-f"), Some("mp4"), "{}", encode.display());
         // and the finished file is at the real path, not the temporary one
         assert!(report.produced[0].destination.to_string_lossy().ends_with(".mp4"));
     }

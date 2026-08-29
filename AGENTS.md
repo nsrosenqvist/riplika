@@ -100,6 +100,8 @@ Commit messages say what changed and why it was wrong before. They are the proje
 
 ## Things that will bite you
 
+**A FakeRunner accepts commands real ffmpeg refuses.** Every test here drives one, which is what makes them fast and offline, and it means a command can be well-formed to the tests and rejected by ffmpeg. That is not hypothetical: files are written to a `.part` path while being made, ffmpeg picks its muxer from the extension, `.part` is not one, and every transcode failed with "Invalid argument" while the whole suite passed. Anything about *how ffmpeg reads a command* needs a real run to confirm - `riplika process` on a directory of two short files takes seconds.
+
 - **`pkill -f riplika`** matches the shell running it. Use `pkill -x`.
 - **The GUI runs jobs on worker threads inside itself**, so there is no separate process to look for, and restarting it kills a running rip.
 - **An optical drive can wedge in `D` state**, uninterruptible; not even `kill -9` reaches it until the read returns. Ejecting clears it.

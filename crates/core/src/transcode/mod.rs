@@ -168,6 +168,10 @@ impl TranscodePlan {
         if self.container == Container::Mp4 {
             c = c.args(["-movflags", "+faststart"]);
         }
+        // Say the format rather than leaving ffmpeg to infer it from the name.
+        // The file being written is a ".part", so there is nothing in the name
+        // to infer from, and ffmpeg's answer is to refuse the output entirely.
+        c = c.args(["-f", self.container.muxer()]);
         c.path(&self.output)
     }
 }
@@ -355,6 +359,23 @@ mod tests {
 
     fn settings() -> JobSettings {
         JobSettings::default()
+    }
+
+    #[test]
+    fn the_output_format_is_stated_and_not_left_to_the_file_name() {
+        // The bug this replaces produced nothing at all. Files are written to
+        // a ".part" path while being made, ffmpeg picks its muxer from the
+        // extension, and ".part" is not one it knows - so it refused every
+        // output with "Invalid argument" and the whole run wrote zero files.
+        //
+        // Nothing caught it because every test here drives a FakeRunner, which
+        // will happily accept a command real ffmpeg rejects. So the check has
+        // to be that the format is said out loud.
+        let mut s = settings();
+        s.container = Container::Mp4;
+        assert_eq!(build(&s, vec![], &[]).value_of("-f"), Some("mp4"));
+        s.container = Container::Mkv;
+        assert_eq!(build(&s, vec![], &[]).value_of("-f"), Some("matroska"));
     }
 
     fn build(s: &JobSettings, subs: Vec<SubtitleInput>, failed: &[usize]) -> Command {
