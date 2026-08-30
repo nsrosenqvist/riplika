@@ -187,13 +187,59 @@ fn digit_sum(mut n: u32) -> u32 {
     sum
 }
 
+/// What kind of medium the drive says it is holding.
+///
+/// From the drive rather than guessed at from the filesystem, which matters:
+/// a Blu-ray carries UDF and usually no ISO 9660 at all, so looking for a
+/// directory finds nothing and says "data disc". It also decides how a disc
+/// has to be read - a CD has raw 2352-byte sectors underneath the 2048 the
+/// kernel hands out, and a DVD does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Medium {
+    Cd,
+    Dvd,
+    BluRay,
+}
+
+impl Medium {
+    /// Bytes in a sector as the disc actually stores it.
+    pub fn raw_sector(self) -> usize {
+        match self {
+            // Sync pattern, header, user data and error correction.
+            Medium::Cd => 2352,
+            Medium::Dvd | Medium::BluRay => SECTOR,
+        }
+    }
+
+    pub fn from_profile(profile: u16) -> Option<Medium> {
+        match profile {
+            0x08..=0x0A => Some(Medium::Cd),
+            0x10..=0x1B => Some(Medium::Dvd),
+            0x40..=0x43 => Some(Medium::BluRay),
+            _ => None,
+        }
+    }
+}
+
+/// Ask the drive what medium it is holding.
+pub fn medium(device: &Path) -> Option<Medium> {
+    let answer = crate::scsi::ask(device, &crate::scsi::get_configuration(), 8)?;
+    let profile = u16::from_be_bytes([*answer.get(6)?, *answer.get(7)?]);
+    Medium::from_profile(profile)
+}
+
+/// The table of contents, for a disc that has one.
+pub fn toc(device: &Path) -> Option<Toc> {
+    read_toc(&File::open(device).ok()?)
+}
+
 /// What is in the drive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DiscKind {
     DvdVideo,
-    /// Best effort only. Blu-ray video is UDF, which this does not read - it is
-    /// recognised when the disc also carries an ISO9660 bridge, and otherwise
-    /// looks like [`DiscKind::Data`].
+    /// Recognised from its `BDMV` directory when the disc carries an ISO 9660
+    /// bridge, and otherwise from what the drive says the medium is - Blu-ray
+    /// is UDF, which this does not read.
     BluRay,
     Audio(Toc),
     /// A filesystem that is neither: a PC game, or anything else pressed.
@@ -248,6 +294,10 @@ pub fn identify(device: &Path) -> DiscKind {
     if has("VIDEO_TS") {
         DiscKind::DvdVideo
     } else if has("BDMV") {
+        DiscKind::BluRay
+    } else if medium(device) == Some(Medium::BluRay) {
+        // A Blu-ray is UDF and often carries no ISO 9660 at all, so the
+        // directory says nothing. The drive still knows what it is holding.
         DiscKind::BluRay
     } else {
         DiscKind::Data
@@ -609,6 +659,32 @@ mod tests {
         let kind = identify(&path);
         let _ = std::fs::remove_file(&path);
         kind
+    }
+
+    #[test]
+    fn the_drives_own_answer_decides_what_the_medium_is() {
+        // The numbers are the MMC profile codes. A CD has raw sectors
+        // underneath the cooked ones; the other two do not, and reading a DVD
+        // as though it did would ask for bytes that are not there.
+        assert_eq!(Medium::from_profile(0x08), Some(Medium::Cd));
+        assert_eq!(Medium::from_profile(0x0A), Some(Medium::Cd));
+        assert_eq!(Medium::from_profile(0x10), Some(Medium::Dvd));
+        assert_eq!(Medium::from_profile(0x1B), Some(Medium::Dvd));
+        assert_eq!(Medium::from_profile(0x40), Some(Medium::BluRay));
+        assert_eq!(Medium::from_profile(0x43), Some(Medium::BluRay));
+        // No disc, or something nobody here has thought about.
+        assert_eq!(Medium::from_profile(0x0000), None);
+        assert_eq!(Medium::from_profile(0xFFFF), None);
+    }
+
+    #[test]
+    fn a_cd_sector_is_bigger_than_the_part_the_kernel_hands_out() {
+        // 2352 on the disc, 2048 after the drive has checked the error
+        // correction and thrown the rest away - and the thrown-away part is
+        // what a preservation database hashes.
+        assert_eq!(Medium::Cd.raw_sector(), 2352);
+        assert_eq!(Medium::Dvd.raw_sector(), SECTOR);
+        assert_eq!(Medium::BluRay.raw_sector(), SECTOR);
     }
 
     #[test]

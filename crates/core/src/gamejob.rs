@@ -12,13 +12,14 @@
 //! and a plain read either stops at the first one or spends an hour retrying it
 //! before reaching the rest.
 
+use crate::disc::Medium;
 use crate::hash::{self, Digests};
 use crate::host::{Cancel, Fs};
 use crate::job::{Event, Stage};
 use crate::naming::sanitize;
 use crate::redump::{self, Dat};
 use crate::rescue::map::Map;
-use crate::rescue::{FileSink, PlainDisc, ReadError, Rescue, SECTOR, SectorSource};
+use crate::rescue::{FileSink, PlainDisc, RawCd, ReadError, Rescue, SECTOR, SectorSource};
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
 
@@ -51,7 +52,20 @@ pub fn dump(
     cancel: &Cancel,
     events: &mut dyn FnMut(Event),
 ) -> Result<Dumped> {
-    let sectors = PlainDisc::sectors(device)?;
+    // A CD has to be read raw. The kernel checks each sector's error
+    // correction, keeps the 2048 bytes of user data and discards the rest -
+    // and the discarded part is what a preservation database hashes, so an
+    // image of cooked sectors is a good image that matches nothing.
+    let medium = crate::disc::medium(device).unwrap_or(Medium::Dvd);
+    let sector = medium.raw_sector();
+    let sectors = match medium {
+        // The table of contents is authoritative for a CD; the block device
+        // reports the cooked length, which is a different number.
+        Medium::Cd => crate::disc::toc(device)
+            .map(|t| u64::from(t.leadout))
+            .ok_or_else(|| Error(format!("{} has no table of contents", device.display())))?,
+        _ => PlainDisc::sectors(device)?,
+    };
     if sectors == 0 {
         return Err(Error(format!("{} has nothing in it", device.display())));
     }
@@ -64,9 +78,13 @@ pub fn dump(
         fs.create_dir_all(dir)?;
     }
     let unreadable = {
-        let mut source = Cancellable { inner: PlainDisc::open(device)?, cancel };
-        let mut sink = FileSink::create(&part, 0)?;
-        let mut rescue = Rescue::new(Map::new(0, sectors)).for_data();
+        let inner: Box<dyn SectorSource> = match medium {
+            Medium::Cd => Box::new(RawCd::open(device)?),
+            _ => Box::new(PlainDisc::open(device)?),
+        };
+        let mut source = Cancellable { inner, cancel };
+        let mut sink = FileSink::with_sector(&part, 0, sector)?;
+        let mut rescue = Rescue::new(Map::new(0, sectors)).filling_with(vec![0u8; sector]);
         rescue.run(&mut source, &mut sink, &mut |p| {
             events(Event::Progress {
                 stage: Stage::Rip,
@@ -95,7 +113,7 @@ pub fn dump(
 /// The rescue has no notion of cancelling; it has a notion of a read that
 /// cannot be retried, which is the same thing from where it stands.
 struct Cancellable<'a> {
-    inner: PlainDisc,
+    inner: Box<dyn SectorSource>,
     cancel: &'a Cancel,
 }
 

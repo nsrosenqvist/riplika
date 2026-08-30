@@ -39,6 +39,7 @@ pub mod prefs;
 pub mod redump;
 pub mod rescue;
 pub mod rip;
+pub mod scsi;
 pub mod secret;
 pub mod subs;
 pub mod transcode;

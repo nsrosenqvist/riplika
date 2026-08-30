@@ -73,27 +73,36 @@ pub trait SectorSink {
 /// A sink backed by a file, sparse where nothing has been written.
 pub struct FileSink {
     file: std::fs::File,
-    /// Sectors are written at `(lba - base) * SECTOR`, so a rescue of one title
+    /// Sectors are written at `(lba - base) * sector`, so a rescue of one title
     /// produces a file starting at that title rather than a mostly-empty image.
     base: u64,
+    /// Bytes a sector takes in the file, which is not always what the kernel
+    /// hands out: a raw CD sector is 2352.
+    sector: usize,
 }
 
 impl FileSink {
+    /// A sink of ordinary 2048-byte sectors.
     pub fn create(path: &Path, base: u64) -> Result<FileSink> {
+        Self::with_sector(path, base, SECTOR)
+    }
+
+    /// A sink of whatever size the disc's sectors really are.
+    pub fn with_sector(path: &Path, base: u64, sector: usize) -> Result<FileSink> {
         let file = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(false)
             .open(path)
             .map_err(|e| Error(format!("{}: {e}", path.display())))?;
-        Ok(FileSink { file, base })
+        Ok(FileSink { file, base, sector })
     }
 }
 
 impl SectorSink for FileSink {
     fn write(&mut self, lba: u64, data: &[u8]) -> Result<()> {
         use std::io::{Seek, SeekFrom, Write};
-        let offset = lba.saturating_sub(self.base) * SECTOR as u64;
+        let offset = lba.saturating_sub(self.base) * self.sector as u64;
         self.file.seek(SeekFrom::Start(offset)).map_err(|e| Error(e.to_string()))?;
         self.file.write_all(data).map_err(|e| Error(e.to_string()))
     }
@@ -158,8 +167,16 @@ impl Rescue {
     /// For anything that is a filesystem rather than a video stream. A zeroed
     /// sector in an ISO is a hole in a file; a padding packet there is a hole
     /// that also lies about what it contains.
-    pub fn for_data(mut self) -> Rescue {
-        self.filler = zero_sector();
+    pub fn for_data(self) -> Rescue {
+        self.filling_with(vec![0u8; SECTOR])
+    }
+
+    /// Fill with something of the caller's choosing.
+    ///
+    /// The filler has to be exactly one sector as the sink counts them, which
+    /// for a raw CD read is 2352 bytes rather than 2048.
+    pub fn filling_with(mut self, filler: Vec<u8>) -> Rescue {
+        self.filler = filler;
         self
     }
 
@@ -336,6 +353,44 @@ pub fn zero_sector() -> Vec<u8> {
     vec![0u8; SECTOR]
 }
 
+/// A CD read as it is actually written: 2352 bytes a sector.
+///
+/// The kernel checks each sector's error correction, keeps the 2048 bytes of
+/// user data and throws the rest away. That is the right thing for reading a
+/// file and the wrong thing for copying a disc, because the discarded part is
+/// what a preservation database hashes - an image of cooked sectors is a
+/// perfectly good image that matches nothing.
+///
+/// So this asks the drive for whole sectors with `READ CD` instead.
+pub struct RawCd {
+    file: std::fs::File,
+}
+
+impl RawCd {
+    pub const SECTOR: usize = 2352;
+
+    pub fn open(path: &Path) -> Result<RawCd> {
+        let file =
+            std::fs::File::open(path).map_err(|e| Error(format!("{}: {e}", path.display())))?;
+        Ok(RawCd { file })
+    }
+}
+
+impl SectorSource for RawCd {
+    fn read(&mut self, lba: u64, count: u64) -> std::result::Result<Vec<u8>, ReadError> {
+        let cdb = crate::scsi::read_cd_raw(lba as u32, count as u32);
+        let want = count as usize * Self::SECTOR;
+        match crate::scsi::read(&self.file, &cdb, want) {
+            Ok(data) if data.len() == want => Ok(data),
+            // A short answer is a partial read, which the passes are entitled
+            // to treat as no read at all: they narrow the range and try again.
+            Ok(_) => Err(ReadError::Unreadable),
+            Err(crate::scsi::Failed::Refused) => Err(ReadError::Unreadable),
+            Err(crate::scsi::Failed::Fatal(why)) => Err(ReadError::Fatal(why)),
+        }
+    }
+}
+
 /// An ordinary block device or image file, read straight.
 ///
 /// Everything that is not an encrypted DVD: a data disc, a game, an audio
@@ -386,6 +441,58 @@ impl SectorSource for PlainDisc {
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Err(ReadError::Unreadable),
             Err(_) => Err(ReadError::Unreadable),
         }
+    }
+}
+
+#[cfg(test)]
+mod sink_tests {
+    use super::*;
+
+    fn temp(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("riplika-sink-{}-{name}", std::process::id()))
+    }
+
+    #[test]
+    fn a_raw_sink_lays_sectors_out_at_their_real_width() {
+        // Writing 2352-byte sectors 2048 apart would overlap every one of them
+        // with the next, and the image would be the right length and wrong
+        // everywhere.
+        let path = temp("raw");
+        let _ = std::fs::remove_file(&path);
+        {
+            let mut sink = FileSink::with_sector(&path, 0, 2352).unwrap();
+            sink.write(0, &vec![b'a'; 2352]).unwrap();
+            sink.write(1, &vec![b'b'; 2352]).unwrap();
+        }
+        let written = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(written.len(), 4704);
+        assert_eq!(written[2351], b'a');
+        assert_eq!(written[2352], b'b');
+    }
+
+    #[test]
+    fn the_ordinary_sink_is_still_two_thousand_and_forty_eight() {
+        let path = temp("cooked");
+        let _ = std::fs::remove_file(&path);
+        {
+            let mut sink = FileSink::create(&path, 0).unwrap();
+            sink.write(1, &vec![b'x'; SECTOR]).unwrap();
+        }
+        let written = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(written.len(), SECTOR * 2);
+        assert_eq!(written[SECTOR], b'x');
+    }
+
+    #[test]
+    fn a_rescue_fills_holes_with_whatever_it_was_given() {
+        let filler = vec![0u8; 2352];
+        let r = Rescue::new(Map::new(0, 1)).filling_with(filler.clone());
+        assert_eq!(r.filler, filler);
+        // The default is still MPEG padding, which is what video wants.
+        assert_eq!(Rescue::new(Map::new(0, 1)).filler, padding_sector());
+        assert_eq!(Rescue::new(Map::new(0, 1)).for_data().filler, vec![0u8; SECTOR]);
     }
 }
 

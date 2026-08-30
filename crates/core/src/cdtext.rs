@@ -13,10 +13,6 @@
 
 use std::path::Path;
 
-/// `READ TOC/PMA/ATIP`, asking for the CD-Text format.
-const READ_TOC: u8 = 0x43;
-const FORMAT_CD_TEXT: u8 = 0x05;
-
 /// Enough for any CD-Text a disc actually carries; the real one measured here
 /// came to 616 bytes.
 const BUFFER: usize = 8192;
@@ -160,65 +156,8 @@ pub fn read(device: &Path) -> Option<CdText> {
 }
 
 fn read_raw(device: &Path) -> Option<Vec<u8>> {
-    use std::os::fd::AsRawFd;
-
-    let file = std::fs::File::open(device).ok()?;
-    let mut buffer = vec![0u8; BUFFER];
-    let length = (BUFFER as u16).to_be_bytes();
-    let mut cdb: [u8; 10] = [READ_TOC, 0, FORMAT_CD_TEXT, 0, 0, 0, 0, length[0], length[1], 0];
-    let mut sense = [0u8; 32];
-
-    let mut hdr: SgIoHdr = unsafe { std::mem::zeroed() };
-    hdr.interface_id = i32::from(b'S');
-    hdr.dxfer_direction = SG_DXFER_FROM_DEV;
-    hdr.cmd_len = cdb.len() as u8;
-    hdr.mx_sb_len = sense.len() as u8;
-    hdr.dxfer_len = buffer.len() as u32;
-    hdr.dxferp = buffer.as_mut_ptr().cast();
-    hdr.cmdp = cdb.as_mut_ptr();
-    hdr.sbp = sense.as_mut_ptr();
-    hdr.timeout = 10_000;
-
-    if unsafe { libc::ioctl(file.as_raw_fd(), SG_IO as _, &raw mut hdr) } != 0 {
-        return None;
-    }
-    // A disc with no CD-Text answers with an error rather than an empty list.
-    if hdr.status != 0 || hdr.host_status != 0 {
-        return None;
-    }
-    let got = buffer.len().saturating_sub(hdr.resid.max(0) as usize);
-    buffer.truncate(got);
-    (got >= 4 + PACK).then_some(buffer)
-}
-
-const SG_IO: libc::c_ulong = 0x2285;
-const SG_DXFER_FROM_DEV: i32 = -3;
-
-/// Mirrors the kernel's `struct sg_io_hdr`.
-#[repr(C)]
-struct SgIoHdr {
-    interface_id: i32,
-    dxfer_direction: i32,
-    cmd_len: u8,
-    mx_sb_len: u8,
-    iovec_count: u16,
-    dxfer_len: u32,
-    dxferp: *mut libc::c_void,
-    cmdp: *mut u8,
-    sbp: *mut u8,
-    timeout: u32,
-    flags: u32,
-    pack_id: i32,
-    usr_ptr: *mut libc::c_void,
-    status: u8,
-    masked_status: u8,
-    msg_status: u8,
-    sb_len_wr: u8,
-    host_status: u16,
-    driver_status: u16,
-    resid: i32,
-    duration: u32,
-    info: u32,
+    let response = crate::scsi::ask(device, &crate::scsi::read_cd_text(BUFFER as u16), BUFFER)?;
+    (response.len() >= 4 + PACK).then_some(response)
 }
 
 #[cfg(test)]
