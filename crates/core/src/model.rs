@@ -360,6 +360,15 @@ pub struct JobSettings {
     pub audio: Quality,
     pub container: Container,
     pub languages: LanguageSet,
+    /// Read each title twice, for chapter marks accurate to the frame.
+    ///
+    /// Doubles the reading: measured on a Pioneer BDR-UD04, a disc took 45
+    /// minutes with it and 25 without. What it buys is chapter marks that do
+    /// not drift - without it ffmpeg timestamps them as though NTSC were 30
+    /// frames a second rather than 29.97, so they run about a tenth of a per
+    /// cent long: under two seconds by the end of an episode, about seven by
+    /// the end of a film.
+    pub accurate_chapters: bool,
     /// Add an AAC stereo track beside untouched original audio, so browser
     /// clients have something they can decode without server-side transcoding.
     pub dual_audio: bool,
@@ -392,6 +401,7 @@ impl Default for JobSettings {
             video: Quality::Medium,
             audio: Quality::High,
             container: Container::Mp4,
+            accurate_chapters: false,
             languages: LanguageSet::default(),
             dual_audio: false,
             keep_bitmap_subs: false,

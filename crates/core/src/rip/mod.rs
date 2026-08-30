@@ -424,6 +424,15 @@ impl<'a> Auto<'a> {
         }
     }
 
+    /// Ask the free reader for chapter marks accurate to the frame.
+    ///
+    /// Costs a second read of every title. MakeMKV is unaffected: it indexes
+    /// the disc up front either way.
+    pub fn with_accurate_chapters(mut self, yes: bool) -> Self {
+        self.free.accurate_chapters = yes;
+        self
+    }
+
     pub fn on_fallback(mut self, f: impl Fn(Warning) + Send + Sync + 'a) -> Self {
         self.notify = Some(Box::new(f));
         self

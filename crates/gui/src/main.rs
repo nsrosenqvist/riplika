@@ -129,6 +129,7 @@ struct Ui {
     language_group: adw::PreferencesGroup,
     include_extended: adw::SwitchRow,
     include_extras: adw::SwitchRow,
+    accurate_chapters: adw::SwitchRow,
     language_rows: RefCell<Vec<(String, adw::SwitchRow)>>,
     output_dir: adw::ActionRow,
     disc_entry: adw::EntryRow,
@@ -374,7 +375,7 @@ fn build_ui() -> Ui {
     // Applies to whichever show is chosen above; changing it needs no search.
     let detail_group = adw::PreferencesGroup::builder()
         .title(tr("This disc"))
-        .description("Which part of the show it holds. The disc number decides where episode numbering starts.")
+        .description(tr("Which part of the show it holds. The disc number decides where episode numbering starts."))
         .build();
     let season_entry = adw::EntryRow::builder().title(tr("Season")).build();
     let disc_entry = adw::EntryRow::builder().title(tr("Disc")).build();
@@ -412,16 +413,21 @@ fn build_ui() -> Ui {
     let containers = gtk::StringList::new(&["MP4", "Matroska"]);
     let container =
         adw::ComboRow::builder().title(tr("Container")).model(&containers).selected(0).build();
+    let accurate_chapters = adw::SwitchRow::builder()
+        .title(tr("Exact chapter marks"))
+        .subtitle(tr("Reads the disc twice. Without it chapter marks drift a second or two"))
+        .build();
     quality.add(&video);
     quality.add(&audio);
     quality.add(&container);
+    quality.add(&accurate_chapters);
 
     // Built once the disc has been scanned, from the languages actually on it.
     // Offering a text field instead means guessing at spellings and finding out
     // afterwards that nothing matched.
     let language_group = adw::PreferencesGroup::builder()
         .title(tr("Languages"))
-        .description("What this disc carries. Your preferred languages start ticked; the first becomes the default track.")
+        .description(tr("What this disc carries. Your preferred languages start ticked; the first becomes the default track."))
         .build();
 
     // What to take off this disc. A season disc carries thirty pieces of bonus
@@ -429,11 +435,11 @@ fn build_ui() -> Ui {
     // as most of the files.
     let contents_group = adw::PreferencesGroup::builder()
         .title(tr("What to take"))
-        .description("Episodes are always taken. Anything unticked is not read at all.")
+        .description(tr("Episodes are always taken. Anything unticked is not read at all."))
         .build();
     let include_extended = adw::SwitchRow::builder()
         .title(tr("Extended episodes"))
-        .subtitle("Longer cuts some discs carry alongside the broadcast versions")
+        .subtitle(tr("Longer cuts some discs carry alongside the broadcast versions"))
         .build();
     let include_extras = adw::SwitchRow::builder()
         .title(tr("Bonus material"))
@@ -583,6 +589,7 @@ fn build_ui() -> Ui {
         language_group,
         include_extended,
         include_extras,
+        accurate_chapters,
         language_rows: RefCell::new(Vec::new()),
         output_dir,
         disc_entry,
@@ -855,6 +862,7 @@ impl App {
         let mut s = prefs.to_settings(output, self.chosen_languages());
         s.include_extended_cuts = self.ui.include_extended.is_active();
         s.include_extras = self.ui.include_extras.is_active();
+        s.accurate_chapters = self.ui.accurate_chapters.is_active();
         // the rip page can override the persisted quality for this disc
         s.video = quality_at(&self.ui.video);
         s.audio = quality_at(&self.ui.audio);
@@ -921,6 +929,7 @@ impl App {
         });
         self.ui.include_extended.set_active(prefs.include_extended_cuts);
         self.ui.include_extras.set_active(prefs.include_extras);
+        self.ui.accurate_chapters.set_active(prefs.accurate_chapters);
     }
 
     /// What the drive page should say, given what the machine has.

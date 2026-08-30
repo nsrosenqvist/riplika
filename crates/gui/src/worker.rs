@@ -107,6 +107,8 @@ pub fn analyse(drive: Drive, allow_makemkv: bool, cancel: Cancel, tx: Sender<Msg
     std::thread::spawn(move || {
         let real = Real::new(cancel.clone());
         let notify = tx.clone();
+        // A scan reads chapter times from the IFO tables, never from the
+        // video, so there is nothing here for exact marks to apply to.
         let mk = Auto::new(&real.runner, allow_makemkv).on_fallback(move |w| {
             let _ = notify.send(Msg::Event(Event::Warning(w)));
         });
@@ -195,9 +197,11 @@ pub fn run(
     std::thread::spawn(move || {
         let real = Real::new(cancel.clone());
         let notify = tx.clone();
-        let mk = Auto::new(&real.runner, allow_makemkv).on_fallback(move |w| {
-            let _ = notify.send(Msg::Event(Event::Warning(w)));
-        });
+        let mk = Auto::new(&real.runner, allow_makemkv)
+            .with_accurate_chapters(settings.accurate_chapters)
+            .on_fallback(move |w| {
+                let _ = notify.send(Msg::Event(Event::Warning(w)));
+            });
         let prober = FfProbe(&real.runner);
         let cat = real.catalogues();
         let p = Pipeline::new(

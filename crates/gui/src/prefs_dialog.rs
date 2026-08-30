@@ -50,11 +50,11 @@ where
     F: Fn() + Clone + 'static,
 {
     let dialog = adw::PreferencesDialog::builder().title(tr("Preferences")).build();
-    let page = adw::PreferencesPage::builder().title("General").build();
+    let page = adw::PreferencesPage::builder().title(tr("General")).build();
 
     // --- reading discs ----------------------------------------------------
     let reading = adw::PreferencesGroup::builder()
-        .title("Reading discs")
+        .title(tr("Reading discs"))
         .description(
             "DVDs are read with libdvdread and libdvdcss, which need nothing \
              proprietary. MakeMKV is needed for Blu-ray, and for DVDs the free \
@@ -65,7 +65,7 @@ where
 
     let installed = Preferences::makemkv_available();
     let makemkv = adw::SwitchRow::builder()
-        .title("Use MakeMKV when needed")
+        .title(tr("Use MakeMKV when needed"))
         .subtitle(if installed {
             match host::which(MAKEMKV) {
                 Some(p) => format!("Found at {}", p.display()),
@@ -86,7 +86,7 @@ where
 
     // --- languages --------------------------------------------------------
     let languages = adw::PreferencesGroup::builder()
-        .title("Preferred languages")
+        .title(tr("Preferred languages"))
         .description(
             "Ticked languages are selected by default when a disc offers them. \
              The order is the order you turn them on, and the first one becomes \
@@ -136,17 +136,17 @@ where
 
     // --- naming -----------------------------------------------------------
     let naming_group = adw::PreferencesGroup::builder()
-        .title("Episode filenames")
+        .title(tr("Episode filenames"))
         .description(format!(
             "Tokens: {}",
             naming::TOKENS.iter().map(|(t, _)| *t).collect::<Vec<_>>().join("  ")
         ))
         .build();
-    let template_row = adw::EntryRow::builder().title("Pattern").build();
+    let template_row = adw::EntryRow::builder().title(tr("Pattern")).build();
     template_row.set_text(&store.prefs.borrow().episode_template);
     // What it will actually produce, updated as it is typed - the only way to
     // know a pattern does what you meant without ripping a disc to find out.
-    let preview_row = adw::ActionRow::builder().title("Preview").build();
+    let preview_row = adw::ActionRow::builder().title(tr("Preview")).build();
     preview_row.add_css_class("property");
     let container = store.prefs.borrow().container;
     preview_row.set_subtitle(&naming::preview(&template_row.text(), container));
@@ -156,14 +156,14 @@ where
 
     // --- catalogues -------------------------------------------------------
     let catalogue_group = adw::PreferencesGroup::builder()
-        .title("Catalogues")
+        .title(tr("Catalogues"))
         .description(
             "TVmaze answers for television and Wikidata for film, neither needing a key. \
              A TMDB key is used in preference to both: it is better data, and it is what a \
              media server consults about the same files.",
         )
         .build();
-    let tmdb_row = adw::PasswordEntryRow::builder().title("TMDB API key").build();
+    let tmdb_row = adw::PasswordEntryRow::builder().title(tr("TMDB API key")).build();
     if let Some(k) = secret::tmdb_key() {
         tmdb_row.set_text(&k);
     }
@@ -172,18 +172,18 @@ where
     page.add(&catalogue_group);
 
     // --- track policy -----------------------------------------------------
-    let tracks = adw::PreferencesGroup::builder().title("Tracks").build();
+    let tracks = adw::PreferencesGroup::builder().title(tr("Tracks")).build();
     let dual = adw::SwitchRow::builder()
-        .title("Add a stereo AAC track")
-        .subtitle("So browser clients do not make the server transcode AC3")
+        .title(tr("Add a stereo AAC track"))
+        .subtitle(tr("So browser clients do not make the server transcode AC3"))
         .build();
     dual.set_active(store.prefs.borrow().dual_audio);
     let bitmaps = adw::SwitchRow::builder()
-        .title("Keep VobSub bitmaps")
-        .subtitle("Redundant once recognised, and selecting one forces a burn-in re-encode")
+        .title(tr("Keep VobSub bitmaps"))
+        .subtitle(tr("Redundant once recognised, and selecting one forces a burn-in re-encode"))
         .build();
     bitmaps.set_active(store.prefs.borrow().keep_bitmap_subs);
-    let commentary = adw::SwitchRow::builder().title("Keep commentary tracks").build();
+    let commentary = adw::SwitchRow::builder().title(tr("Keep commentary tracks")).build();
     commentary.set_active(!store.prefs.borrow().drop_commentary);
     tracks.add(&dual);
     tracks.add(&bitmaps);
@@ -199,7 +199,7 @@ where
     // Where a rip lands is a real question: it wants tens of gigabytes, and a
     // small home partition is a good reason to put it elsewhere.
     let folders = adw::PreferencesGroup::builder()
-        .title("Working folder")
+        .title(tr("Working folder"))
         .description(format!(
             "Where a disc lands before it is encoded - tens of gigabytes, deleted afterwards. \
              Subtitle data lives in {}.",

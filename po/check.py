@@ -40,6 +40,12 @@ def without_comment_lines(text):
     return '\n'.join('' if l.lstrip().startswith('//') else l for l in text.splitlines())
 
 
+# Prose handed straight to a widget. These read as language and must be
+# translated; nothing else about them looks wrong, which is why three of them
+# sat untranslated with every other string on the same page wrapped.
+SHOWN = re.compile(r'\.(title|subtitle|description|tooltip_text)\(\s*' + STRING + r'\s*\)')
+
+
 def scan():
     wanted, unextractable = set(), []
     for rel in (ROOT / 'po' / 'POTFILES.in').read_text().split():
@@ -54,6 +60,9 @@ def scan():
                 line = text.count('\n', 0, m.start()) + 1
                 snippet = text.splitlines()[line - 1].strip()
                 unextractable.append(f'{rel}:{line}: {snippet}')
+        for m in SHOWN.finditer(text):
+            line = text.count('\n', 0, m.start()) + 1
+            unextractable.append(f'{rel}:{line}: {text.splitlines()[line - 1].strip()}')
     return wanted, unextractable
 
 
@@ -93,7 +102,8 @@ def main():
         print('will never reach a translator:')
         for line in unextractable:
             print(f'  {line}')
-        print('\nPass the string literally at the call site, not through a variable.')
+        print('\nPass the string literally at the call site, not through a variable,')
+        print('and wrap anything a person reads in tr().')
 
     if missing:
         bad = True

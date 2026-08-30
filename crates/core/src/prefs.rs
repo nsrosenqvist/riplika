@@ -48,6 +48,9 @@ pub struct Preferences {
     pub dual_audio: bool,
     pub keep_bitmap_subs: bool,
     pub include_extended_cuts: bool,
+    /// Read each title twice for exact chapter marks. Off: it doubles the read.
+    #[serde(default)]
+    pub accurate_chapters: bool,
     pub include_extras: bool,
     pub drop_commentary: bool,
     pub output_dir: Option<PathBuf>,
@@ -65,6 +68,9 @@ impl Default for Preferences {
             // most discs carry it, and it gives the subtitle recogniser a
             // language it has the best wordlist for.
             preferred_languages: vec!["eng".into()],
+            // Off: it doubles how long a disc takes to read, and buys chapter
+            // marks that are already within two seconds without it.
+            accurate_chapters: false,
             // On by default, but inert unless MakeMKV is installed. Defaulting
             // it off would mean a disc the free reader cannot read simply
             // fails, with the fix buried in a dialog.
@@ -136,6 +142,7 @@ impl Preferences {
             video: self.video,
             audio: self.audio,
             container: self.container,
+            accurate_chapters: self.accurate_chapters,
             languages,
             dual_audio: self.dual_audio,
             keep_bitmap_subs: self.keep_bitmap_subs,

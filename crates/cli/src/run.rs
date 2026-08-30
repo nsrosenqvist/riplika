@@ -96,9 +96,14 @@ fn pick_drive(ripper: &dyn Ripper, want: Option<&str>) -> Result<Drive, String> 
 fn reader<'a>(
     which: &str,
     runner: &'a riplika_core::host::RealRunner,
+    accurate_chapters: bool,
 ) -> Result<Box<dyn Ripper + 'a>, String> {
     match which.trim().to_ascii_lowercase().as_str() {
-        "dvd" | "dvdvideo" | "ffmpeg" => Ok(Box::new(DvdVideo::new(runner))),
+        "dvd" | "dvdvideo" | "ffmpeg" => {
+            let mut d = DvdVideo::new(runner);
+            d.accurate_chapters = accurate_chapters;
+            Ok(Box::new(d))
+        }
         "makemkv" => {
             if !Preferences::makemkv_available() {
                 return Err("makemkvcon is not installed".into());
@@ -107,6 +112,7 @@ fn reader<'a>(
         }
         "auto" => Ok(Box::new(
             Auto::new(runner, Preferences::makemkv_available())
+                .with_accurate_chapters(accurate_chapters)
                 .on_fallback(|w| eprintln!("  {}", w.text())),
         )),
         other => Err(format!("unknown reader {other:?}; use auto, dvd or makemkv")),
@@ -115,7 +121,8 @@ fn reader<'a>(
 
 pub fn drives(which: &str) -> Result<(), String> {
     let real = Real::new();
-    let r = reader(which, &real.runner)?;
+    // No titles are read here, so chapter accuracy has nothing to apply to.
+    let r = reader(which, &real.runner, false)?;
     for d in r.drives().map_err(|e| e.to_string())? {
         println!(
             "{:8} {:12} {:32} {}",
@@ -130,7 +137,8 @@ pub fn drives(which: &str) -> Result<(), String> {
 
 pub fn scan(drive: Option<&str>, which: &str) -> Result<(), String> {
     let real = Real::new();
-    let r = reader(which, &real.runner)?;
+    // A scan reads chapter times from the IFO tables, never from the video.
+    let r = reader(which, &real.runner, false)?;
     let d = pick_drive(r.as_ref(), drive)?;
     // The scan probes each title in turn; on a full disc that is minutes, so
     // it says where it has got to rather than sitting silent.
@@ -362,7 +370,7 @@ pub fn rip(
     // The same reader selection `scan` uses. Hardcoding MakeMKV here meant the
     // free path was built, tested and then never reached by the one command
     // that matters.
-    let mk = reader(which_reader, &real.runner)?;
+    let mk = reader(which_reader, &real.runner, settings.accurate_chapters)?;
     let prober = FfProbe(&real.runner);
     let cat = real.catalogues();
     let d = pick_drive(mk.as_ref(), drive)?;

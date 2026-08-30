@@ -65,6 +65,13 @@ struct Output {
     /// is most of the reading as well as most of the files.
     #[arg(long)]
     no_extras: bool,
+    /// Read each title twice for chapter marks accurate to the frame.
+    ///
+    /// Roughly doubles how long the disc takes to read. Without it the marks
+    /// run about a tenth of a per cent long - under two seconds by the end of
+    /// an episode.
+    #[arg(long)]
+    accurate_chapters: bool,
     /// Glyph table for subtitle recognition.
     #[arg(long)]
     table: Option<PathBuf>,
@@ -246,6 +253,7 @@ impl Output {
                 .ok_or("video quality must be high, medium or low")?,
             audio: Quality::parse(&self.audio)
                 .ok_or("audio quality must be high, medium or low")?,
+            accurate_chapters: self.accurate_chapters,
             container: match self.container.to_ascii_lowercase().as_str() {
                 "mp4" => Container::Mp4,
                 "mkv" | "matroska" => Container::Mkv,
