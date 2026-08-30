@@ -315,6 +315,20 @@ impl Quality {
         }
     }
 
+    /// LAME's VBR level.
+    ///
+    /// Quoted as V-numbers rather than bitrates because VBR is what LAME is
+    /// good at: V0 is transparent to most listeners, and by V5 artefacts are
+    /// audible on decent headphones. Nothing above V0 is worth the bytes at CD
+    /// source, and below V5 there is no reason to keep the disc at all.
+    pub fn lame_vbr(self) -> u32 {
+        match self {
+            Quality::High => 0,   // ~245 kb/s
+            Quality::Medium => 2, // ~190 kb/s
+            Quality::Low => 5,    // ~130 kb/s
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Quality::High => "high",
@@ -368,6 +382,11 @@ pub struct JobSettings {
     pub video: Quality,
     pub audio: Quality,
     pub container: Container,
+    /// What a ripped CD is written as. Nothing to do with `container`, which
+    /// is a video wrapper - a music disc has no video to wrap.
+    pub music_format: crate::prefs::AudioFormat,
+    /// Only meaningful when `music_format` is a lossy one.
+    pub music_quality: Quality,
     pub languages: LanguageSet,
     /// Read each title twice, for chapter marks accurate to the frame.
     ///
@@ -410,6 +429,8 @@ impl Default for JobSettings {
             video: Quality::Medium,
             audio: Quality::High,
             container: Container::Mp4,
+            music_format: crate::prefs::AudioFormat::Flac,
+            music_quality: Quality::High,
             accurate_chapters: false,
             languages: LanguageSet::default(),
             dual_audio: false,

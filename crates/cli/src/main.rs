@@ -260,6 +260,8 @@ impl Output {
             audio: Quality::parse(&self.audio)
                 .ok_or("audio quality must be high, medium or low")?,
             accurate_chapters: self.accurate_chapters,
+            music_format: prefs.music_format,
+            music_quality: prefs.music_quality,
             container: match self.container.to_ascii_lowercase().as_str() {
                 "mp4" => Container::Mp4,
                 "mkv" | "matroska" => Container::Mkv,

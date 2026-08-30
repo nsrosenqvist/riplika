@@ -59,7 +59,68 @@ pub struct Preferences {
     pub words_dir: Option<PathBuf>,
     /// How episode filenames are built.
     pub episode_template: String,
+    /// What a ripped CD is written as.
+    #[serde(default)]
+    pub music_format: AudioFormat,
+    /// How hard to work on a ripped CD.
+    ///
+    /// Only means anything for a lossy format; see
+    /// [`AudioFormat::quality_applies`].
+    #[serde(default = "music_quality_default")]
+    pub music_quality: Quality,
 }
+
+fn music_quality_default() -> Quality {
+    Quality::High
+}
+
+/// What a ripped CD is written as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AudioFormat {
+    /// Lossless, and about half the size of the raw disc. The default because
+    /// it is the only one a later re-encode can start from without having
+    /// already thrown something away.
+    #[default]
+    Flac,
+    /// Lossy, and plays on anything.
+    Mp3,
+}
+
+impl AudioFormat {
+    pub fn extension(self) -> &'static str {
+        match self {
+            AudioFormat::Flac => "flac",
+            AudioFormat::Mp3 => "mp3",
+        }
+    }
+
+    /// What ffmpeg calls the encoder.
+    pub fn encoder(self) -> &'static str {
+        match self {
+            AudioFormat::Flac => "flac",
+            AudioFormat::Mp3 => "libmp3lame",
+        }
+    }
+
+    /// Does a quality setting change anything here?
+    ///
+    /// For FLAC it does not. Every compression level decodes to bit-identical
+    /// audio; only the file size and the encode time move, by a few percent.
+    /// So the setting is not merely ignored - the control for it is switched
+    /// off, because a control that visibly changes nothing is worse than no
+    /// control at all.
+    pub fn quality_applies(self) -> bool {
+        matches!(self, AudioFormat::Mp3)
+    }
+}
+
+/// FLAC's compression level.
+///
+/// Chosen once rather than exposed: it is lossless at every level, and 8 is
+/// the usual archival choice - a few percent smaller than the default, and no
+/// slower to decode.
+pub const FLAC_COMPRESSION: u32 = 8;
 
 impl Default for Preferences {
     fn default() -> Self {
@@ -88,6 +149,10 @@ impl Default for Preferences {
             glyph_table: None,
             words_dir: None,
             episode_template: crate::naming::DEFAULT_EPISODE_TEMPLATE.to_string(),
+            // Lossless by default: a CD rip is the only copy of that disc most
+            // people will ever make, and a lossy one cannot be improved later.
+            music_format: AudioFormat::Flac,
+            music_quality: music_quality_default(),
         }
     }
 }
@@ -142,6 +207,8 @@ impl Preferences {
             video: self.video,
             audio: self.audio,
             container: self.container,
+            music_format: self.music_format,
+            music_quality: self.music_quality,
             accurate_chapters: self.accurate_chapters,
             languages,
             dual_audio: self.dual_audio,
@@ -455,5 +522,52 @@ mod xdg_tests {
         if !Preferences::default_words_dir().is_dir() {
             assert_eq!(p.words_dir(), None);
         }
+    }
+}
+
+#[cfg(test)]
+mod music_format_tests {
+    use super::*;
+
+    #[test]
+    fn a_quality_setting_only_means_something_for_a_lossy_format() {
+        // FLAC decodes to bit-identical audio at every compression level, so
+        // there is nothing for a tier to decide.
+        assert!(!AudioFormat::Flac.quality_applies());
+        assert!(AudioFormat::Mp3.quality_applies());
+    }
+
+    #[test]
+    fn each_format_names_its_own_encoder_and_extension() {
+        assert_eq!(AudioFormat::Flac.extension(), "flac");
+        assert_eq!(AudioFormat::Flac.encoder(), "flac");
+        assert_eq!(AudioFormat::Mp3.extension(), "mp3");
+        assert_eq!(AudioFormat::Mp3.encoder(), "libmp3lame");
+    }
+
+    #[test]
+    fn the_tiers_run_from_best_to_worst_without_repeating_themselves() {
+        let levels: Vec<u32> =
+            [Quality::High, Quality::Medium, Quality::Low].iter().map(|q| q.lame_vbr()).collect();
+        assert_eq!(levels, vec![0, 2, 5], "V-numbers count upwards as quality falls");
+    }
+
+    #[test]
+    fn lossless_is_the_default_because_a_lossy_rip_cannot_be_improved_later() {
+        assert_eq!(Preferences::default().music_format, AudioFormat::Flac);
+    }
+
+    #[test]
+    fn settings_saved_before_music_existed_still_load() {
+        // The fields were added after people already had a settings file, and
+        // one missing them must not be read as a corrupt one.
+        let mut v: serde_json::Value =
+            serde_json::to_value(Preferences::default()).expect("preferences serialise");
+        let map = v.as_object_mut().expect("preferences are an object");
+        map.remove("music_format");
+        map.remove("music_quality");
+        let back: Preferences = serde_json::from_value(v).expect("an older file still loads");
+        assert_eq!(back.music_format, AudioFormat::Flac);
+        assert_eq!(back.music_quality, Quality::High);
     }
 }

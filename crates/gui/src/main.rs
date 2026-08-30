@@ -17,7 +17,7 @@ use riplika_core::disc::DiscKind;
 use riplika_core::job::{Event, Report};
 use riplika_core::lang::{self, LanguageSet};
 use riplika_core::model::*;
-use riplika_core::prefs::Preferences;
+use riplika_core::prefs::{AudioFormat, Preferences};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -127,6 +127,11 @@ struct Ui {
     video: adw::ComboRow,
     audio: adw::ComboRow,
     container: adw::ComboRow,
+    /// The video settings, hidden when the disc has no video on it.
+    quality_group: adw::PreferencesGroup,
+    music_group: adw::PreferencesGroup,
+    music_format: adw::ComboRow,
+    music_quality: adw::ComboRow,
     language_group: adw::PreferencesGroup,
     include_extended: adw::SwitchRow,
     include_extras: adw::SwitchRow,
@@ -397,20 +402,39 @@ fn build_ui() -> Ui {
     // --- step three: how to encode it ------------------------------------
     let set_body = body();
     let quality = adw::PreferencesGroup::builder().title(tr("Quality")).build();
-    let tiers = gtk::StringList::new(&["High", "Medium", "Low"]);
+    let tiers = tier_list();
     let video = adw::ComboRow::builder()
         .title(tr("Picture"))
         .subtitle(tr("Medium is the sweet spot for DVD: about 170 MB an episode"))
         .model(&tiers)
         .selected(1)
         .build();
-    let audio_tiers = gtk::StringList::new(&["High", "Medium", "Low"]);
+    let audio_tiers = tier_list();
     let audio = adw::ComboRow::builder()
         .title(tr("Sound"))
         .subtitle(tr("High keeps the original AC3 untouched; browsers cannot decode it"))
         .model(&audio_tiers)
         .selected(0)
         .build();
+    let music = adw::PreferencesGroup::builder().title(tr("Music")).build();
+    let music_formats = gtk::StringList::new(&["FLAC", "MP3"]);
+    let music_format = adw::ComboRow::builder()
+        .title(tr("Format"))
+        .subtitle(tr("FLAC keeps the disc exactly; MP3 plays on anything"))
+        .model(&music_formats)
+        .selected(0)
+        .build();
+    let music_tiers = tier_list();
+    let music_quality =
+        adw::ComboRow::builder().title(tr("Quality")).model(&music_tiers).selected(0).build();
+    apply_music_quality_rule(&music_quality, AudioFormat::Flac);
+    music_format.connect_selected_notify({
+        let quality = music_quality.clone();
+        move |row| apply_music_quality_rule(&quality, format_at(row))
+    });
+    music.add(&music_format);
+    music.add(&music_quality);
+
     let containers = gtk::StringList::new(&["MP4", "Matroska"]);
     let container =
         adw::ComboRow::builder().title(tr("Container")).model(&containers).selected(0).build();
@@ -460,6 +484,7 @@ fn build_ui() -> Ui {
         .halign(gtk::Align::End)
         .build();
     set_body.append(&quality);
+    set_body.append(&music);
     set_body.append(&language_group);
     set_body.append(&contents_group);
     set_body.append(&folders);
@@ -587,6 +612,10 @@ fn build_ui() -> Ui {
         video,
         audio,
         container,
+        quality_group: quality,
+        music_group: music,
+        music_format,
+        music_quality,
         language_group,
         include_extended,
         include_extras,
@@ -659,6 +688,40 @@ fn opening_query(last_search: &str, settled_on: Option<&str>, label: Option<&str
 ///
 /// Mirrors `Drive::describe_disc`, which stays English because the CLI and the
 /// job log read it; this is the same information said in the user's language.
+/// The three quality tiers, in one place.
+///
+/// Built rather than written out at each chooser so all of them say the same
+/// words, and so all of them are translated - as bare array literals they were
+/// invisible to xgettext and stayed English everywhere.
+fn tier_list() -> gtk::StringList {
+    let labels = [tr("High"), tr("Medium"), tr("Low")];
+    gtk::StringList::new(&labels.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+fn format_at(row: &adw::ComboRow) -> AudioFormat {
+    if row.selected() == 1 { AudioFormat::Mp3 } else { AudioFormat::Flac }
+}
+
+/// What the music quality chooser says, and whether it can be touched.
+///
+/// FLAC is lossless, so a tier there decides nothing: every level decodes to
+/// bit-identical audio and only the file size moves. A live control that
+/// cannot affect the result is worse than none, so it is switched off and says
+/// why rather than being quietly ignored.
+fn music_quality_state(format: AudioFormat) -> (String, bool) {
+    if format.quality_applies() {
+        (tr("High is about 245 kb/s, Low about 130"), true)
+    } else {
+        (tr("FLAC is lossless - every level decodes to the same audio"), false)
+    }
+}
+
+fn apply_music_quality_rule(row: &adw::ComboRow, format: AudioFormat) {
+    let (subtitle, live) = music_quality_state(format);
+    row.set_subtitle(&subtitle);
+    row.set_sensitive(live);
+}
+
 fn disc_text(d: &Drive) -> String {
     match (&d.kind, &d.disc_label) {
         (Some(DiscKind::Audio(toc)), _) => {
@@ -905,6 +968,8 @@ impl App {
         s.audio = quality_at(&self.ui.audio);
         s.container =
             if self.ui.container.selected() == 1 { Container::Mkv } else { Container::Mp4 };
+        s.music_format = format_at(&self.ui.music_format);
+        s.music_quality = quality_at(&self.ui.music_quality);
         s
     }
 
@@ -964,6 +1029,18 @@ impl App {
             Container::Mp4 => 0,
             Container::Mkv => 1,
         });
+        self.ui.music_format.set_selected(match prefs.music_format {
+            AudioFormat::Flac => 0,
+            AudioFormat::Mp3 => 1,
+        });
+        self.ui.music_quality.set_selected(match prefs.music_quality {
+            Quality::High => 0,
+            Quality::Medium => 1,
+            Quality::Low => 2,
+        });
+        // Setting the format above does not fire the handler, so the rule that
+        // greys the tier chooser has to be applied here as well.
+        apply_music_quality_rule(&self.ui.music_quality, prefs.music_format);
         self.ui.include_extended.set_active(prefs.include_extended_cuts);
         self.ui.include_extras.set_active(prefs.include_extras);
         self.ui.accurate_chapters.set_active(prefs.accurate_chapters);
@@ -1035,6 +1112,14 @@ impl App {
             let state = self.state.borrow();
             (state.drives.clone(), state.drive.clone())
         };
+        // A music disc has no picture to encode and no container to put it in;
+        // a video disc has no music format. Showing both groups would offer
+        // settings that cannot apply to what is in the tray.
+        let music =
+            matches!(selected.as_ref().and_then(|d| d.kind.as_ref()), Some(DiscKind::Audio(_)));
+        self.ui.music_group.set_visible(music);
+        self.ui.quality_group.set_visible(!music);
+
         let (title, description, ready) = Self::drive_status(&drives, selected.as_ref());
         self.ui.drive_page.set_title(&title);
         self.ui.drive_page.set_description(Some(&description));
@@ -2403,5 +2488,32 @@ mod icon_tests {
             }
         }
         assert_eq!(decided.iter().filter(|(_, i, _)| i.is_some()).count(), 4);
+    }
+}
+
+#[cfg(test)]
+mod music_settings_tests {
+    use super::*;
+
+    #[test]
+    fn flac_offers_no_tier_to_choose_so_the_chooser_is_switched_off() {
+        let (subtitle, live) = music_quality_state(AudioFormat::Flac);
+        assert!(!live, "a chooser that cannot change the result must not look live");
+        assert!(
+            subtitle.to_lowercase().contains("lossless"),
+            "it has to say why it is off: {subtitle}"
+        );
+    }
+
+    #[test]
+    fn mp3_has_a_real_choice_so_the_chooser_stays_live() {
+        let (subtitle, live) = music_quality_state(AudioFormat::Mp3);
+        assert!(live);
+        assert!(!subtitle.is_empty(), "a live chooser should say what the tiers mean");
+    }
+
+    #[test]
+    fn the_two_formats_do_not_say_the_same_thing() {
+        assert_ne!(music_quality_state(AudioFormat::Flac), music_quality_state(AudioFormat::Mp3));
     }
 }
