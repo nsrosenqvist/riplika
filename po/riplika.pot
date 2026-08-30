@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Riplika 0.2.0\n"
 "Report-Msgid-Bugs-To: https://github.com/nsrosenqvist/riplika/issues\n"
-"POT-Creation-Date: 2026-08-30 15:11+0200\n"
+"POT-Creation-Date: 2026-08-30 16:20+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -610,6 +610,10 @@ msgstr ""
 
 #: crates/gui/src/prefs_dialog.rs:222
 msgid "Working folder"
+msgstr ""
+
+#: crates/gui/src/prefs_dialog.rs:244
+msgid "Game datfiles"
 msgstr ""
 
 #: data/com.nsrosenqvist.Riplika.desktop:4

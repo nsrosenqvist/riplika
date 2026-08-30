@@ -235,6 +235,26 @@ where
     folders.add(&rip);
     page.add(&folders);
 
+    // Datfiles are asked about where the glyph table and wordlists are not,
+    // and the difference is who makes them. Those two the program builds, so
+    // there is no answer a user could give that beats the default. A datfile
+    // comes from outside, covers one system, and somebody who has a collection
+    // of them already keeps it somewhere.
+    let games = adw::PreferencesGroup::builder()
+        .title(tr("Game datfiles"))
+        .description(
+            "Redump datfiles name a game disc from what it hashes to, which is also what \
+             proves the dump is whole. Without them a dump still works and is filed under \
+             whatever the disc calls itself.",
+        )
+        .build();
+    let dats = folder_row(
+        "Folder",
+        &describe(&store.prefs.borrow().dat_dir(), "None - dumps will not be named"),
+    );
+    games.add(&dats);
+    page.add(&games);
+
     dialog.add(&page);
 
     // --- wiring -----------------------------------------------------------
@@ -357,6 +377,18 @@ where
         "System temporary folder",
         |p, v| p.rip_dir = v,
         |p| p.rip_dir.clone(),
+        on_change.clone(),
+    );
+
+    pick(
+        &dats,
+        &dialog,
+        Rc::clone(&store),
+        true,
+        "Game datfiles",
+        "None - dumps will not be named",
+        |p, v| p.dat_dir = v,
+        |p| p.dat_dir.clone(),
         on_change.clone(),
     );
 
