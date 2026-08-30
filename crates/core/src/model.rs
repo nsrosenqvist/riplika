@@ -323,32 +323,19 @@ pub enum Container {
 }
 
 impl Container {
+    /// Everything that differs between formats lives behind [`Container::format`].
+    /// These stay because callers read better for them, and delegate so there
+    /// is still only one answer to each question.
     pub fn extension(self) -> &'static str {
-        match self {
-            Container::Mp4 => "mp4",
-            Container::Mkv => "mkv",
-        }
+        self.format().extension()
     }
 
-    /// What ffmpeg calls this container's muxer.
-    ///
-    /// Needed because ffmpeg picks a muxer from the file name, and files are
-    /// written to a `.part` path while they are being made - which is not a
-    /// name it recognises. Saying it outright is better than depending on the
-    /// extension anyway: the two cannot then drift apart.
-    pub fn muxer(self) -> &'static str {
-        match self {
-            Container::Mp4 => "mp4",
-            Container::Mkv => "matroska",
-        }
-    }
-
-    /// The text subtitle codec this container wants.
     pub fn text_subtitle_codec(self) -> &'static str {
-        match self {
-            Container::Mp4 => "mov_text",
-            Container::Mkv => "srt",
-        }
+        self.format().text_subtitle_codec()
+    }
+
+    pub fn muxer(self) -> &'static str {
+        self.format().muxer()
     }
 }
 

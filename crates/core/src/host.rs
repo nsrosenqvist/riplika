@@ -420,6 +420,8 @@ pub trait Fs: Send + Sync {
     fn read_range(&self, p: &Path, offset: u64, len: usize) -> Result<Vec<u8>>;
     /// Overwrite bytes in place, changing nothing else and no length.
     fn write_at(&self, p: &Path, offset: u64, data: &[u8]) -> Result<()>;
+    /// Add to the end, leaving every existing byte where it was.
+    fn append(&self, p: &Path, data: &[u8]) -> Result<()>;
     fn remove_file(&self, p: &Path) -> Result<()>;
     fn rename(&self, from: &Path, to: &Path) -> Result<()>;
     fn size(&self, p: &Path) -> Result<u64>;
@@ -467,6 +469,14 @@ impl Fs for RealFs {
             .open(p)
             .map_err(|e| Error(format!("{}: {e}", p.display())))?;
         f.seek(SeekFrom::Start(offset)).map_err(|e| Error(format!("{}: {e}", p.display())))?;
+        f.write_all(data).map_err(|e| Error(format!("{}: {e}", p.display())))
+    }
+    fn append(&self, p: &Path, data: &[u8]) -> Result<()> {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(p)
+            .map_err(|e| Error(format!("{}: {e}", p.display())))?;
         f.write_all(data).map_err(|e| Error(format!("{}: {e}", p.display())))
     }
     fn remove_file(&self, p: &Path) -> Result<()> {
@@ -557,6 +567,12 @@ impl Fs for FakeFs {
             return Err(Error(format!("{}: write past the end", p.display())));
         }
         all[start..start + data.len()].copy_from_slice(data);
+        Ok(())
+    }
+    fn append(&self, p: &Path, data: &[u8]) -> Result<()> {
+        let mut files = self.files.lock().unwrap();
+        let all = files.get_mut(p).ok_or_else(|| Error(format!("{}: not found", p.display())))?;
+        all.extend_from_slice(data);
         Ok(())
     }
     fn remove_file(&self, p: &Path) -> Result<()> {

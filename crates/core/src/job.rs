@@ -545,11 +545,16 @@ impl<'a> Pipeline<'a> {
             let _ = self.ports.fs.remove_file(&partial);
             return Err(e);
         }
-        if self.settings.container == Container::Mp4 {
-            // ffmpeg leaves a reference to a chapter track it never wrote. The
-            // file plays either way, so a failure here is not worth failing a
-            // finished episode over - it is tidying, not producing.
-            let _ = transcode::mp4::drop_dangling_chapter_refs(self.ports.fs, &partial);
+        // Whatever this format still needs of the finished file - the tags
+        // Matroska wants targets for, the chapter reference MP4 leaves behind.
+        // Not worth failing a finished episode over: it plays either way.
+        if let Err(e) =
+            self.settings.container.format().finish(self.ports.fs, &partial, media, item)
+        {
+            events(Event::Warning(Warning::ItemSkipped {
+                name: dest.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                why: format!("finishing the file: {}", e.0),
+            }));
         }
         self.ports.fs.rename(&partial, dest)?;
 

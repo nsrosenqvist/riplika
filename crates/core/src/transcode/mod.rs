@@ -131,7 +131,7 @@ impl TranscodePlan {
         }
 
         for (n, s) in self.subtitles.iter().enumerate() {
-            c = c.args([&format!("-c:s:{n}"), self.container.text_subtitle_codec()]);
+            c = c.args([&format!("-c:s:{n}"), self.container.format().text_subtitle_codec()]);
             c = c.args([&format!("-metadata:s:s:{n}"), &format!("language={}", s.language)]);
         }
         let text = self.subtitles.len();
@@ -160,19 +160,18 @@ impl TranscodePlan {
             ]);
         }
 
+        let format = self.container.format();
         for (k, v) in self.tags.pairs() {
-            c = c.args(["-metadata", &format!("{k}={v}")]);
+            if format.mux_carries(k) {
+                c = c.args(["-metadata", &format!("{k}={v}")]);
+            }
         }
 
-        // HandBrake's "web optimized": the moov atom at the front, so a player
-        // can start before the whole file has arrived.
-        if self.container == Container::Mp4 {
-            c = c.args(["-movflags", "+faststart"]);
-        }
+        c = c.args(format.mux_options().iter().copied());
         // Say the format rather than leaving ffmpeg to infer it from the name.
         // The file being written is a ".part", so there is nothing in the name
         // to infer from, and ffmpeg's answer is to refuse the output entirely.
-        c = c.args(["-f", self.container.muxer()]);
+        c = c.args(["-f", format.muxer()]);
         c.path(&self.output)
     }
 }
