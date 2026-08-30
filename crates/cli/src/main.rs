@@ -117,6 +117,15 @@ enum Cmd {
         #[arg(long)]
         from_disc: bool,
     },
+    /// List or download Redump datfiles.
+    Dats {
+        /// Download this system's datfile, e.g. `psx`. Omit to list.
+        #[arg(long)]
+        fetch: Option<String>,
+        /// Where to put them. Defaults to the configured folder.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Dump a game disc to an image and identify it.
     RipGame {
         /// Drive to read, by device or MakeMKV id.
@@ -376,6 +385,7 @@ fn dispatch() -> Result<(), String> {
         Cmd::Drives { source } => run::drives(&source.reader),
         Cmd::Disc { drive } => run::disc(drive.as_deref()),
         Cmd::CheckDump { image, dat } => run::check_dump(&image, dat.as_deref()),
+        Cmd::Dats { fetch, out } => run::dats(fetch.as_deref(), out),
         Cmd::RipGame { drive, out, dat } => run::rip_game(drive.as_deref(), out, dat.as_deref()),
         Cmd::RipCd { drive, out, track, format, from_disc } => {
             run::rip_cd(drive.as_deref(), out, track, format.as_deref(), from_disc)

@@ -98,6 +98,36 @@ impl Dat {
     }
 }
 
+/// The systems a disc drive in a PC can actually read, with the names
+/// redump.org files them under.
+///
+/// Not the whole list, deliberately. A GameCube or Xbox disc is a format an
+/// ordinary drive cannot read at all, so offering to fetch its datfile would
+/// promise something this program cannot do.
+pub const SYSTEMS: &[(&str, &str)] = &[
+    ("pc", "IBM PC compatible"),
+    ("mac", "Apple Macintosh"),
+    ("psx", "Sony PlayStation"),
+    ("ps2", "Sony PlayStation 2"),
+    ("pce", "NEC PC Engine CD & TurboGrafx CD"),
+    ("ss", "Sega Saturn"),
+    ("mcd", "Sega Mega CD & Sega CD"),
+    ("3do", "3DO Interactive Multiplayer"),
+    ("cdi", "Philips CD-i"),
+    ("cd32", "Commodore Amiga CD32"),
+    ("ngcd", "SNK Neo Geo CD"),
+];
+
+/// Where a system's datfile is downloaded from.
+pub fn datfile_url(system: &str) -> String {
+    format!("http://redump.org/datfile/{system}/")
+}
+
+/// The English name for a system slug, if it is one we list.
+pub fn system_name(slug: &str) -> Option<&'static str> {
+    SYSTEMS.iter().find(|(s, _)| *s == slug).map(|(_, name)| *name)
+}
+
 /// Every datfile in a directory, in name order.
 ///
 /// A datfile covers one system, so a collection means several - and which
@@ -375,6 +405,26 @@ mod tests {
             .find(&digests(10_633_392, "a129332bf4d4a44a5098a74ba86f1150eded4bc7", 0x9d36_26e2))
             .expect("track one should match");
         assert!(found.rom.name.contains("Track 1"));
+    }
+
+    #[test]
+    fn the_systems_offered_are_ones_a_pc_drive_can_actually_read() {
+        // A GameCube or Xbox disc is a format an ordinary drive cannot read,
+        // so offering its datfile would promise something impossible.
+        let slugs: Vec<&str> = SYSTEMS.iter().map(|(s, _)| *s).collect();
+        for readable in ["pc", "psx", "ps2", "mac"] {
+            assert!(slugs.contains(&readable), "{readable} should be offered");
+        }
+        for unreadable in ["gc", "wii", "xbox", "ps3"] {
+            assert!(!slugs.contains(&unreadable), "{unreadable} cannot be read here");
+        }
+    }
+
+    #[test]
+    fn a_system_is_fetched_from_its_own_address() {
+        assert_eq!(datfile_url("psx"), "http://redump.org/datfile/psx/");
+        assert_eq!(system_name("psx"), Some("Sony PlayStation"));
+        assert_eq!(system_name("nonesuch"), None);
     }
 
     #[test]
