@@ -280,6 +280,56 @@ pub fn rip_cd(
     Ok(())
 }
 
+/// Say what a dumped image is, and whether it is whole.
+///
+/// One act, not two: a hit in a preservation datfile names the disc *and*
+/// proves the dump is byte-for-byte right.
+pub fn check_dump(image: &Path, dat: Option<&Path>) -> Result<(), String> {
+    use riplika_core::{hash, redump};
+
+    let real = Real::new();
+    let prefs = riplika_core::prefs::Preferences::load();
+    let where_from = dat
+        .map(Path::to_path_buf)
+        .or_else(|| prefs.dat_dir())
+        .ok_or("no datfiles: pass --dat, or put them in the configured folder")?;
+
+    let dats = if where_from.is_dir() {
+        redump::load_all(&real.fs, &where_from)
+    } else {
+        let bytes = real.fs.read(&where_from).map_err(|e| e.to_string())?;
+        let dat = redump::parse(&String::from_utf8_lossy(&bytes)).map_err(|e| e.to_string())?;
+        vec![(where_from.clone(), dat)]
+    };
+    if dats.is_empty() {
+        return Err(format!("no datfiles found in {}", where_from.display()));
+    }
+    let discs: usize = dats.iter().map(|(_, d)| d.len()).sum();
+    println!("{} datfile(s), {discs} disc(s) known\n", dats.len());
+
+    print!("hashing {} ... ", image.display());
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let digests = hash::of_file(&real.fs, image, &mut |_, _| {}).map_err(|e| e.to_string())?;
+    println!("done");
+    println!("  size   {}", digests.bytes);
+    println!("  crc32  {}", digests.crc32_hex());
+    println!("  sha1   {}", digests.sha1_hex());
+
+    for (path, dat) in &dats {
+        if let Some(found) = dat.find(&digests) {
+            println!("\n{}", found.game.name);
+            println!("  {} - {}", dat.name, found.rom.name);
+            println!("  verified against {}", path.display());
+            return Ok(());
+        }
+    }
+    println!("\nNo datfile has this image.");
+    println!("That means the dump is not a known-good one - either the disc is not covered,");
+    println!("or the read did not come out byte-for-byte right.");
+    Ok(())
+}
+
 pub fn scan(drive: Option<&str>, which: &str) -> Result<(), String> {
     let real = Real::new();
     // A scan reads chapter times from the IFO tables, never from the video.

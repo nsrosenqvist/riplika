@@ -133,11 +133,34 @@ pub struct Rescue {
     pub skip_ahead: u64,
     /// How many times to go back over sectors that are still bad.
     pub retries: u32,
+    /// What goes into a sector that could not be read.
+    ///
+    /// Which filler is right depends on what is being read, and getting it
+    /// wrong is worse than leaving a hole: MPEG padding inside a filesystem
+    /// image is a packet header where a directory record should be.
+    pub filler: Vec<u8>,
 }
 
 impl Rescue {
     pub fn new(map: Map) -> Rescue {
-        Rescue { map, big_read: BIG_READ, trim_read: TRIM_READ, skip_ahead: SKIP_AHEAD, retries: 2 }
+        Rescue {
+            map,
+            big_read: BIG_READ,
+            trim_read: TRIM_READ,
+            skip_ahead: SKIP_AHEAD,
+            retries: 2,
+            filler: padding_sector(),
+        }
+    }
+
+    /// Fill unreadable sectors with zeros instead of MPEG padding.
+    ///
+    /// For anything that is a filesystem rather than a video stream. A zeroed
+    /// sector in an ISO is a hole in a file; a padding packet there is a hole
+    /// that also lies about what it contains.
+    pub fn for_data(mut self) -> Rescue {
+        self.filler = zero_sector();
+        self
     }
 
     fn report(&self, pass: &'static str, report: &mut dyn FnMut(Progress)) {
@@ -282,11 +305,11 @@ impl Rescue {
     /// Without this the holes are zeros, and a demuxer meeting zeros where a
     /// packet header belongs gives up on the rest of the stream.
     pub fn fill_holes(&self, sink: &mut dyn SectorSink) -> Result<u64> {
-        let padding = padding_sector();
+        let padding = &self.filler;
         let mut filled = 0;
         for run in self.map.all(State::Bad) {
             for lba in run.start..run.end {
-                sink.write(lba, &padding)?;
+                sink.write(lba, padding)?;
                 filled += 1;
             }
         }
@@ -305,6 +328,64 @@ impl Rescue {
         self.scrape_pass(source, sink, report)?;
         self.retry_pass(source, sink, report)?;
         self.fill_holes(sink)
+    }
+}
+
+/// One sector of nothing, for an image that is not a video stream.
+pub fn zero_sector() -> Vec<u8> {
+    vec![0u8; SECTOR]
+}
+
+/// An ordinary block device or image file, read straight.
+///
+/// Everything that is not an encrypted DVD: a data disc, a game, an audio
+/// CD's data track. No decryption, so nothing to go wrong beyond the read
+/// itself.
+pub struct PlainDisc {
+    file: std::fs::File,
+}
+
+impl PlainDisc {
+    pub fn open(path: &Path) -> Result<PlainDisc> {
+        let file =
+            std::fs::File::open(path).map_err(|e| Error(format!("{}: {e}", path.display())))?;
+        Ok(PlainDisc { file })
+    }
+
+    /// How many sectors the device holds.
+    pub fn sectors(path: &Path) -> Result<u64> {
+        let size =
+            std::fs::metadata(path).map_err(|e| Error(format!("{}: {e}", path.display())))?.len();
+        if size > 0 {
+            return Ok(size / SECTOR as u64);
+        }
+        // A block device reports a length of zero through `metadata`; its real
+        // size comes from seeking to the end.
+        use std::io::{Seek, SeekFrom};
+        let mut f =
+            std::fs::File::open(path).map_err(|e| Error(format!("{}: {e}", path.display())))?;
+        let end =
+            f.seek(SeekFrom::End(0)).map_err(|e| Error(format!("{}: {e}", path.display())))?;
+        Ok(end / SECTOR as u64)
+    }
+}
+
+impl SectorSource for PlainDisc {
+    fn read(&mut self, lba: u64, count: u64) -> std::result::Result<Vec<u8>, ReadError> {
+        use std::io::{Read, Seek, SeekFrom};
+        let want = count as usize * SECTOR;
+        self.file
+            .seek(SeekFrom::Start(lba * SECTOR as u64))
+            .map_err(|e| ReadError::Fatal(e.to_string()))?;
+        let mut buf = vec![0u8; want];
+        // A short read is a failed read here: the caller narrows the range and
+        // asks again rather than being handed a buffer that is part disc and
+        // part zeros.
+        match self.file.read_exact(&mut buf) {
+            Ok(()) => Ok(buf),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Err(ReadError::Unreadable),
+            Err(_) => Err(ReadError::Unreadable),
+        }
     }
 }
 

@@ -62,6 +62,9 @@ pub struct Preferences {
     /// What a ripped CD is written as.
     #[serde(default)]
     pub music_format: AudioFormat,
+    /// Where Redump datfiles are kept, for naming and verifying game dumps.
+    #[serde(default)]
+    pub dat_dir: Option<PathBuf>,
     /// How track filenames are built.
     #[serde(default = "music_template_default")]
     pub music_template: String,
@@ -161,6 +164,7 @@ impl Default for Preferences {
             music_format: AudioFormat::Flac,
             music_quality: music_quality_default(),
             music_template: music_template_default(),
+            dat_dir: None,
         }
     }
 }
@@ -266,6 +270,11 @@ impl Preferences {
         Self::data_dir().join("words")
     }
 
+    /// Where datfiles go when nobody has said otherwise.
+    pub fn default_dat_dir() -> PathBuf {
+        Self::data_dir().join("dats")
+    }
+
     pub fn default_rip_dir() -> PathBuf {
         Self::cache_dir().join("rip")
     }
@@ -279,6 +288,10 @@ impl Preferences {
 
     pub fn words_dir(&self) -> Option<PathBuf> {
         self.words_dir.clone().or_else(|| Some(Self::default_words_dir()).filter(|p| p.is_dir()))
+    }
+
+    pub fn dat_dir(&self) -> Option<PathBuf> {
+        self.dat_dir.clone().or_else(|| Some(Self::default_dat_dir()).filter(|p| p.is_dir()))
     }
 
     pub fn rip_dir(&self) -> PathBuf {
