@@ -62,6 +62,9 @@ pub struct Preferences {
     /// What a ripped CD is written as.
     #[serde(default)]
     pub music_format: AudioFormat,
+    /// How track filenames are built.
+    #[serde(default = "music_template_default")]
+    pub music_template: String,
     /// How hard to work on a ripped CD.
     ///
     /// Only means anything for a lossy format; see
@@ -72,6 +75,10 @@ pub struct Preferences {
 
 fn music_quality_default() -> Quality {
     Quality::High
+}
+
+fn music_template_default() -> String {
+    crate::naming::DEFAULT_TRACK_TEMPLATE.to_string()
 }
 
 /// What a ripped CD is written as.
@@ -153,6 +160,7 @@ impl Default for Preferences {
             // people will ever make, and a lossy one cannot be improved later.
             music_format: AudioFormat::Flac,
             music_quality: music_quality_default(),
+            music_template: music_template_default(),
         }
     }
 }
@@ -209,6 +217,7 @@ impl Preferences {
             container: self.container,
             music_format: self.music_format,
             music_quality: self.music_quality,
+            music_template: Some(self.music_template.clone()).filter(|t| !t.trim().is_empty()),
             accurate_chapters: self.accurate_chapters,
             languages,
             dual_audio: self.dual_audio,

@@ -11,11 +11,14 @@
 use riplika_core::Warning;
 use riplika_core::host::{Cancel, RealFs, RealRunner, Runner};
 use riplika_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, UreqHttp, Wikidata};
+use riplika_core::identify::music::Album;
 use riplika_core::job::{Event, Pipeline, Ports, Report};
 use riplika_core::joblog::JobLog;
 use riplika_core::media::FfProbe;
 use riplika_core::model::{Candidate, DiscScan, Drive, Item, JobSettings, Media};
+use riplika_core::musicjob;
 use riplika_core::rip::Auto;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
@@ -25,6 +28,8 @@ pub enum Msg {
     /// The drive opened, so what was known about the disc no longer holds.
     Ejected,
     Scanned(Box<DiscScan>),
+    /// A music disc, and what MusicBrainz says it is.
+    Music(Box<musicjob::Found>),
     Candidates(Vec<Candidate>),
     Organised(Vec<Item>),
     Event(Event),
@@ -178,6 +183,65 @@ pub fn search(query: String, season: Option<u32>, tx: Sender<Msg>) {
                 let _ = tx.send(Msg::Failed(e.to_string()));
             }
         }
+    });
+}
+
+/// Read a music CD and ask what it is.
+///
+/// Quick where the video one is slow: there is no structure to probe, only a
+/// table of contents to hash and one request to make.
+pub fn analyse_music(device: String, tx: Sender<Msg>) {
+    std::thread::spawn(move || {
+        let real = Real::new(Cancel::new());
+        let t = tx.clone();
+        let mut events = move |e: Event| {
+            let _ = t.send(Msg::Event(e));
+        };
+        report(
+            &tx,
+            (|| {
+                let found = musicjob::identify(Path::new(&device), &real.http, &mut events)?;
+                let _ = tx.send(Msg::Music(Box::new(found)));
+                Ok(())
+            })(),
+        );
+    });
+}
+
+/// Rip a music CD.
+pub fn run_music(
+    device: String,
+    found: musicjob::Found,
+    album: Album,
+    settings: JobSettings,
+    cancel: Cancel,
+    tx: Sender<Msg>,
+) {
+    std::thread::spawn(move || {
+        let real = Real::new(cancel.clone());
+        let ports =
+            musicjob::Ports { runner: &real.runner, fs: &real.fs, http: &real.http, cancel };
+        let t = tx.clone();
+        let mut events = move |e: Event| {
+            let _ = t.send(Msg::Event(e));
+        };
+        report(
+            &tx,
+            (|| {
+                let scratch = riplika_core::subs::source::temp_dir("cdrip")?;
+                let report = musicjob::rip(
+                    &ports,
+                    Path::new(&device),
+                    &found.toc,
+                    &album,
+                    &settings,
+                    &scratch.0,
+                    &mut events,
+                )?;
+                let _ = tx.send(Msg::Finished(Box::new(report)));
+                Ok(())
+            })(),
+        );
     });
 }
 

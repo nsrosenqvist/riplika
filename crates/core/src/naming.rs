@@ -33,13 +33,40 @@ pub const TOKENS: &[(&str, &str)] = &[
     ("{date}", "the date it first aired"),
 ];
 
+/// Something a template can be filled from.
+///
+/// Two kinds of thing get named here and they share nothing but the syntax: an
+/// episode knows about seasons, a track knows about discs, and neither has any
+/// use for the other's words. The renderer holds the syntax and each source
+/// answers only for its own tokens.
+pub trait Tokens {
+    /// The value for one token, padded where padding applies. `None` means
+    /// this source has no such token, and it is left standing in the output.
+    fn value(&self, name: &str, width: usize) -> Option<String>;
+}
+
+impl Tokens for Fields {
+    fn value(&self, name: &str, width: usize) -> Option<String> {
+        let number = |v: Option<u32>| v.map(|n| format!("{n:0width$}")).unwrap_or_default();
+        Some(match name {
+            "show" => self.show.clone(),
+            "title" => self.title.clone(),
+            "season" => number(self.season),
+            "episode" => number(self.episode),
+            "year" => self.year.map(|y| y.to_string()).unwrap_or_default(),
+            "date" => self.date.clone().unwrap_or_default(),
+            _ => return None,
+        })
+    }
+}
+
 /// Fill a template.
 ///
 /// Numbers are padded to two digits, which is what every media server expects
 /// and what the whole library already uses; `{season:3}` asks for more. An
 /// unknown token is left alone rather than silently dropped, so a typo shows up
 /// in the preview as itself instead of as a gap.
-pub fn render(template: &str, f: &Fields) -> String {
+pub fn render(template: &str, f: &dyn Tokens) -> String {
     let mut out = String::with_capacity(template.len() + 32);
     let mut rest = template;
     while let Some(open) = rest.find('{') {
@@ -56,15 +83,9 @@ pub fn render(template: &str, f: &Fields) -> String {
             Some((n, w)) => (n, w.parse::<usize>().unwrap_or(2)),
             None => (token, 2),
         };
-        let number = |v: Option<u32>| v.map(|n| format!("{n:0width$}")).unwrap_or_default();
-        match name {
-            "show" => out.push_str(&f.show),
-            "title" => out.push_str(&f.title),
-            "season" => out.push_str(&number(f.season)),
-            "episode" => out.push_str(&number(f.episode)),
-            "year" => out.push_str(&f.year.map(|y| y.to_string()).unwrap_or_default()),
-            "date" => out.push_str(f.date.as_deref().unwrap_or("")),
-            _ => {
+        match f.value(name, width) {
+            Some(value) => out.push_str(&value),
+            None => {
                 out.push('{');
                 out.push_str(token);
                 out.push('}');
@@ -86,6 +107,72 @@ pub fn preview(template: &str, container: Container) -> String {
         date: Some("2013-10-17".into()),
     };
     format!("{}.{}", sanitize(&render(template, &f)), container.extension())
+}
+
+/// How track filenames are built, when nothing else is said.
+///
+/// Deliberately bare: the artist and album are in the tags, and every music
+/// server reads those rather than the name. Anyone who wants them in the name
+/// has `{artist}` and `{album}` to say so.
+pub const DEFAULT_TRACK_TEMPLATE: &str = "{track} - {title}";
+
+/// The fields a music template can use.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MusicFields {
+    pub albumartist: String,
+    /// Who performed this track, which on a compilation is not the album's
+    /// artist.
+    pub artist: String,
+    pub album: String,
+    pub title: String,
+    pub track: Option<u32>,
+    pub disc: Option<u32>,
+    pub year: Option<u32>,
+    pub date: Option<String>,
+}
+
+impl Tokens for MusicFields {
+    fn value(&self, name: &str, width: usize) -> Option<String> {
+        let number = |v: Option<u32>| v.map(|n| format!("{n:0width$}")).unwrap_or_default();
+        Some(match name {
+            "title" => self.title.clone(),
+            "artist" => self.artist.clone(),
+            "albumartist" => self.albumartist.clone(),
+            "album" => self.album.clone(),
+            "track" => number(self.track),
+            "disc" => number(self.disc),
+            "year" => self.year.map(|y| y.to_string()).unwrap_or_default(),
+            "date" => self.date.clone().unwrap_or_default(),
+            _ => return None,
+        })
+    }
+}
+
+/// Every music token, with a line about it, for showing beside the field.
+pub const MUSIC_TOKENS: &[(&str, &str)] = &[
+    ("{track}", "track number, two digits"),
+    ("{title}", "this track's title"),
+    ("{artist}", "who performed this track"),
+    ("{albumartist}", "who the album is credited to"),
+    ("{album}", "the album's title"),
+    ("{disc}", "disc number, in a set"),
+    ("{year}", "the year it was released"),
+    ("{date}", "the date it was released"),
+];
+
+/// What a music template produces for a made-up track, for showing as you type.
+pub fn music_preview(template: &str, extension: &str) -> String {
+    let f = MusicFields {
+        albumartist: "Shawn McDonald".into(),
+        artist: "Shawn McDonald".into(),
+        album: "Roots".into(),
+        title: "Slow Down".into(),
+        track: Some(8),
+        disc: Some(1),
+        year: Some(2008),
+        date: Some("2008-03-11".into()),
+    };
+    format!("{}.{extension}", sanitize(&render(template, &f)))
 }
 
 /// Characters Windows and SMB reject outright.

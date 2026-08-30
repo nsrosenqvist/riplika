@@ -14,7 +14,7 @@
 use crate::host::Command;
 use crate::identify::music::{Album, AlbumTrack};
 use crate::model::Quality;
-use crate::naming::sanitize;
+use crate::naming::{self, MusicFields, render, sanitize};
 use crate::prefs::{AudioFormat, FLAC_COMPRESSION};
 use std::path::{Path, PathBuf};
 
@@ -205,34 +205,45 @@ pub fn encode_command(
 
 /// Where a track goes.
 ///
-/// `Artist/Album (Year)/01 - Title`, which is what Jellyfin reads without
-/// being told anything. The year keeps two pressings of one title apart, and a
-/// set with more than one disc gets a folder per disc so the track numbers do
-/// not collide.
-pub fn track_path(root: &Path, album: &Album, track: &AlbumTrack, extension: &str) -> PathBuf {
+/// `Artist/Album (Year)/` is fixed, which is what Jellyfin reads without being
+/// told anything; the filename is the part a template decides. Same division
+/// as the video side, where `Season NN/` is fixed and the episode name is not.
+/// A set with more than one disc gets a folder per disc so track numbers from
+/// different discs do not collide.
+pub fn track_path(
+    root: &Path,
+    album: &Album,
+    track: &AlbumTrack,
+    extension: &str,
+    template: Option<&str>,
+) -> PathBuf {
     let mut path = root.join(sanitize(&album.artist)).join(sanitize(&album_folder(album)));
     if album.is_multi_disc() {
         path = path.join(sanitize(&format!("Disc {}", album.disc)));
     }
-    path.join(sanitize(&file_name(album, track, extension)))
+    let stem = render(template.unwrap_or(naming::DEFAULT_TRACK_TEMPLATE), &fields(album, track));
+    path.join(sanitize(&format!("{stem}.{extension}")))
+}
+
+pub fn fields(album: &Album, track: &AlbumTrack) -> MusicFields {
+    MusicFields {
+        albumartist: album.artist.clone(),
+        // On a compilation this is the one that differs line by line; on a
+        // single-artist album the two are the same and it makes no odds.
+        artist: track.artist.clone().unwrap_or_else(|| album.artist.clone()),
+        album: album.title.clone(),
+        title: track.title.clone(),
+        track: Some(track.number),
+        disc: album.is_multi_disc().then_some(album.disc),
+        year: album.year(),
+        date: album.date.clone(),
+    }
 }
 
 fn album_folder(album: &Album) -> String {
     match album.year() {
         Some(year) => format!("{} ({year})", album.title),
         None => album.title.clone(),
-    }
-}
-
-fn file_name(album: &Album, track: &AlbumTrack, extension: &str) -> String {
-    // On a compilation the track artist is the useful one and differs line by
-    // line, so it belongs in the name; on a single-artist album it would be
-    // the same words repeated on every file.
-    match &track.artist {
-        Some(artist) if album.is_compilation() => {
-            format!("{:02} - {} - {}.{extension}", track.number, artist, track.title)
-        }
-        _ => format!("{:02} - {}.{extension}", track.number, track.title),
     }
 }
 
@@ -426,9 +437,50 @@ mod tests {
     fn a_track_lands_where_a_library_will_look_for_it() {
         let a = album();
         assert_eq!(
-            track_path(Path::new("/music"), &a, &a.tracks[1], "flac"),
+            track_path(Path::new("/music"), &a, &a.tracks[1], "flac", None),
             Path::new("/music/Shawn McDonald/Roots (2008)/08 - Slow Down.flac")
         );
+    }
+
+    #[test]
+    fn a_template_decides_the_filename_and_not_the_folders() {
+        let a = album();
+        assert_eq!(
+            track_path(
+                Path::new("/music"),
+                &a,
+                &a.tracks[1],
+                "flac",
+                Some("{track} {artist} - {title} [{year}]")
+            ),
+            Path::new(
+                "/music/Shawn McDonald/Roots (2008)/08 Shawn McDonald - Slow Down [2008].flac"
+            )
+        );
+    }
+
+    #[test]
+    fn a_template_can_ask_for_the_track_artist_which_is_the_useful_one_on_a_compilation() {
+        let mut a = album();
+        a.artist = "Various Artists".into();
+        a.tracks = vec![track(1, "One", Some("A Band"))];
+        let p = track_path(
+            Path::new("/music"),
+            &a,
+            &a.tracks[0],
+            "flac",
+            Some("{track} - {artist} - {title}"),
+        );
+        assert_eq!(p, Path::new("/music/Various Artists/Roots (2008)/01 - A Band - One.flac"));
+    }
+
+    #[test]
+    fn a_token_that_is_not_a_music_token_is_left_standing_rather_than_dropped() {
+        let a = album();
+        let p =
+            track_path(Path::new("/music"), &a, &a.tracks[1], "flac", Some("{season} - {title}"));
+        // A typo has to be visible, not a silent gap.
+        assert!(p.to_string_lossy().contains("{season}"), "{}", p.display());
     }
 
     #[test]
@@ -437,19 +489,21 @@ mod tests {
         a.disc = 2;
         a.disc_count = 3;
         assert_eq!(
-            track_path(Path::new("/music"), &a, &a.tracks[0], "flac"),
+            track_path(Path::new("/music"), &a, &a.tracks[0], "flac", None),
             Path::new("/music/Shawn McDonald/Roots (2008)/Disc 2/01 - Clarity.flac")
         );
     }
 
     #[test]
-    fn a_compilation_names_the_artist_on_each_file() {
+    fn the_default_name_leaves_the_artist_to_the_tags() {
+        // Every music server reads tags rather than filenames, and repeating
+        // the artist on each of twelve files says nothing the tags do not.
         let mut a = album();
         a.artist = "Various Artists".into();
         a.tracks = vec![track(1, "One", Some("A Band"))];
         assert_eq!(
-            track_path(Path::new("/music"), &a, &a.tracks[0], "mp3"),
-            Path::new("/music/Various Artists/Roots (2008)/01 - A Band - One.mp3")
+            track_path(Path::new("/music"), &a, &a.tracks[0], "mp3", None),
+            Path::new("/music/Various Artists/Roots (2008)/01 - One.mp3")
         );
     }
 
@@ -458,7 +512,7 @@ mod tests {
         let mut a = album();
         a.title = "AC/DC: Live?".into();
         a.tracks = vec![track(1, "Who Made Who?", None)];
-        let p = track_path(Path::new("/music"), &a, &a.tracks[0], "flac");
+        let p = track_path(Path::new("/music"), &a, &a.tracks[0], "flac", None);
         let text = p.to_string_lossy();
         // The colon, slash and question mark are gone from the names - but the
         // separators between them are still separators.
@@ -470,7 +524,7 @@ mod tests {
     fn an_album_with_no_date_is_not_filed_under_an_empty_year() {
         let mut a = album();
         a.date = None;
-        let p = track_path(Path::new("/music"), &a, &a.tracks[0], "flac");
+        let p = track_path(Path::new("/music"), &a, &a.tracks[0], "flac", None);
         assert!(p.to_string_lossy().contains("/Roots/"), "{}", p.display());
     }
 }

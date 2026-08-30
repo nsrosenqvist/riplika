@@ -69,6 +69,10 @@ struct State {
     drives: Vec<Drive>,
     drive: Option<Drive>,
     scan: Option<DiscScan>,
+    /// The music disc in the drive, once read.
+    music: Option<riplika_core::musicjob::Found>,
+    /// Which of the releases matching that disc was settled on.
+    album: Option<riplika_core::identify::music::Album>,
     candidates: Vec<Candidate>,
     /// What the page has settled on, from identification or from the picker.
     selected: Option<Candidate>,
@@ -97,6 +101,8 @@ impl Default for State {
             drives: Vec::new(),
             drive: None,
             scan: None,
+            music: None,
+            album: None,
             candidates: Vec::new(),
             selected: None,
             chosen: None,
@@ -129,6 +135,9 @@ struct Ui {
     container: adw::ComboRow,
     /// The video settings, hidden when the disc has no video on it.
     quality_group: adw::PreferencesGroup,
+    contents_group: adw::PreferencesGroup,
+    /// Season and disc number: an episode's coordinates, and meaningless here.
+    detail_group: adw::PreferencesGroup,
     music_group: adw::PreferencesGroup,
     music_format: adw::ComboRow,
     music_quality: adw::ComboRow,
@@ -613,6 +622,8 @@ fn build_ui() -> Ui {
         audio,
         container,
         quality_group: quality,
+        contents_group,
+        detail_group,
         music_group: music,
         music_format,
         music_quality,
@@ -1119,6 +1130,12 @@ impl App {
             matches!(selected.as_ref().and_then(|d| d.kind.as_ref()), Some(DiscKind::Audio(_)));
         self.ui.music_group.set_visible(music);
         self.ui.quality_group.set_visible(!music);
+        // A CD has one language and no subtitles to choose it for, no extras,
+        // no extended cuts, and no season or disc number - those pages would
+        // otherwise ask questions about a disc that cannot answer them.
+        self.ui.language_group.set_visible(!music);
+        self.ui.contents_group.set_visible(!music);
+        self.ui.detail_group.set_visible(!music);
 
         let (title, description, ready) = Self::drive_status(&drives, selected.as_ref());
         self.ui.drive_page.set_title(&title);
@@ -1168,7 +1185,55 @@ impl App {
     }
 
     /// Restate what the page has settled on.
+    /// Is the disc in the drive a music CD?
+    ///
+    /// Decides which of the two pipelines the whole wizard is running, so it
+    /// is asked of the drive rather than tracked as a mode that could drift
+    /// out of step with what is in the tray.
+    fn is_music(&self) -> bool {
+        matches!(
+            self.state.borrow().drive.as_ref().and_then(|d| d.kind.as_ref()),
+            Some(DiscKind::Audio(_))
+        )
+    }
+
+    /// What the identify page says about a music disc.
+    ///
+    /// There is nothing to choose here in the ordinary case: a disc id names
+    /// one pressing, so the page reports rather than asks.
+    fn show_album(&self) {
+        let album = self.state.borrow().album.clone();
+        match album {
+            Some(a) => {
+                self.ui.chosen_row.set_title(&format!("{} - {}", a.artist, a.title));
+                let mut lines = vec![tr_n("%d track", "%d tracks", a.tracks.len() as u32)];
+                let detail = a.detail();
+                if !detail.is_empty() {
+                    lines.push(detail);
+                }
+                self.ui.chosen_row.set_subtitle(&lines.join("\n"));
+                self.ui.identify_next.set_sensitive(!self.is_busy());
+            }
+            None => {
+                self.ui.chosen_row.set_title(&tr("Not identified"));
+                // Asked and unknown is a different problem from never asked,
+                // and only one of them is worth trying again.
+                let unreachable =
+                    self.state.borrow().music.as_ref().is_some_and(|m| m.lookup_failed.is_some());
+                self.ui.chosen_row.set_subtitle(&if unreachable {
+                    tr("The catalogue could not be reached, so this disc was never asked about")
+                } else {
+                    tr("No release matches this disc, so there is nothing to name the tracks from")
+                });
+                self.ui.identify_next.set_sensitive(false);
+            }
+        }
+    }
+
     fn show_choice(&self) {
+        if self.is_music() {
+            return self.show_album();
+        }
         let selected = self.state.borrow().selected.clone();
         match selected {
             Some(c) => {
@@ -1327,6 +1392,16 @@ impl App {
                 self.state.borrow_mut().query = guess.title.clone();
                 self.show_languages(&scan.all_languages());
                 self.state.borrow_mut().scan = Some(*scan);
+            }
+            Msg::Music(found) => {
+                self.set_busy(None);
+                // One release is the ordinary case; more than one means the
+                // same pressing was issued twice and the first is as good a
+                // starting point as any until picking is offered.
+                self.state.borrow_mut().album = found.albums.first().cloned();
+                self.state.borrow_mut().music = Some(*found);
+                self.show_choice();
+                self.go(Step::Identify);
             }
             Msg::Candidates(c) => {
                 self.set_busy(None);
@@ -1511,6 +1586,13 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             set_button_label(&app.ui.cancel_button, &tr("Cancel"));
             app.go(Step::Progress);
             let cancel = app.state.borrow().cancel.clone();
+            // A music disc needs none of the video machinery: no title probing,
+            // no structure matching, no catalogue guessing from a label. Its
+            // table of contents says what it is.
+            if matches!(drive.kind.as_ref(), Some(DiscKind::Audio(_))) {
+                worker::analyse_music(drive.device.clone(), tx.clone());
+                return;
+            }
             let allow = app.prefs.prefs.borrow().use_makemkv();
             worker::analyse(drive, allow, cancel, tx.clone());
         });
@@ -1520,6 +1602,16 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
     {
         let app = Rc::clone(app);
         app.clone().ui.identify_next.connect_clicked(move |_| {
+            // A music disc was settled by its disc id; there is no season to
+            // apply and no show to have chosen.
+            if app.is_music() {
+                if app.state.borrow().album.is_some() {
+                    app.go(Step::Settings);
+                } else {
+                    app.toast(&tr("This disc could not be identified"));
+                }
+                return;
+            }
             let chosen = app.state.borrow().selected.clone();
             match chosen {
                 Some(c) => {
@@ -1543,6 +1635,11 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
         let window = window.clone();
         let row = app.ui.chosen_row.clone();
         row.connect_activated(move |_| {
+            // The show picker searches catalogues by title. A music disc was
+            // settled exactly by its id, so there is nothing here to correct.
+            if app.is_music() {
+                return;
+            }
             let query = {
                 let state = app.state.borrow();
                 opening_query(
@@ -1602,6 +1699,31 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
         let app = Rc::clone(app);
         let tx = tx.clone();
         start.connect_clicked(move |_| {
+            if app.is_music() {
+                let (found, album) = {
+                    let s = app.state.borrow();
+                    (s.music.clone(), s.album.clone())
+                };
+                let (Some(found), Some(album)) = (found, album) else {
+                    app.toast(&tr("Nothing to rip yet"));
+                    return;
+                };
+                if app.is_busy() {
+                    app.toast(&tr("Already working - wait for it, or cancel it first"));
+                    return;
+                }
+                let device = match app.state.borrow().drive.as_ref() {
+                    Some(d) => d.device.clone(),
+                    None => return,
+                };
+                let settings = app.settings();
+                app.state.borrow_mut().cancel = riplika_core::host::Cancel::new();
+                let cancel = app.state.borrow().cancel.clone();
+                set_button_label(&app.ui.cancel_button, &tr("Cancel"));
+                app.go(Step::Progress);
+                worker::run_music(device, found, album, settings, cancel, tx.clone());
+                return;
+            }
             let (scan, media) = {
                 let s = app.state.borrow();
                 (s.scan.clone(), s.chosen.clone())

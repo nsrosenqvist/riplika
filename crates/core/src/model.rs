@@ -387,6 +387,8 @@ pub struct JobSettings {
     pub music_format: crate::prefs::AudioFormat,
     /// Only meaningful when `music_format` is a lossy one.
     pub music_quality: Quality,
+    /// How track filenames are built. `None` uses the default.
+    pub music_template: Option<String>,
     pub languages: LanguageSet,
     /// Read each title twice, for chapter marks accurate to the frame.
     ///
@@ -431,6 +433,7 @@ impl Default for JobSettings {
             container: Container::Mp4,
             music_format: crate::prefs::AudioFormat::Flac,
             music_quality: Quality::High,
+            music_template: None,
             accurate_chapters: false,
             languages: LanguageSet::default(),
             dual_audio: false,

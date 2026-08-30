@@ -277,6 +277,7 @@ impl Output {
             accurate_chapters: self.accurate_chapters,
             music_format: prefs.music_format,
             music_quality: prefs.music_quality,
+            music_template: Some(prefs.music_template.clone()).filter(|t| !t.trim().is_empty()),
             container: match self.container.to_ascii_lowercase().as_str() {
                 "mp4" => Container::Mp4,
                 "mkv" | "matroska" => Container::Mkv,

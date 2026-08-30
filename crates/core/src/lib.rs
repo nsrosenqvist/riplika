@@ -29,6 +29,7 @@ pub mod lang;
 pub mod media;
 pub mod mkvtags;
 pub mod model;
+pub mod musicjob;
 pub mod naming;
 pub mod prefs;
 pub mod rescue;

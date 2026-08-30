@@ -154,6 +154,26 @@ where
     naming_group.add(&preview_row);
     page.add(&naming_group);
 
+    // The same idea for music, with its own words: a track has no season and
+    // an episode has no album, so one list of tokens could not serve both.
+    let music_naming = adw::PreferencesGroup::builder()
+        .title(tr("Track filenames"))
+        .description(format!(
+            "Tokens: {}",
+            naming::MUSIC_TOKENS.iter().map(|(t, _)| *t).collect::<Vec<_>>().join("  ")
+        ))
+        .build();
+    let music_template_row = adw::EntryRow::builder().title(tr("Pattern")).build();
+    music_template_row.set_text(&store.prefs.borrow().music_template);
+    let music_preview_row = adw::ActionRow::builder().title(tr("Preview")).build();
+    music_preview_row.add_css_class("property");
+    let music_extension = store.prefs.borrow().music_format.target().extension();
+    music_preview_row
+        .set_subtitle(&naming::music_preview(&music_template_row.text(), music_extension));
+    music_naming.add(&music_template_row);
+    music_naming.add(&music_preview_row);
+    page.add(&music_naming);
+
     // --- catalogues -------------------------------------------------------
     let catalogue_group = adw::PreferencesGroup::builder()
         .title(tr("Catalogues"))
@@ -264,6 +284,19 @@ where
             let container = store.prefs.borrow().container;
             preview.set_subtitle(&naming::preview(&pattern, container));
             store.prefs.borrow_mut().episode_template = pattern;
+            store.save();
+            on_change();
+        });
+    }
+    {
+        let store = Rc::clone(&store);
+        let preview = music_preview_row.clone();
+        let on_change = on_change.clone();
+        music_template_row.connect_changed(move |e| {
+            let pattern = e.text().to_string();
+            let extension = store.prefs.borrow().music_format.target().extension();
+            preview.set_subtitle(&naming::music_preview(&pattern, extension));
+            store.prefs.borrow_mut().music_template = pattern;
             store.save();
             on_change();
         });
