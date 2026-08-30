@@ -13,6 +13,7 @@
 
 pub mod catalogue;
 pub mod label;
+pub mod music;
 pub mod structure;
 
 use crate::Result;

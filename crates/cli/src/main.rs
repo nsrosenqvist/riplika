@@ -93,6 +93,12 @@ enum Cmd {
         #[command(flatten)]
         source: Source,
     },
+    /// Say what kind of disc is in the drive, and what it is.
+    Disc {
+        /// Drive to look at, by device or MakeMKV id.
+        #[arg(long)]
+        drive: Option<String>,
+    },
     /// Show what is on a disc, without ripping it.
     Scan {
         /// Drive, e.g. disc:0 or /dev/sr0. Defaults to the one with a disc in it.
@@ -327,6 +333,7 @@ fn main() {
 fn dispatch() -> Result<(), String> {
     match Cli::parse().cmd {
         Cmd::Drives { source } => run::drives(&source.reader),
+        Cmd::Disc { drive } => run::disc(drive.as_deref()),
         Cmd::Scan { drive, source } => run::scan(drive.as_deref(), &source.reader),
         Cmd::Identify { drive } => run::identify(drive.as_deref()),
         Cmd::Search { query, season } => run::search(&query, season),

@@ -408,9 +408,21 @@ impl Catalogue for Catalogues<'_> {
 #[derive(Default)]
 pub struct UreqHttp;
 
+/// Who we say we are.
+///
+/// MusicBrainz asks that clients identify themselves and name somewhere to
+/// complain to, and throttles or blocks anonymous ones when it is busy. The
+/// other catalogues do not ask, but there is no reason to be anonymous to them
+/// either.
+pub const USER_AGENT: &str =
+    concat!("Riplika/", env!("CARGO_PKG_VERSION"), " ( https://github.com/nsrosenqvist/riplika )");
+
 impl Http for UreqHttp {
     fn get(&self, url: &str) -> Result<String> {
-        let mut resp = ureq::get(url).call().map_err(|e| Error(format!("{url}: {e}")))?;
+        let mut resp = ureq::get(url)
+            .header("User-Agent", USER_AGENT)
+            .call()
+            .map_err(|e| Error(format!("{url}: {e}")))?;
         resp.body_mut().read_to_string().map_err(|e| Error(format!("{url}: {e}")))
     }
 }

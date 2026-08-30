@@ -129,6 +129,58 @@ pub fn drives(which: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Say what is in the drive.
+///
+/// For a music CD this goes as far as naming the album, because the disc's own
+/// table of contents identifies it exactly - there is nothing to scan and
+/// nothing to guess at, so there is no reason to make the user rip it first to
+/// find out whether we know what it is.
+pub fn disc(drive: Option<&str>) -> Result<(), String> {
+    use riplika_core::disc::DiscKind;
+    use riplika_core::identify::music::{MusicBrainz, MusicCatalogue};
+
+    let real = Real::new();
+    let d = pick_drive(&DvdVideo::new(&real.runner), drive)?;
+    let kind = riplika_core::disc::identify(Path::new(&d.device));
+    println!("{}  {}", d.device, kind.describe());
+
+    let DiscKind::Audio(toc) = &kind else { return Ok(()) };
+    println!("disc id   {}", toc.musicbrainz_id());
+
+    let mb = MusicBrainz::new(&real.http);
+    let albums = match mb.by_disc_id(&toc.musicbrainz_id()) {
+        Ok(a) => a,
+        // Not knowing the album is not a reason to fail: the disc is still
+        // rippable, it just gets named by hand.
+        Err(e) => {
+            println!("\n{} could not identify it: {e}", mb.name());
+            return Ok(());
+        }
+    };
+    if albums.is_empty() {
+        println!("\nNo release in {} matches this disc.", mb.name());
+        return Ok(());
+    }
+    for a in &albums {
+        let detail = a.detail();
+        println!(
+            "\n{} - {}{}",
+            a.artist,
+            a.title,
+            if detail.is_empty() { String::new() } else { format!("  ({detail})") }
+        );
+        if let Some(cat) = &a.catalogue_number {
+            println!("  {}", cat);
+        }
+        for t in &a.tracks {
+            let secs = t.duration.unwrap_or(0) / 1000;
+            let who = t.artist.as_deref().map(|w| format!("{w} - ")).unwrap_or_default();
+            println!("  {:>2}. {who}{}  [{}:{:02}]", t.number, t.title, secs / 60, secs % 60);
+        }
+    }
+    Ok(())
+}
+
 pub fn scan(drive: Option<&str>, which: &str) -> Result<(), String> {
     let real = Real::new();
     // A scan reads chapter times from the IFO tables, never from the video.

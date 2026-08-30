@@ -8,6 +8,13 @@
 //! That difference is why an audio CD used to show as an empty drive: the only
 //! test being made was for an ISO9660 volume label, and a CD-DA hasn't got one.
 //! Absence of a label is not absence of a disc.
+//!
+//! This opens the device itself rather than going through [`Fs`](crate::host::Fs),
+//! because reading a table of contents is an ioctl on an open file descriptor
+//! and there is nothing for a byte-oriented trait to stand in front of. The
+//! seam is the device path instead: everything below works the same on a file,
+//! which is how the ISO9660 half is tested without a disc in the drive - and
+//! how it stays testable, since the tests here must never touch the real one.
 
 use crate::model::Millis;
 use serde::{Deserialize, Serialize};
