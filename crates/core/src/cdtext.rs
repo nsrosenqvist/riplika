@@ -99,7 +99,7 @@ pub fn parse(response: &[u8]) -> CdText {
 fn strings_of(body: &[u8], want: u8) -> Vec<(u8, String)> {
     let mut bytes: Vec<u8> = Vec::new();
     let mut first_track = None;
-    for pack in body.chunks_exact(PACK) {
+    for pack in body.as_chunks::<PACK>().0 {
         if pack[0] != want {
             continue;
         }

@@ -105,6 +105,8 @@ What is *not* translated: the text inside a warning, which is built in core and 
 
 `./check.sh` runs everything CI runs, in the same order, and stops on the first failure. Run it rather than the individual commands - and read its exit status, not its output. `cargo clippy -- -D warnings` prints a denied lint as `error`, so a check that greps for lines beginning `warning:` finds none and reports success while CI fails on the same tree. That happened.
 
+The toolchain is pinned in `rust-toolchain.toml` for the same reason, and after the same failure in a different disguise: CI used to install whatever stable was current, so it lint on a version the laptop did not have, and `./check.sh` passed here while CI failed on the same commit. Bump the pin deliberately, as its own commit, and fix what the new lints find. The MSRV in `Cargo.toml` is a different thing - the oldest compiler the crate claims to build on, not the one it is built with.
+
 Two things it does not do, because they rewrite files rather than check them:
 
 ```sh

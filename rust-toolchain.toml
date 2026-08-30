@@ -1,0 +1,15 @@
+# Pinned so that a laptop and CI answer the same question.
+#
+# Without this, CI installs whatever stable is current and gets lints the
+# machine you tested on does not have. That happened: ./check.sh passed here
+# and CI failed on the same tree, because clippy 1.98 added a lint 1.97 had
+# no idea about.
+#
+# The MSRV is separate and lives in Cargo.toml's `rust-version`; this is the
+# toolchain the project is built and linted with.
+#
+# To move it: bump `channel`, run `rustup update`, then ./check.sh and fix
+# whatever the new lints found. Deliberately, and as its own commit.
+[toolchain]
+channel = "1.98.0"
+components = ["clippy", "rustfmt"]

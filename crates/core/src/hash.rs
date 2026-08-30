@@ -164,13 +164,10 @@ impl Sha1 {
             self.compress(&block);
             self.buffered = 0;
         }
-        let mut blocks = data.chunks_exact(64);
-        for block in &mut blocks {
-            let mut fixed = [0u8; 64];
-            fixed.copy_from_slice(block);
-            self.compress(&fixed);
+        let (blocks, rest) = data.as_chunks::<64>();
+        for block in blocks {
+            self.compress(block);
         }
-        let rest = blocks.remainder();
         self.buffer[..rest.len()].copy_from_slice(rest);
         self.buffered = rest.len();
     }
@@ -191,16 +188,16 @@ impl Sha1 {
         self.compress(&tail);
 
         let mut out = [0u8; 20];
-        for (chunk, word) in out.chunks_exact_mut(4).zip(self.state) {
-            chunk.copy_from_slice(&word.to_be_bytes());
+        for (chunk, word) in out.as_chunks_mut::<4>().0.iter_mut().zip(self.state) {
+            *chunk = word.to_be_bytes();
         }
         out
     }
 
     fn compress(&mut self, block: &[u8; 64]) {
         let mut w = [0u32; 80];
-        for (i, c) in block.chunks_exact(4).enumerate() {
-            w[i] = u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
+        for (i, c) in block.as_chunks::<4>().0.iter().enumerate() {
+            w[i] = u32::from_be_bytes(*c);
         }
         for i in 16..80 {
             w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);

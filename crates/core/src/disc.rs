@@ -138,7 +138,11 @@ impl Toc {
         for s in slots {
             blob.push_str(&format!("{s:08X}"));
         }
-        let digest = sha1(blob.as_bytes());
+        let digest = {
+            let mut sha = crate::hash::Sha1::new();
+            sha.update(blob.as_bytes());
+            sha.finish()
+        };
         // MusicBrainz's own base64 alphabet, so the id is safe in a URL.
         base64_of(&digest).replace('+', ".").replace('/', "_").replace('=', "-")
     }
@@ -415,58 +419,6 @@ fn base64_of(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-/// SHA-1, because the MusicBrainz disc id is defined in terms of it and it is
-/// not worth a dependency for one twenty-line hash.
-fn sha1(data: &[u8]) -> [u8; 20] {
-    let mut h: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
-    let mut msg = data.to_vec();
-    let bits = (data.len() as u64) * 8;
-    msg.push(0x80);
-    while msg.len() % 64 != 56 {
-        msg.push(0);
-    }
-    msg.extend_from_slice(&bits.to_be_bytes());
-
-    for block in msg.chunks_exact(64) {
-        let mut w = [0u32; 80];
-        for (i, c) in block.chunks_exact(4).enumerate() {
-            w[i] = u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
-        }
-        for i in 16..80 {
-            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
-        }
-        let [mut a, mut b, mut c, mut d, mut e] = h;
-        for (i, word) in w.iter().enumerate() {
-            let (f, k) = match i {
-                0..=19 => ((b & c) | (!b & d), 0x5A827999),
-                20..=39 => (b ^ c ^ d, 0x6ED9EBA1),
-                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
-                _ => (b ^ c ^ d, 0xCA62C1D6),
-            };
-            let t = a
-                .rotate_left(5)
-                .wrapping_add(f)
-                .wrapping_add(e)
-                .wrapping_add(k)
-                .wrapping_add(*word);
-            e = d;
-            d = c;
-            c = b.rotate_left(30);
-            b = a;
-            a = t;
-        }
-        for (slot, add) in h.iter_mut().zip([a, b, c, d, e]) {
-            *slot = slot.wrapping_add(add);
-        }
-    }
-
-    let mut out = [0u8; 20];
-    for (chunk, word) in out.chunks_exact_mut(4).zip(h) {
-        chunk.copy_from_slice(&word.to_be_bytes());
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -496,12 +448,6 @@ mod tests {
     #[test]
     fn the_freedb_id_matches_what_the_verification_databases_answered() {
         assert_eq!(roots().freedb_id(), "a20bbc0c");
-    }
-
-    #[test]
-    fn sha1_agrees_with_the_published_vector() {
-        let got: String = sha1(b"abc").iter().map(|b| format!("{b:02x}")).collect();
-        assert_eq!(got, "a9993e364706816aba3e25717850c26c9cd0d89d");
     }
 
     #[test]
