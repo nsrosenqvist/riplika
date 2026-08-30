@@ -288,7 +288,7 @@ pub fn rip_game(
 ) -> Result<(), String> {
     use riplika_core::disc::DiscKind;
     use riplika_core::job::{Event, Stage};
-    use riplika_core::{game, gamejob, rip::iso};
+    use riplika_core::{game, gamejob};
 
     let real = Real::new();
     let prefs = riplika_core::prefs::Preferences::load();
@@ -297,7 +297,7 @@ pub fn rip_game(
 
     let kind = riplika_core::disc::identify(&device);
     if !matches!(kind, DiscKind::Data | DiscKind::BluRay) {
-        return Err(format!("{} is holding a {}, not a data disc", d.device, kind.describe()));
+        return Err(format!("not a data disc: {} is holding {}", d.device, kind.describe()));
     }
 
     // What the disc says before anything is read off it. For a PlayStation
@@ -313,7 +313,6 @@ pub fn rip_game(
     if let Some(serial) = &inspected.serial {
         println!("  PlayStation serial {serial}");
     }
-    let _ = iso::SECTOR;
 
     let root = out
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Games")))
