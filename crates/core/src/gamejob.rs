@@ -609,6 +609,107 @@ mod tests {
         (fs, tracks)
     }
 
+    /// Twenty tracks the size Cool Boarders 2's are, filled so that every
+    /// byte says where it came from. A disc that shape put track three's
+    /// content thirteen million bytes early - inside track two - while every
+    /// file still came out the right length, so nothing but the content said
+    /// anything was wrong.
+    #[test]
+    fn a_long_disc_maps_every_track_to_the_right_place() {
+        const SIZES: [u64; 19] = [
+            42_039_648, 36_164_352, 35_828_016, 39_236_064, 41_326_992, 42_834_624, 38_060_064,
+            35_891_520, 39_558_288, 40_047_504, 38_805_648, 12_199_824, 24_877_104, 50_669_136,
+            1_909_824, 13_895_616, 11_395_440, 43_714_272, 3_010_560,
+        ];
+        // Scaled down by a factor that divides every size, so the test is
+        // about the arithmetic rather than about moving half a gigabyte.
+        const SCALE: u64 = 48;
+        let fs = crate::host::FakeFs::new();
+        let mut tracks = vec![DumpedTrack {
+            number: 1,
+            path: PathBuf::from("/d/t01.bin"),
+            digests: Digests { crc32: 0, sha1: [0; 20], bytes: 4 },
+        }];
+        fs.write(Path::new("/d/t01.bin"), b"DATA").unwrap();
+
+        let mut run = 0u64;
+        for (i, size) in SIZES.iter().enumerate() {
+            let bytes = size / SCALE;
+            // Each four-byte sample records its own offset in the run.
+            let content: Vec<u8> =
+                (0..bytes / 4).flat_map(|s| ((run / 4 + s) as u32).to_le_bytes()).collect();
+            let path = PathBuf::from(format!("/d/t{:02}.bin", i + 2));
+            fs.write(&path, &content).unwrap();
+            tracks.push(DumpedTrack {
+                number: i as u8 + 2,
+                path,
+                digests: Digests { crc32: 0, sha1: [0; 20], bytes: content.len() as u64 },
+            });
+            run += content.len() as u64;
+        }
+
+        let shift = 5i32;
+        correct_read_offset(&fs, &mut tracks, shift).unwrap();
+
+        let mut expected = shift as u64;
+        for track in tracks.iter().skip(1) {
+            let first = fs.read(&track.path).unwrap();
+            let says = u32::from_le_bytes(first[..4].try_into().unwrap()) as u64;
+            assert_eq!(
+                says, expected,
+                "track {} starts at sample {says}, should be {expected}",
+                track.number
+            );
+            expected += track.digests.bytes / 4;
+        }
+    }
+
+    /// The same shape again, but through the real filesystem. The fake one
+    /// hands back exactly what was asked for; a real file has an end, and how
+    /// a short read near it is counted is the sort of thing only this catches.
+    #[test]
+    fn a_long_disc_maps_correctly_on_a_real_filesystem() {
+        const SIZES: [u64; 6] = [4_200_000, 3_600_000, 3_500_000, 1_200_000, 900_000, 300_000];
+        let dir = std::env::temp_dir().join(format!("riplika-offset-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let fs = crate::host::RealFs;
+
+        let mut tracks = vec![DumpedTrack {
+            number: 1,
+            path: dir.join("t01.bin"),
+            digests: Digests { crc32: 0, sha1: [0; 20], bytes: 4 },
+        }];
+        std::fs::write(dir.join("t01.bin"), b"DATA").unwrap();
+        let mut run = 0u64;
+        for (i, size) in SIZES.iter().enumerate() {
+            let content: Vec<u8> =
+                (0..size / 4).flat_map(|s| ((run / 4 + s) as u32).to_le_bytes()).collect();
+            let path = dir.join(format!("t{:02}.bin", i + 2));
+            std::fs::write(&path, &content).unwrap();
+            tracks.push(DumpedTrack {
+                number: i as u8 + 2,
+                path,
+                digests: Digests { crc32: 0, sha1: [0; 20], bytes: content.len() as u64 },
+            });
+            run += content.len() as u64;
+        }
+
+        correct_read_offset(&fs, &mut tracks, 5).unwrap();
+        let mut expected = 5u64;
+        let mut wrong = Vec::new();
+        for track in tracks.iter().skip(1) {
+            let first = std::fs::read(&track.path).unwrap();
+            let says = u32::from_le_bytes(first[..4].try_into().unwrap()) as u64;
+            if says != expected {
+                wrong.push(format!("track {} says {says}, should be {expected}", track.number));
+            }
+            expected += track.digests.bytes / 4;
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
     #[test]
     fn a_positive_offset_pulls_the_audio_forwards() {
         // The whole audio run moves; the data track does not.
