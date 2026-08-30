@@ -15,6 +15,9 @@ use riplika_core::model::Candidate;
 pub struct Picker {
     pub dialog: adw::Dialog,
     pub list: gtk::ListBox,
+    /// What was typed, so a name with no match can still be used.
+    search: gtk::SearchEntry,
+    on_use: std::rc::Rc<dyn Fn(String)>,
 }
 
 impl Picker {
@@ -28,6 +31,22 @@ impl Picker {
                 .build();
             row.set_sensitive(false);
             self.list.append(&row);
+
+            // The catalogues do not have everything, and a disc they have not
+            // heard of is still a disc worth ripping. Episodes come out as
+            // "Episode 3" and can be renamed - far better than an unread disc.
+            let typed = self.search.text().trim().to_string();
+            if !typed.is_empty() {
+                let anyway = adw::ActionRow::builder()
+                    .title(tr("Use this name anyway"))
+                    .subtitle(tr("Episodes are numbered but not named"))
+                    .activatable(true)
+                    .build();
+                anyway.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+                let on_use = std::rc::Rc::clone(&self.on_use);
+                anyway.connect_activated(move |_| on_use(typed.clone()));
+                self.list.append(&anyway);
+            }
             return;
         }
         let chooser = std::rc::Rc::new(on_choose);
@@ -78,6 +97,7 @@ pub fn present(
     parent: &impl IsA<gtk::Widget>,
     query: &str,
     on_search: impl Fn(String) + 'static,
+    on_use: impl Fn(String) + 'static,
 ) -> Picker {
     let dialog = adw::Dialog::builder()
         .title(tr("Which show is this?"))
@@ -120,7 +140,7 @@ pub fn present(
     view.set_content(Some(&body));
     dialog.set_child(Some(&view));
 
-    let picker = Picker { dialog, list };
+    let picker = Picker { dialog, list, search: search.clone(), on_use: std::rc::Rc::new(on_use) };
     {
         let run = std::rc::Rc::new(on_search);
         let r = std::rc::Rc::clone(&run);

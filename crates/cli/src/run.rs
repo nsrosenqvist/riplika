@@ -315,12 +315,22 @@ fn decide_media(
     scan: Option<&riplika_core::model::DiscScan>,
 ) -> Result<Media, String> {
     if let Some(t) = given_title {
-        let cands = riplika_core::identify::search(cat, t, season).map_err(|e| e.to_string())?;
-        return cands
+        let found = riplika_core::identify::search(cat, t, season)
+            .unwrap_or_default()
             .into_iter()
             .next()
-            .map(|c| c.media)
-            .ok_or_else(|| format!("nothing found for {t:?}"));
+            .map(|c| c.media);
+        return Ok(match found {
+            Some(m) => with_given_season(m, season),
+            // The catalogues do not have everything, and a disc the user has
+            // named is not a disc that cannot be ripped. Episodes come out as
+            // "Episode 3" and can be renamed; refusing would leave the disc
+            // unread, which is worse.
+            None => {
+                println!("  {t:?} is not in the catalogues; using it as given");
+                riplika_core::identify::unverified(t, season)
+            }
+        });
     }
     let scan = scan.ok_or("nothing to identify from; pass --title")?;
     let cands = riplika_core::identify::identify(scan, cat).map_err(|e| e.to_string())?;

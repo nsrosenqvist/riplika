@@ -1077,6 +1077,27 @@ impl App {
         }
     }
 
+    /// Take the name the user typed, with no catalogue behind it.
+    ///
+    /// The season comes from the field on the page, because that is what
+    /// decides whether this is a series at all - without one there is nothing
+    /// to number episodes by.
+    fn use_name_as_given(&self, name: &str) {
+        let season = self.ui.season_entry.text().trim().parse::<u32>().ok();
+        let media = riplika_core::identify::unverified(name, season);
+        let chosen = Candidate {
+            media,
+            confidence: 0.0,
+            reasons: vec![tr("Entered by hand; not found in the catalogues")],
+            detail: None,
+        };
+        self.state.borrow_mut().selected = Some(chosen);
+        if let Some(p) = self.ui.picker.borrow().as_ref() {
+            p.close();
+        }
+        self.show_choice();
+    }
+
     fn weak(&self) -> std::rc::Weak<App> {
         self.me.borrow().clone()
     }
@@ -1413,13 +1434,25 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             };
             let app_for_search = Rc::clone(&app);
             let tx = tx.clone();
-            let picker = show_picker::present(&window, &query, move |q| {
-                app_for_search.state.borrow_mut().query = q.clone();
-                if let Some(p) = app_for_search.ui.picker.borrow().as_ref() {
-                    p.show_searching();
-                }
-                worker::search(q, None, tx.clone());
-            });
+            let picker = show_picker::present(
+                &window,
+                &query,
+                move |q| {
+                    app_for_search.state.borrow_mut().query = q.clone();
+                    if let Some(p) = app_for_search.ui.picker.borrow().as_ref() {
+                        p.show_searching();
+                    }
+                    worker::search(q, None, tx.clone());
+                },
+                {
+                    let app = app.weak();
+                    move |name| {
+                        if let Some(app) = app.upgrade() {
+                            app.use_name_as_given(&name);
+                        }
+                    }
+                },
+            );
 
             // Open on what is already known rather than an empty list.
             let candidates = app.state.borrow().candidates.clone();

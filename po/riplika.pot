@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Riplika 0.2.0\n"
 "Report-Msgid-Bugs-To: https://github.com/nsrosenqvist/riplika/issues\n"
-"POT-Creation-Date: 2026-08-30 07:43+0200\n"
+"POT-Creation-Date: 2026-08-30 09:01+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -167,8 +167,8 @@ msgstr ""
 #. Stopping work is not a dialog's "Cancel", and the icon says which of the
 #. two this is - the same word means "discard what I typed" three pages
 #. back.
-#: crates/gui/src/main.rs:517 crates/gui/src/main.rs:1371
-#: crates/gui/src/main.rs:1474
+#: crates/gui/src/main.rs:517 crates/gui/src/main.rs:1392
+#: crates/gui/src/main.rs:1503
 msgid "Cancel"
 msgstr ""
 
@@ -246,7 +246,7 @@ msgstr ""
 msgid "no glyph table, so subtitles stay as bitmaps"
 msgstr ""
 
-#: crates/gui/src/main.rs:665 crates/gui/src/main.rs:1278
+#: crates/gui/src/main.rs:665 crates/gui/src/main.rs:1299
 msgid "%d unrecognised glyph"
 msgid_plural "%d unrecognised glyphs"
 msgstr[0] ""
@@ -330,85 +330,97 @@ msgstr[1] ""
 msgid "No language tracks found"
 msgstr ""
 
-#: crates/gui/src/main.rs:1172
+#: crates/gui/src/main.rs:1091
+msgid "Entered by hand; not found in the catalogues"
+msgstr ""
+
+#: crates/gui/src/main.rs:1193
 msgid "Drive open"
 msgstr ""
 
-#: crates/gui/src/main.rs:1221
+#: crates/gui/src/main.rs:1242
 msgid "failed: %1$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:1222 crates/gui/src/main.rs:1554
+#: crates/gui/src/main.rs:1243 crates/gui/src/main.rs:1583
 msgid "Close"
 msgstr ""
 
-#: crates/gui/src/main.rs:1254
+#: crates/gui/src/main.rs:1275
 msgid "%1$s of %2$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:1263
+#: crates/gui/src/main.rs:1284
 msgid "wrote %1$s (%2$s)"
 msgstr ""
 
-#: crates/gui/src/main.rs:1276
+#: crates/gui/src/main.rs:1297
 msgid "%d cue"
 msgid_plural "%d cues"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:1273
+#: crates/gui/src/main.rs:1294
 msgid "subtitles %1$s: %2$s, %3$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:1285
+#: crates/gui/src/main.rs:1306
 msgid "subtitles %1$s: not recognised, bitmap kept"
 msgstr ""
 
-#: crates/gui/src/main.rs:1296
+#: crates/gui/src/main.rs:1317
 msgid "warning: %1$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:1362 crates/gui/src/main.rs:1462
+#: crates/gui/src/main.rs:1383 crates/gui/src/main.rs:1491
 msgid "Already working - wait for it, or cancel it first"
 msgstr ""
 
-#: crates/gui/src/main.rs:1395
+#: crates/gui/src/main.rs:1416
 msgid "Choose what this disc is first"
 msgstr ""
 
-#: crates/gui/src/main.rs:1458
+#: crates/gui/src/main.rs:1487
 msgid "Nothing to rip yet"
 msgstr ""
 
-#: crates/gui/src/main.rs:1514
+#: crates/gui/src/main.rs:1543
 msgid "Not while the drive is being read"
 msgstr ""
 
-#: crates/gui/src/main.rs:1520
+#: crates/gui/src/main.rs:1549
 msgid "Opening the drive"
 msgstr ""
 
-#: crates/gui/src/main.rs:1523
+#: crates/gui/src/main.rs:1552
 msgid "No drive to open"
 msgstr ""
 
-#: crates/gui/src/main.rs:1553
+#: crates/gui/src/main.rs:1582
 msgid "Stopping after the current step"
 msgstr ""
 
-#: crates/gui/src/show_picker.rs:26
+#: crates/gui/src/show_picker.rs:29
 msgid "Nothing found"
 msgstr ""
 
-#: crates/gui/src/show_picker.rs:27
+#: crates/gui/src/show_picker.rs:30
 msgid "Try a different spelling, or part of the title"
 msgstr ""
 
-#: crates/gui/src/show_picker.rs:56
+#: crates/gui/src/show_picker.rs:41
+msgid "Use this name anyway"
+msgstr ""
+
+#: crates/gui/src/show_picker.rs:42
+msgid "Episodes are numbered but not named"
+msgstr ""
+
+#: crates/gui/src/show_picker.rs:75
 msgid "Searching..."
 msgstr ""
 
-#: crates/gui/src/show_picker.rs:83
+#: crates/gui/src/show_picker.rs:103
 msgid "Which show is this?"
 msgstr ""
 

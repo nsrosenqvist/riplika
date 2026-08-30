@@ -116,6 +116,26 @@ fn runtime_agreement(durations: &[Millis], episodes: &[Episode]) -> Option<f32> 
     Some(ok as f32 / durations.len() as f32)
 }
 
+/// What the user says this is, when no catalogue agrees.
+///
+/// The catalogues do not have everything - a regional release, a box set of
+/// something obscure, a disc of home video, or simply no network - and refusing
+/// to rip a disc because a website has not heard of it is refusing to do the
+/// job. Nothing downstream requires a catalogue: episodes without entries are
+/// named "Episode 3" and can be renamed, which is a far better position than an
+/// unread disc.
+///
+/// A season number is what makes it a series. Without one there is nothing to
+/// number episodes by, so it is a film.
+pub fn unverified(title: &str, season: Option<u32>) -> Media {
+    match season {
+        Some(season) => {
+            Media::Series { title: title.trim().to_string(), year: None, season, provider_id: None }
+        }
+        None => Media::Movie { title: title.trim().to_string(), year: None, provider_id: None },
+    }
+}
+
 /// Search a catalogue directly, for when the guess was wrong.
 pub fn search(cat: &dyn Catalogue, query: &str, season: Option<u32>) -> Result<Vec<Candidate>> {
     let kind = if season.is_some() { MediaKind::Series } else { MediaKind::Movie };
@@ -296,6 +316,43 @@ pub fn existing_episode_numbers(files: &[PathBuf]) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_with_no_catalogue_behind_it_is_still_usable() {
+        // The catalogues do not have everything, and refusing to rip a disc
+        // because a website has not heard of it is refusing to do the job.
+        let m = unverified("Nikkes Hemmavideo 1997", Some(1));
+        assert_eq!(m.title(), "Nikkes Hemmavideo 1997");
+        assert_eq!(m.season(), Some(1));
+        assert!(m.provider_id().is_none(), "it came from nowhere and should say so");
+    }
+
+    #[test]
+    fn a_season_is_what_makes_it_a_series() {
+        // without one there is nothing to number episodes by
+        assert!(matches!(unverified("Heat", None), Media::Movie { .. }));
+        assert!(matches!(unverified("Heat", Some(2)), Media::Series { .. }));
+    }
+
+    #[test]
+    fn a_name_is_taken_as_typed_apart_from_the_spaces_around_it() {
+        assert_eq!(unverified("  The Office  ", Some(3)).title(), "The Office");
+    }
+
+    #[test]
+    fn episodes_are_numbered_even_with_nothing_to_name_them() {
+        // the whole point: a disc still comes out as files
+        let media = unverified("Something Obscure", Some(2));
+        let st = structure::Structure {
+            play_alls: Vec::new(),
+            episodes: vec!["t01.mkv".into(), "t02.mkv".into()],
+            loose: Vec::new(),
+            extras: Vec::new(),
+        };
+        let items = assign(&media, &[], &st, Path::new("/rip"), 0, &[]);
+        let names: Vec<&str> = items.iter().map(|i| i.title.as_str()).collect();
+        assert_eq!(names, vec!["Episode 1", "Episode 2"]);
+    }
     use crate::identify::catalogue::{FakeHttp, TvMaze};
     use crate::model::{DiscTitle, Drive};
 
