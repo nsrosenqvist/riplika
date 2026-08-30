@@ -247,6 +247,90 @@ pub fn write(fs: &dyn Fs, path: &Path, media: &Media, item: &Item) -> Result<boo
     Ok(true)
 }
 
+/// A `Void` element of exactly this many bytes, padding included.
+fn void_of(total: usize) -> Option<Vec<u8>> {
+    // One byte of id, then a length, then that many bytes of nothing.
+    for width in 1..=8usize {
+        let payload = total.checked_sub(1 + width)?;
+        let encoded = vint_fixed(payload as u64, width)?;
+        if encoded.len() == width && 1 + width + payload == total {
+            let mut out = VOID.to_vec();
+            out.extend_from_slice(&encoded);
+            out.extend(std::iter::repeat_n(0u8, payload));
+            return Some(out);
+        }
+    }
+    None
+}
+
+/// Read one element's id, header length and body length at `at`.
+fn element_at(d: &[u8], at: usize) -> Option<(Vec<u8>, usize, usize)> {
+    let first = *d.get(at)?;
+    let idw = (first.leading_zeros() + 1) as usize;
+    if idw > 4 || at + idw >= d.len() {
+        return None;
+    }
+    let id = d[at..at + idw].to_vec();
+    let sf = *d.get(at + idw)?;
+    let w = (sf.leading_zeros() + 1) as usize;
+    if w > 8 || at + idw + w > d.len() {
+        return None;
+    }
+    let mut size = if w == 8 { 0 } else { (sf & (0xFF >> w)) as u64 };
+    for b in &d[at + idw + 1..at + idw + w] {
+        size = (size << 8) | *b as u64;
+    }
+    Some((id, idw + w, size as usize))
+}
+
+/// Point the seek head at the tags, so a reader looks for them.
+///
+/// Everything a Matroska file keeps after its clusters is found through the
+/// seek head; a reader does not scan to the end hoping. An element appended
+/// without an entry here is in the file, is structurally valid, and is invisible
+/// to every player - which is exactly what happened the first time.
+///
+/// The entry has to be added without moving anything, so it is taken out of the
+/// `Void` that muxers leave after the seek head for the purpose: the seek head
+/// grows by what the entry costs and the void shrinks by the same.
+fn point_seek_head_at(fs: &dyn Fs, path: &Path, body: u64, tags_at: u64) -> Result<()> {
+    let window = fs.read_range(path, body, 8192)?;
+    let Some((id, head, size)) = element_at(&window, 0) else {
+        return Err(Error(format!("{}: no seek head", path.display())));
+    };
+    if id != SEEK_HEAD {
+        return Err(Error(format!("{}: no seek head", path.display())));
+    }
+    let old_total = head + size;
+    let Some((void_id, void_head, void_size)) = element_at(&window, old_total) else {
+        return Err(Error(format!("{}: nothing spare after the seek head", path.display())));
+    };
+    if void_id != VOID {
+        return Err(Error(format!("{}: nothing spare after the seek head", path.display())));
+    }
+
+    let mut entry = element(SEEK_ID, TAGS);
+    entry.extend_from_slice(&uint(SEEK_POSITION, tags_at));
+    let entry = element(SEEK, &entry);
+
+    let mut grown = window[head..old_total].to_vec();
+    grown.extend_from_slice(&entry);
+    let grown = element(SEEK_HEAD, &grown);
+
+    let spare = old_total + void_head + void_size;
+    let Some(remaining) = spare.checked_sub(grown.len()) else {
+        return Err(Error(format!("{}: no room to note the tags", path.display())));
+    };
+    let Some(void) = void_of(remaining) else {
+        return Err(Error(format!("{}: no room to note the tags", path.display())));
+    };
+
+    let mut patch = grown;
+    patch.extend_from_slice(&void);
+    debug_assert_eq!(patch.len(), spare, "the seek head must not move what follows it");
+    fs.write_at(path, body, &patch)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,7 +338,7 @@ mod tests {
     use std::path::PathBuf;
 
     /// Walk the element back out, so the bytes are checked and not just built.
-    fn parse(d: &[u8], at: usize, end: usize, out: &mut Vec<(String, String)>, level: &mut u64) {
+    fn parse(d: &[u8], at: usize, end: usize, out: &mut Vec<(String, String)>) {
         let mut i = at;
         while i < end {
             let idw = if d[i] >= 0x80 {
@@ -276,7 +360,7 @@ mod tests {
             let body = i + idw + w;
             let stop = body + size as usize;
             match id {
-                TAGS | TAG | TARGETS | SIMPLE_TAG => parse(d, body, stop, out, level),
+                TAGS | TAG | TARGETS | SIMPLE_TAG => parse(d, body, stop, out),
                 TARGET_TYPE_VALUE => {
                     let mut v = 0u64;
                     for b in &d[body..stop] {
@@ -303,8 +387,7 @@ mod tests {
 
     fn flatten(bytes: &[u8]) -> Vec<(String, String)> {
         let mut out = Vec::new();
-        let mut lvl = 0;
-        parse(bytes, 0, bytes.len(), &mut out, &mut lvl);
+        parse(bytes, 0, bytes.len(), &mut out);
         out
     }
 
@@ -493,88 +576,4 @@ mod tests {
         let (m, i) = episode();
         assert!(write(&fs, path, &m, &i).is_err());
     }
-}
-
-/// A `Void` element of exactly this many bytes, padding included.
-fn void_of(total: usize) -> Option<Vec<u8>> {
-    // One byte of id, then a length, then that many bytes of nothing.
-    for width in 1..=8usize {
-        let payload = total.checked_sub(1 + width)?;
-        let encoded = vint_fixed(payload as u64, width)?;
-        if encoded.len() == width && 1 + width + payload == total {
-            let mut out = VOID.to_vec();
-            out.extend_from_slice(&encoded);
-            out.extend(std::iter::repeat_n(0u8, payload));
-            return Some(out);
-        }
-    }
-    None
-}
-
-/// Read one element's id, header length and body length at `at`.
-fn element_at(d: &[u8], at: usize) -> Option<(Vec<u8>, usize, usize)> {
-    let first = *d.get(at)?;
-    let idw = (first.leading_zeros() + 1) as usize;
-    if idw > 4 || at + idw >= d.len() {
-        return None;
-    }
-    let id = d[at..at + idw].to_vec();
-    let sf = *d.get(at + idw)?;
-    let w = (sf.leading_zeros() + 1) as usize;
-    if w > 8 || at + idw + w > d.len() {
-        return None;
-    }
-    let mut size = if w == 8 { 0 } else { (sf & (0xFF >> w)) as u64 };
-    for b in &d[at + idw + 1..at + idw + w] {
-        size = (size << 8) | *b as u64;
-    }
-    Some((id, idw + w, size as usize))
-}
-
-/// Point the seek head at the tags, so a reader looks for them.
-///
-/// Everything a Matroska file keeps after its clusters is found through the
-/// seek head; a reader does not scan to the end hoping. An element appended
-/// without an entry here is in the file, is structurally valid, and is invisible
-/// to every player - which is exactly what happened the first time.
-///
-/// The entry has to be added without moving anything, so it is taken out of the
-/// `Void` that muxers leave after the seek head for the purpose: the seek head
-/// grows by what the entry costs and the void shrinks by the same.
-fn point_seek_head_at(fs: &dyn Fs, path: &Path, body: u64, tags_at: u64) -> Result<()> {
-    let window = fs.read_range(path, body, 8192)?;
-    let Some((id, head, size)) = element_at(&window, 0) else {
-        return Err(Error(format!("{}: no seek head", path.display())));
-    };
-    if id != SEEK_HEAD {
-        return Err(Error(format!("{}: no seek head", path.display())));
-    }
-    let old_total = head + size;
-    let Some((void_id, void_head, void_size)) = element_at(&window, old_total) else {
-        return Err(Error(format!("{}: nothing spare after the seek head", path.display())));
-    };
-    if void_id != VOID {
-        return Err(Error(format!("{}: nothing spare after the seek head", path.display())));
-    }
-
-    let mut entry = element(SEEK_ID, TAGS);
-    entry.extend_from_slice(&uint(SEEK_POSITION, tags_at));
-    let entry = element(SEEK, &entry);
-
-    let mut grown = window[head..old_total].to_vec();
-    grown.extend_from_slice(&entry);
-    let grown = element(SEEK_HEAD, &grown);
-
-    let spare = old_total + void_head + void_size;
-    let Some(remaining) = spare.checked_sub(grown.len()) else {
-        return Err(Error(format!("{}: no room to note the tags", path.display())));
-    };
-    let Some(void) = void_of(remaining) else {
-        return Err(Error(format!("{}: no room to note the tags", path.display())));
-    };
-
-    let mut patch = grown;
-    patch.extend_from_slice(&void);
-    debug_assert_eq!(patch.len(), spare, "the seek head must not move what follows it");
-    fs.write_at(path, body, &patch)
 }

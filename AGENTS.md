@@ -79,14 +79,12 @@ What is *not* translated: the text inside a warning, which is built in core and 
 
 ## Before pushing
 
-CI runs these, and running them first is faster than waiting for it:
+`./check.sh` runs everything CI runs, in the same order, and stops on the first failure. Run it rather than the individual commands - and read its exit status, not its output. `cargo clippy -- -D warnings` prints a denied lint as `error`, so a check that greps for lines beginning `warning:` finds none and reports success while CI fails on the same tree. That happened.
+
+Two things it does not do, because they rewrite files rather than check them:
 
 ```sh
-cargo fmt --check                                   # the tree is rustfmt-clean; rustfmt.toml keeps the wide style
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --all-targets && cargo test --workspace --doc
-./po/check.py                                       # every string is extractable and in the template
-./po/build.sh                                       # regenerates it; needs a gettext that knows Rust
+./po/build.sh                                       # after adding a string; needs a gettext that knows Rust
 packaging/regenerate-cargo-sources.sh               # only after Cargo.lock changes
 ```
 
