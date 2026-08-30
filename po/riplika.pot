@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Riplika 0.2.0\n"
 "Report-Msgid-Bugs-To: https://github.com/nsrosenqvist/riplika/issues\n"
-"POT-Creation-Date: 2026-08-30 16:20+0200\n"
+"POT-Creation-Date: 2026-08-30 16:22+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -18,212 +18,213 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
-#: crates/gui/src/main.rs:250 crates/gui/src/prefs_dialog.rs:52
+#: crates/gui/src/main.rs:253 crates/gui/src/prefs_dialog.rs:52
 msgid "Preferences"
 msgstr ""
 
-#: crates/gui/src/main.rs:293 data/com.nsrosenqvist.Riplika.desktop:3
+#: crates/gui/src/main.rs:296 data/com.nsrosenqvist.Riplika.desktop:3
 msgid "Riplika"
 msgstr ""
 
-#: crates/gui/src/main.rs:328 crates/gui/src/main.rs:747
-#: crates/gui/src/main.rs:1081 crates/gui/src/main.rs:1085
+#: crates/gui/src/main.rs:331 crates/gui/src/main.rs:750
+#: crates/gui/src/main.rs:1084 crates/gui/src/main.rs:1088
 msgid "No disc"
 msgstr ""
 
-#: crates/gui/src/main.rs:339
+#: crates/gui/src/main.rs:342
 msgid "Drive"
 msgstr ""
 
-#: crates/gui/src/main.rs:346
+#: crates/gui/src/main.rs:349
 msgid "Analyse disc"
 msgstr ""
 
-#: crates/gui/src/main.rs:351
+#: crates/gui/src/main.rs:354
 msgid "Look again"
 msgstr ""
 
 #. Swapping discs is what you do most on this page, and reaching for the
 #. tray button on an external drive is not always possible.
-#: crates/gui/src/main.rs:363 crates/gui/src/main.rs:598
+#: crates/gui/src/main.rs:366 crates/gui/src/main.rs:601
 msgid "Eject"
 msgstr ""
 
-#: crates/gui/src/main.rs:381
+#: crates/gui/src/main.rs:384
 msgid "Identified as"
 msgstr ""
 
-#: crates/gui/src/main.rs:383 crates/gui/src/main.rs:1225
-#: crates/gui/src/main.rs:1264
+#: crates/gui/src/main.rs:386 crates/gui/src/main.rs:1222
+#: crates/gui/src/main.rs:1265 crates/gui/src/main.rs:1307
 msgid "Not identified"
 msgstr ""
 
-#: crates/gui/src/main.rs:384 crates/gui/src/main.rs:1265
+#: crates/gui/src/main.rs:387 crates/gui/src/main.rs:1308
 msgid "Choose the show"
 msgstr ""
 
-#: crates/gui/src/main.rs:392
+#: crates/gui/src/main.rs:395
 msgid "This disc"
 msgstr ""
 
-#: crates/gui/src/main.rs:393
+#: crates/gui/src/main.rs:396
 msgid ""
 "Which part of the show it holds. The disc number decides where episode "
 "numbering starts."
 msgstr ""
 
-#: crates/gui/src/main.rs:395
+#: crates/gui/src/main.rs:398
 msgid "Season"
 msgstr ""
 
-#: crates/gui/src/main.rs:396
+#: crates/gui/src/main.rs:399
 msgid "Disc"
 msgstr ""
 
-#: crates/gui/src/main.rs:401
+#: crates/gui/src/main.rs:404
 msgid "Continue"
 msgstr ""
 
-#: crates/gui/src/main.rs:413 crates/gui/src/main.rs:438
+#: crates/gui/src/main.rs:416 crates/gui/src/main.rs:441
 msgid "Quality"
 msgstr ""
 
-#: crates/gui/src/main.rs:416
+#: crates/gui/src/main.rs:419
 msgid "Picture"
 msgstr ""
 
-#: crates/gui/src/main.rs:417
+#: crates/gui/src/main.rs:420
 msgid "Medium is the sweet spot for DVD: about 170 MB an episode"
 msgstr ""
 
-#: crates/gui/src/main.rs:423
+#: crates/gui/src/main.rs:426
 msgid "Sound"
 msgstr ""
 
-#: crates/gui/src/main.rs:424
+#: crates/gui/src/main.rs:427
 msgid "High keeps the original AC3 untouched; browsers cannot decode it"
 msgstr ""
 
-#: crates/gui/src/main.rs:428
+#: crates/gui/src/main.rs:431
 msgid "Music"
 msgstr ""
 
-#: crates/gui/src/main.rs:431
+#: crates/gui/src/main.rs:434
 msgid "Format"
 msgstr ""
 
-#: crates/gui/src/main.rs:432
+#: crates/gui/src/main.rs:435
 msgid "FLAC keeps the disc exactly; MP3 plays on anything"
 msgstr ""
 
-#: crates/gui/src/main.rs:449
+#: crates/gui/src/main.rs:452
 msgid "Container"
 msgstr ""
 
-#: crates/gui/src/main.rs:451
+#: crates/gui/src/main.rs:454
 msgid "Exact chapter marks"
 msgstr ""
 
-#: crates/gui/src/main.rs:452
+#: crates/gui/src/main.rs:455
 msgid "Reads the disc twice. Without it chapter marks drift a second or two"
 msgstr ""
 
-#: crates/gui/src/main.rs:463 crates/gui/src/prefs_dialog.rs:97
+#: crates/gui/src/main.rs:466 crates/gui/src/prefs_dialog.rs:97
 msgid "Languages"
 msgstr ""
 
-#: crates/gui/src/main.rs:464
+#: crates/gui/src/main.rs:467
 msgid ""
 "What this disc carries. Your preferred languages start ticked; the first "
 "becomes the default track."
 msgstr ""
 
-#: crates/gui/src/main.rs:471
+#: crates/gui/src/main.rs:474
 msgid "What to take"
 msgstr ""
 
-#: crates/gui/src/main.rs:472
+#: crates/gui/src/main.rs:475
 msgid "Episodes are always taken. Anything unticked is not read at all."
 msgstr ""
 
-#: crates/gui/src/main.rs:475
+#: crates/gui/src/main.rs:478
 msgid "Extended episodes"
 msgstr ""
 
-#: crates/gui/src/main.rs:476
+#: crates/gui/src/main.rs:479
 msgid "Longer cuts some discs carry alongside the broadcast versions"
 msgstr ""
 
-#: crates/gui/src/main.rs:479
+#: crates/gui/src/main.rs:482
 msgid "Bonus material"
 msgstr ""
 
-#: crates/gui/src/main.rs:480
+#: crates/gui/src/main.rs:483
 msgid "Featurettes, deleted scenes, gag reels"
 msgstr ""
 
-#: crates/gui/src/main.rs:485
+#: crates/gui/src/main.rs:488
 msgid "Output"
 msgstr ""
 
-#: crates/gui/src/main.rs:486
+#: crates/gui/src/main.rs:489
 msgid "Folder"
 msgstr ""
 
-#: crates/gui/src/main.rs:490
+#: crates/gui/src/main.rs:493
 msgid "Start"
 msgstr ""
 
-#: crates/gui/src/main.rs:506
+#: crates/gui/src/main.rs:509
 msgid "Starting"
 msgstr ""
 
 #. Stopping work is not a dialog's "Cancel", and the icon says which of the
 #. two this is - the same word means "discard what I typed" three pages
 #. back.
-#: crates/gui/src/main.rs:552 crates/gui/src/main.rs:1593
-#: crates/gui/src/main.rs:1729 crates/gui/src/main.rs:1755
+#: crates/gui/src/main.rs:555 crates/gui/src/main.rs:1642
+#: crates/gui/src/main.rs:1790 crates/gui/src/main.rs:1815
+#: crates/gui/src/main.rs:1841
 msgid "Cancel"
 msgstr ""
 
-#: crates/gui/src/main.rs:589
+#: crates/gui/src/main.rs:592
 msgid "Done"
 msgstr ""
 
-#: crates/gui/src/main.rs:590
+#: crates/gui/src/main.rs:593
 msgid "Files"
 msgstr ""
 
-#: crates/gui/src/main.rs:600
+#: crates/gui/src/main.rs:603
 msgid "Rip another disc"
 msgstr ""
 
-#: crates/gui/src/main.rs:657
+#: crates/gui/src/main.rs:660
 msgid "less than a minute left"
 msgstr ""
 
-#: crates/gui/src/main.rs:658
+#: crates/gui/src/main.rs:661
 msgid "about a minute left"
 msgstr ""
 
-#: crates/gui/src/main.rs:660 crates/gui/src/main.rs:667
-#: crates/gui/src/main.rs:740
+#: crates/gui/src/main.rs:663 crates/gui/src/main.rs:670
+#: crates/gui/src/main.rs:743
 msgid "%d minute"
 msgid_plural "%d minutes"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:660 crates/gui/src/main.rs:663
+#: crates/gui/src/main.rs:663 crates/gui/src/main.rs:666
 msgid "about %1$s left"
 msgstr ""
 
-#: crates/gui/src/main.rs:663 crates/gui/src/main.rs:667
+#: crates/gui/src/main.rs:666 crates/gui/src/main.rs:670
 msgid "%d hour"
 msgid_plural "%d hours"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:666
+#: crates/gui/src/main.rs:669
 msgid "about %1$s %2$s left"
 msgstr ""
 
@@ -245,275 +246,291 @@ msgstr ""
 #. / Built rather than written out at each chooser so all of them say the same
 #. / words, and so all of them are translated - as bare array literals they were
 #. / invisible to xgettext and stayed English everywhere.
-#: crates/gui/src/main.rs:708
+#: crates/gui/src/main.rs:711
 msgid "High"
 msgstr ""
 
-#: crates/gui/src/main.rs:708
+#: crates/gui/src/main.rs:711
 msgid "Medium"
 msgstr ""
 
-#: crates/gui/src/main.rs:708
+#: crates/gui/src/main.rs:711
 msgid "Low"
 msgstr ""
 
-#: crates/gui/src/main.rs:724
+#: crates/gui/src/main.rs:727
 msgid "High is about 245 kb/s, Low about 130"
 msgstr ""
 
-#: crates/gui/src/main.rs:726
+#: crates/gui/src/main.rs:729
 msgid "FLAC is lossless - every level decodes to the same audio"
 msgstr ""
 
-#: crates/gui/src/main.rs:739 crates/gui/src/main.rs:1210
+#: crates/gui/src/main.rs:742 crates/gui/src/main.rs:1250
 msgid "%d track"
 msgid_plural "%d tracks"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:741
+#: crates/gui/src/main.rs:744
 msgid "Audio CD, %1$s, %2$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:744
+#: crates/gui/src/main.rs:747
 msgid "DVD-Video"
 msgstr ""
 
-#: crates/gui/src/main.rs:745
+#: crates/gui/src/main.rs:748
 msgid "Blu-ray"
 msgstr ""
 
-#: crates/gui/src/main.rs:746
+#: crates/gui/src/main.rs:749
 msgid "Data disc"
 msgstr ""
 
-#: crates/gui/src/main.rs:753
+#: crates/gui/src/main.rs:756
 msgid "could not identify the disc: %1$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:755
+#: crates/gui/src/main.rs:758
 msgid "title %1$s could not be read: %2$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:759 crates/gui/src/main.rs:825
+#: crates/gui/src/main.rs:762 crates/gui/src/main.rs:828
 msgid "%d episode"
 msgid_plural "%d episodes"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:758
+#: crates/gui/src/main.rs:761
 msgid "no play-all title on this disc; ordering %1$s by disc layout instead"
 msgstr ""
 
-#: crates/gui/src/main.rs:762
+#: crates/gui/src/main.rs:765
 msgid "could not compare titles for extended cuts: %1$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:765
+#: crates/gui/src/main.rs:768
 msgid "glyph table %1$s: %2$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:768
+#: crates/gui/src/main.rs:771
 msgid "glyph table %1$s does not exist"
 msgstr ""
 
-#: crates/gui/src/main.rs:770
+#: crates/gui/src/main.rs:773
 msgid "no glyph table, so subtitles stay as bitmaps"
 msgstr ""
 
-#: crates/gui/src/main.rs:776 crates/gui/src/main.rs:1500
+#: crates/gui/src/main.rs:779 crates/gui/src/main.rs:1549
 msgid "%d unrecognised glyph"
 msgid_plural "%d unrecognised glyphs"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:775
+#: crates/gui/src/main.rs:778
 msgid "%1$s: %2$s - the table may not cover %1$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:780
+#: crates/gui/src/main.rs:783
 msgid "%d play-all title"
 msgid_plural "%d play-all titles"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:779
+#: crates/gui/src/main.rs:782
 msgid "skipping %1$s, whose content is on the disc already"
 msgstr ""
 
-#: crates/gui/src/main.rs:783
+#: crates/gui/src/main.rs:786
 msgid "the free reader could not read this disc fully (%1$s); using MakeMKV"
 msgstr ""
 
-#: crates/gui/src/main.rs:786
+#: crates/gui/src/main.rs:789
 msgid "the free reader failed (%1$s); using MakeMKV"
 msgstr ""
 
-#: crates/gui/src/main.rs:799
+#: crates/gui/src/main.rs:802
 msgid "Scanning disc"
 msgstr ""
 
-#: crates/gui/src/main.rs:800
+#: crates/gui/src/main.rs:803
 msgid "Identifying"
 msgstr ""
 
-#: crates/gui/src/main.rs:801
+#: crates/gui/src/main.rs:804
 msgid "Ripping"
 msgstr ""
 
-#: crates/gui/src/main.rs:802
+#: crates/gui/src/main.rs:805
 msgid "Sorting titles"
 msgstr ""
 
-#: crates/gui/src/main.rs:803
+#: crates/gui/src/main.rs:806
 msgid "Verifying"
 msgstr ""
 
-#: crates/gui/src/main.rs:804
+#: crates/gui/src/main.rs:807
 msgid "Reading subtitles"
 msgstr ""
 
-#: crates/gui/src/main.rs:805
+#: crates/gui/src/main.rs:808
 msgid "Transcoding"
 msgstr ""
 
-#: crates/gui/src/main.rs:829
+#: crates/gui/src/main.rs:832
 msgid "%d feature"
 msgid_plural "%d features"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:833
+#: crates/gui/src/main.rs:836
 msgid "%d extended cut"
 msgid_plural "%d extended cuts"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:837
+#: crates/gui/src/main.rs:840
 msgid "%d extra"
 msgid_plural "%d extras"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:842
+#: crates/gui/src/main.rs:845
 msgid "This disc holds %s"
 msgstr ""
 
-#: crates/gui/src/main.rs:846
+#: crates/gui/src/main.rs:849
 msgid "%d play-all title will be skipped - the same video again"
 msgid_plural "%d play-all titles will be skipped - the same video again"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:997
+#: crates/gui/src/main.rs:1000
 msgid "No language tracks found"
 msgstr ""
 
-#: crates/gui/src/main.rs:1068
+#: crates/gui/src/main.rs:1071
 msgid "No disc drive"
 msgstr ""
 
-#: crates/gui/src/main.rs:1069
+#: crates/gui/src/main.rs:1072
 msgid "No optical drive was found. Connect one and look again."
 msgstr ""
 
-#: crates/gui/src/main.rs:1078
+#: crates/gui/src/main.rs:1081
 msgid "%1$s in %2$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:1082
+#: crates/gui/src/main.rs:1085
 msgid "Insert a disc into %1$s, then look again."
 msgstr ""
 
-#: crates/gui/src/main.rs:1085
+#: crates/gui/src/main.rs:1088
 msgid "Choose a drive."
 msgstr ""
 
-#: crates/gui/src/main.rs:1219
+#: crates/gui/src/main.rs:1216
+msgid "PlayStation disc %1$s"
+msgstr ""
+
+#: crates/gui/src/main.rs:1217
+msgid "Named once it has been read; a disc label is only a hint"
+msgstr ""
+
+#: crates/gui/src/main.rs:1223
+msgid "This disc could not be read"
+msgstr ""
+
+#: crates/gui/src/main.rs:1259
 msgid "Named by the disc itself; no cover art or release details"
 msgstr ""
 
-#: crates/gui/src/main.rs:1231
+#: crates/gui/src/main.rs:1271
 msgid "The catalogue could not be reached, so this disc was never asked about"
 msgstr ""
 
-#: crates/gui/src/main.rs:1233
+#: crates/gui/src/main.rs:1273
 msgid ""
 "No release matches this disc, so there is nothing to name the tracks from"
 msgstr ""
 
-#: crates/gui/src/main.rs:1282
+#: crates/gui/src/main.rs:1325
 msgid "Entered by hand; not found in the catalogues"
 msgstr ""
 
-#: crates/gui/src/main.rs:1384
+#: crates/gui/src/main.rs:1427
 msgid "Drive open"
 msgstr ""
 
-#: crates/gui/src/main.rs:1443
+#: crates/gui/src/main.rs:1492
 msgid "failed: %1$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:1444 crates/gui/src/main.rs:1835
+#: crates/gui/src/main.rs:1493 crates/gui/src/main.rs:1921
 msgid "Close"
 msgstr ""
 
-#: crates/gui/src/main.rs:1476
+#: crates/gui/src/main.rs:1525
 msgid "%1$s of %2$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:1485
+#: crates/gui/src/main.rs:1534
 msgid "wrote %1$s (%2$s)"
 msgstr ""
 
-#: crates/gui/src/main.rs:1498
+#: crates/gui/src/main.rs:1547
 msgid "%d cue"
 msgid_plural "%d cues"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:1495
+#: crates/gui/src/main.rs:1544
 msgid "subtitles %1$s: %2$s, %3$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:1507
+#: crates/gui/src/main.rs:1556
 msgid "subtitles %1$s: not recognised, bitmap kept"
 msgstr ""
 
-#: crates/gui/src/main.rs:1518
+#: crates/gui/src/main.rs:1567
 msgid "warning: %1$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:1584 crates/gui/src/main.rs:1719
-#: crates/gui/src/main.rs:1743
+#: crates/gui/src/main.rs:1633 crates/gui/src/main.rs:1771
+#: crates/gui/src/main.rs:1805 crates/gui/src/main.rs:1829
 msgid "Already working - wait for it, or cancel it first"
 msgstr ""
 
-#: crates/gui/src/main.rs:1618
+#: crates/gui/src/main.rs:1672
 msgid "This disc could not be identified"
 msgstr ""
 
-#: crates/gui/src/main.rs:1634
+#: crates/gui/src/main.rs:1693
 msgid "Choose what this disc is first"
 msgstr ""
 
-#: crates/gui/src/main.rs:1715 crates/gui/src/main.rs:1739
+#: crates/gui/src/main.rs:1786
+msgid "No datfiles: the dump will be filed under the disc's label"
+msgstr ""
+
+#: crates/gui/src/main.rs:1801 crates/gui/src/main.rs:1825
 msgid "Nothing to rip yet"
 msgstr ""
 
-#: crates/gui/src/main.rs:1795
+#: crates/gui/src/main.rs:1881
 msgid "Not while the drive is being read"
 msgstr ""
 
-#: crates/gui/src/main.rs:1801
+#: crates/gui/src/main.rs:1887
 msgid "Opening the drive"
 msgstr ""
 
-#: crates/gui/src/main.rs:1804
+#: crates/gui/src/main.rs:1890
 msgid "No drive to open"
 msgstr ""
 
-#: crates/gui/src/main.rs:1834
+#: crates/gui/src/main.rs:1920
 msgid "Stopping after the current step"
 msgstr ""
 

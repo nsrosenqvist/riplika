@@ -9,13 +9,14 @@
 //! change the quality after seeing how many episodes there are.
 
 use riplika_core::Warning;
-use riplika_core::host::{Cancel, RealFs, RealRunner, Runner};
+use riplika_core::gamejob;
+use riplika_core::host::{Cancel, Fs, RealFs, RealRunner, Runner};
 use riplika_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, UreqHttp, Wikidata};
 use riplika_core::identify::music::Album;
 use riplika_core::job::{Event, Pipeline, Ports, Report};
 use riplika_core::joblog::JobLog;
 use riplika_core::media::FfProbe;
-use riplika_core::model::{Candidate, DiscScan, Drive, Item, JobSettings, Media};
+use riplika_core::model::{Candidate, DiscScan, Drive, Item, JobSettings, Media, Role};
 use riplika_core::musicjob;
 use riplika_core::rip::Auto;
 use std::path::Path;
@@ -30,6 +31,8 @@ pub enum Msg {
     Scanned(Box<DiscScan>),
     /// A music disc, and what MusicBrainz says it is.
     Music(Box<musicjob::Found>),
+    /// A data disc, and the little it says about itself.
+    Game(Box<riplika_core::game::GameDisc>),
     Candidates(Vec<Candidate>),
     Organised(Vec<Item>),
     Event(Event),
@@ -237,6 +240,98 @@ pub fn run_music(
                     &scratch.0,
                     &mut events,
                 )?;
+                let _ = tx.send(Msg::Finished(Box::new(report)));
+                Ok(())
+            })(),
+        );
+    });
+}
+
+/// Look at a data disc. Quick: a volume label and, on a PlayStation, a serial.
+pub fn analyse_game(device: String, tx: Sender<Msg>) {
+    std::thread::spawn(move || {
+        let disc = riplika_core::rescue::PlainDisc::open(Path::new(&device))
+            .and_then(|mut source| {
+                riplika_core::game::inspect(&mut |lba, count| {
+                    use riplika_core::rescue::SectorSource;
+                    source
+                        .read(lba, count as u64)
+                        .map_err(|_| riplika_core::Error("read failed".into()))
+                })
+            })
+            // A disc that will not say anything is still dumpable; the name
+            // comes from the hash afterwards, if it comes at all.
+            .unwrap_or_default();
+        let _ = tx.send(Msg::Game(Box::new(disc)));
+    });
+}
+
+/// Dump a game disc and find out what it was.
+pub fn run_game(
+    device: String,
+    disc: riplika_core::game::GameDisc,
+    root: PathBuf,
+    dat_dir: Option<PathBuf>,
+    cancel: Cancel,
+    tx: Sender<Msg>,
+) {
+    std::thread::spawn(move || {
+        let real = Real::new(cancel.clone());
+        let t = tx.clone();
+        let mut events = move |e: Event| {
+            let _ = t.send(Msg::Event(e));
+        };
+        report(
+            &tx,
+            (|| {
+                let dats = dat_dir
+                    .map(|d| riplika_core::redump::load_all(&real.fs, &d))
+                    .unwrap_or_default();
+                let staging = root.join("Unidentified").join(gamejob::suggested_name(None, &disc));
+                let dumped =
+                    gamejob::dump(Path::new(&device), &staging, &real.fs, &cancel, &mut events)?;
+                if let Some(why) = gamejob::shortfall(&dumped) {
+                    events(Event::Warning(Warning::FreeReaderIncomplete { why }));
+                }
+
+                let matched = gamejob::identify(&dats, &dumped.digests);
+                let system = matched.as_ref().map(|(dat, _)| dat.name.clone());
+                let dest = gamejob::destination(
+                    &root,
+                    matched.as_ref().map(|(_, f)| f),
+                    system.as_deref(),
+                    &disc,
+                );
+                if dest != staging {
+                    if let Some(dir) = dest.parent() {
+                        real.fs.create_dir_all(dir)?;
+                    }
+                    real.fs.rename(&staging, &dest)?;
+                }
+                let name = matched
+                    .as_ref()
+                    .map(|(_, f)| f.game.name.clone())
+                    .unwrap_or_else(|| disc.describe());
+                events(Event::ItemFinished {
+                    index: 0,
+                    destination: dest.clone(),
+                    bytes: dumped.digests.bytes,
+                });
+
+                let mut report = Report::default();
+                report.produced.push(riplika_core::job::Produced {
+                    item: Item {
+                        source: PathBuf::from(&device),
+                        role: Role::Feature,
+                        title: name,
+                        air_date: None,
+                        duration: 0,
+                        destination: Some(dest),
+                    },
+                    destination: PathBuf::new(),
+                    bytes: dumped.digests.bytes,
+                    subtitles: Vec::new(),
+                });
                 let _ = tx.send(Msg::Finished(Box::new(report)));
                 Ok(())
             })(),

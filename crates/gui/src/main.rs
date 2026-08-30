@@ -73,6 +73,8 @@ struct State {
     music: Option<riplika_core::musicjob::Found>,
     /// Which of the releases matching that disc was settled on.
     album: Option<riplika_core::identify::music::Album>,
+    /// The data disc in the drive, and the little it says about itself.
+    game: Option<riplika_core::game::GameDisc>,
     candidates: Vec<Candidate>,
     /// What the page has settled on, from identification or from the picker.
     selected: Option<Candidate>,
@@ -103,6 +105,7 @@ impl Default for State {
             scan: None,
             music: None,
             album: None,
+            game: None,
             candidates: Vec::new(),
             selected: None,
             chosen: None,
@@ -1129,14 +1132,17 @@ impl App {
         // settings that cannot apply to what is in the tray.
         let music =
             matches!(selected.as_ref().and_then(|d| d.kind.as_ref()), Some(DiscKind::Audio(_)));
+        let game = matches!(selected.as_ref().and_then(|d| d.kind.as_ref()), Some(DiscKind::Data));
         self.ui.music_group.set_visible(music);
-        self.ui.quality_group.set_visible(!music);
+        // A game disc is copied, not encoded: there is no picture to compress,
+        // no container to choose and no track to name.
+        self.ui.quality_group.set_visible(!music && !game);
         // A CD has one language and no subtitles to choose it for, no extras,
         // no extended cuts, and no season or disc number - those pages would
         // otherwise ask questions about a disc that cannot answer them.
-        self.ui.language_group.set_visible(!music);
-        self.ui.contents_group.set_visible(!music);
-        self.ui.detail_group.set_visible(!music);
+        self.ui.language_group.set_visible(!music && !game);
+        self.ui.contents_group.set_visible(!music && !game);
+        self.ui.detail_group.set_visible(!music && !game);
 
         let (title, description, ready) = Self::drive_status(&drives, selected.as_ref());
         self.ui.drive_page.set_title(&title);
@@ -1186,6 +1192,40 @@ impl App {
     }
 
     /// Restate what the page has settled on.
+    /// Is the disc in the drive a game, or anything else with a filesystem
+    /// that is not video?
+    fn is_game(&self) -> bool {
+        matches!(
+            self.state.borrow().drive.as_ref().and_then(|d| d.kind.as_ref()),
+            Some(DiscKind::Data)
+        )
+    }
+
+    /// What the identify page says about a data disc.
+    ///
+    /// Almost nothing, honestly. A volume label is as weak a clue as a DVD's,
+    /// and the real identification only happens once the disc has been read
+    /// and can be matched by what it hashes to - so the page says that rather
+    /// than dressing up a guess.
+    fn show_game(&self) {
+        let disc = self.state.borrow().game.clone();
+        match disc {
+            Some(d) => {
+                self.ui.chosen_row.set_title(&d.describe());
+                self.ui.chosen_row.set_subtitle(&match &d.serial {
+                    Some(serial) => tr_args("PlayStation disc %1$s", &[serial]),
+                    None => tr("Named once it has been read; a disc label is only a hint"),
+                });
+                self.ui.identify_next.set_sensitive(!self.is_busy());
+            }
+            None => {
+                self.ui.chosen_row.set_title(&tr("Not identified"));
+                self.ui.chosen_row.set_subtitle(&tr("This disc could not be read"));
+                self.ui.identify_next.set_sensitive(false);
+            }
+        }
+    }
+
     /// Is the disc in the drive a music CD?
     ///
     /// Decides which of the two pipelines the whole wizard is running, so it
@@ -1240,6 +1280,9 @@ impl App {
     fn show_choice(&self) {
         if self.is_music() {
             return self.show_album();
+        }
+        if self.is_game() {
+            return self.show_game();
         }
         let selected = self.state.borrow().selected.clone();
         match selected {
@@ -1399,6 +1442,12 @@ impl App {
                 self.state.borrow_mut().query = guess.title.clone();
                 self.show_languages(&scan.all_languages());
                 self.state.borrow_mut().scan = Some(*scan);
+            }
+            Msg::Game(disc) => {
+                self.set_busy(None);
+                self.state.borrow_mut().game = Some(*disc);
+                self.show_choice();
+                self.go(Step::Identify);
             }
             Msg::Music(found) => {
                 self.set_busy(None);
@@ -1600,6 +1649,11 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 worker::analyse_music(drive.device.clone(), tx.clone());
                 return;
             }
+            // A data disc has no titles to probe: it is copied whole.
+            if matches!(drive.kind.as_ref(), Some(DiscKind::Data)) {
+                worker::analyse_game(drive.device.clone(), tx.clone());
+                return;
+            }
             let allow = app.prefs.prefs.borrow().use_makemkv();
             worker::analyse(drive, allow, cancel, tx.clone());
         });
@@ -1617,6 +1671,11 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 } else {
                     app.toast(&tr("This disc could not be identified"));
                 }
+                return;
+            }
+            // A game has nothing to choose here; its name comes afterwards.
+            if app.is_game() {
+                app.go(Step::Settings);
                 return;
             }
             let chosen = app.state.borrow().selected.clone();
@@ -1706,6 +1765,33 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
         let app = Rc::clone(app);
         let tx = tx.clone();
         start.connect_clicked(move |_| {
+            if app.is_game() {
+                let disc = app.state.borrow().game.clone().unwrap_or_default();
+                if app.is_busy() {
+                    app.toast(&tr("Already working - wait for it, or cancel it first"));
+                    return;
+                }
+                let Some(device) = app.state.borrow().drive.as_ref().map(|d| d.device.clone())
+                else {
+                    return;
+                };
+                let (root, dat_dir) = {
+                    let p = app.prefs.prefs.borrow();
+                    (
+                        p.output_dir.clone().unwrap_or_else(|| glib::home_dir().join("Games")),
+                        p.dat_dir(),
+                    )
+                };
+                if dat_dir.is_none() {
+                    app.toast(&tr("No datfiles: the dump will be filed under the disc's label"));
+                }
+                app.state.borrow_mut().cancel = riplika_core::host::Cancel::new();
+                let cancel = app.state.borrow().cancel.clone();
+                set_button_label(&app.ui.cancel_button, &tr("Cancel"));
+                app.go(Step::Progress);
+                worker::run_game(device, disc, root, dat_dir, cancel, tx.clone());
+                return;
+            }
             if app.is_music() {
                 let (found, album) = {
                     let s = app.state.borrow();
