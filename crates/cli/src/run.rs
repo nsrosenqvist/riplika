@@ -380,6 +380,7 @@ pub fn rip_game(
     drive: Option<&str>,
     out: Option<PathBuf>,
     dat: Option<&Path>,
+    offset: Option<i32>,
 ) -> Result<(), String> {
     use riplika_core::disc::DiscKind;
     use riplika_core::job::{Event, Stage};
@@ -434,7 +435,8 @@ pub fn rip_game(
             }
         }
     };
-    let dumped = gamejob::dump(&device, &staging, &real.fs, &real.cancel, &mut say)
+    let read_offset = offset.unwrap_or(prefs.read_offset);
+    let dumped = gamejob::dump(&device, &staging, &real.fs, read_offset, &real.cancel, &mut say)
         .map_err(|e| e.to_string())?;
     println!();
 
@@ -453,6 +455,13 @@ pub fn rip_game(
     }
     if let Some(why) = gamejob::shortfall(&dumped) {
         println!("\n{why}");
+    }
+    if dumped.padded > 0 {
+        println!(
+            "\n{} sample(s) at the end are silence: correcting the read offset points past the\n\
+             lead-out, and this drive will not read there. The last track cannot match a datfile.",
+            dumped.padded
+        );
     }
 
     // A disc of several tracks is only right when all of them are: one track

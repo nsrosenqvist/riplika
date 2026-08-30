@@ -272,6 +272,7 @@ pub fn run_game(
     disc: riplika_core::game::GameDisc,
     root: PathBuf,
     dat_dir: Option<PathBuf>,
+    read_offset: i32,
     cancel: Cancel,
     tx: Sender<Msg>,
 ) {
@@ -288,8 +289,14 @@ pub fn run_game(
                     .map(|d| riplika_core::redump::load_all(&real.fs, &d))
                     .unwrap_or_default();
                 let staging = root.join("Unidentified").join(gamejob::suggested_stem(None, &disc));
-                let dumped =
-                    gamejob::dump(Path::new(&device), &staging, &real.fs, &cancel, &mut events)?;
+                let dumped = gamejob::dump(
+                    Path::new(&device),
+                    &staging,
+                    &real.fs,
+                    read_offset,
+                    &cancel,
+                    &mut events,
+                )?;
                 if let Some(why) = gamejob::shortfall(&dumped) {
                     events(Event::Warning(Warning::FreeReaderIncomplete { why }));
                 }

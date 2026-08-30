@@ -48,6 +48,11 @@ pub struct Dumped {
     /// Sectors the drive would not give up, which were filled with zeros.
     pub unreadable: u64,
     pub sectors: u64,
+    /// Samples of silence put where the read offset pointed past the disc.
+    ///
+    /// Only ever a handful, and only at the very end - but they are invented,
+    /// so the last track cannot match a database however good the read was.
+    pub padded: u64,
 }
 
 impl Dumped {
@@ -85,6 +90,7 @@ pub fn dump(
     device: &Path,
     stem: &Path,
     fs: &dyn Fs,
+    read_offset: i32,
     cancel: &Cancel,
     events: &mut dyn FnMut(Event),
 ) -> Result<Dumped> {
@@ -172,17 +178,33 @@ pub fn dump(
     }
 
     events(Event::Stage(Stage::Verify));
-    let total: u64 = parts.len() as u64;
-    let mut tracks = Vec::new();
-    for (index, (number, path)) in parts.into_iter().enumerate() {
-        let digests = hash::of_file(fs, &path, &mut |at, size| {
+    // Sizes are known from the layout, so the correction can be applied before
+    // anything is hashed rather than hashing everything twice.
+    let mut tracks: Vec<DumpedTrack> = parts
+        .iter()
+        .zip(&spans)
+        .map(|((number, path), span)| DumpedTrack {
+            number: *number,
+            path: path.clone(),
+            digests: Digests { crc32: 0, sha1: [0; 20], bytes: span.bytes() },
+        })
+        .collect();
+    let padded = correct_read_offset(fs, &mut tracks, read_offset)?;
+
+    let total: u64 = tracks.len() as u64;
+    for (index, track) in tracks.iter_mut().enumerate() {
+        // The correction hashes what it writes; only the untouched ones are
+        // still to do.
+        if track.digests.sha1 != [0; 20] {
+            continue;
+        }
+        track.digests = hash::of_file(fs, &track.path, &mut |at, size| {
             events(Event::Progress {
                 stage: Stage::Verify,
                 fraction: (index as f32 + at as f32 / size.max(1) as f32) / total.max(1) as f32,
                 message: None,
             });
         })?;
-        tracks.push(DumpedTrack { number, path, digests });
     }
 
     let mode = match &toc {
@@ -199,7 +221,109 @@ pub fn dump(
         })
         .transpose()?;
 
-    Ok(Dumped { tracks, cue, spans, mode, unreadable, sectors })
+    Ok(Dumped { tracks, cue, spans, mode, unreadable, sectors, padded })
+}
+
+/// Bytes in one stereo sample: two channels of sixteen bits.
+pub const SAMPLE: u64 = 4;
+
+/// Shift the audio tracks by the drive's read offset.
+///
+/// A data sector carries its own address, so a drive can sync to it exactly
+/// and a data track comes off byte-perfect. Audio has no such marker, and
+/// every drive returns it displaced by a fixed number of samples - a property
+/// of the model, not a fault. The drive measured against here is +669.
+///
+/// Uncorrected, the rip plays perfectly and is wrong: shifted by a fifteenth
+/// of a second, and matching nothing.
+///
+/// Returns how many samples had to be silence because they lie outside the
+/// audio altogether, which is what a drive that cannot read past the lead-out
+/// leaves behind.
+pub fn correct_read_offset(fs: &dyn Fs, tracks: &mut [DumpedTrack], samples: i32) -> Result<u64> {
+    // Track one of a game disc is data and stays where it is. The audio after
+    // it is one continuous run, however many files it has been cut into.
+    let first = tracks.iter().position(|t| !t.path.to_string_lossy().is_empty() && t.number > 1);
+    let Some(first) = first.filter(|_| samples != 0) else { return Ok(0) };
+    let sizes: Vec<u64> = tracks[first..].iter().map(|t| t.digests.bytes).collect();
+    let total: u64 = sizes.iter().sum();
+    let shift = i64::from(samples) * SAMPLE as i64;
+
+    // Corrected content is written beside each track and moved into place
+    // afterwards, so every read still comes from the untouched originals and
+    // no more than a chunk is held at a time.
+    let mut padded = 0u64;
+    let mut at = 0i64;
+    let mut staged = Vec::new();
+    for (index, size) in sizes.iter().enumerate() {
+        let temporary = tracks[first + index].path.with_extension("bin.shifted");
+        let mut hasher = crate::hash::Hasher::new();
+        let mut written = 0u64;
+        while written < *size {
+            let want = (crate::hash::CHUNK as u64).min(size - written) as usize;
+            let from = at + shift + written as i64;
+            let chunk = read_run(fs, &tracks[first..], &sizes, total, from, want, &mut padded)?;
+            hasher.update(&chunk);
+            if written == 0 {
+                fs.write(&temporary, &chunk)?;
+            } else {
+                fs.append(&temporary, &chunk)?;
+            }
+            written += chunk.len() as u64;
+        }
+        staged.push((temporary, hasher.finish()));
+        at += *size as i64;
+    }
+
+    for (track, (temporary, digests)) in tracks[first..].iter_mut().zip(staged) {
+        fs.rename(&temporary, &track.path)?;
+        track.digests = digests;
+    }
+    Ok(padded / SAMPLE)
+}
+
+/// Read from the audio run as though its files were one, with silence outside.
+fn read_run(
+    fs: &dyn Fs,
+    audio: &[DumpedTrack],
+    sizes: &[u64],
+    total: u64,
+    at: i64,
+    len: usize,
+    padded: &mut u64,
+) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(len);
+    let mut position = at;
+    while out.len() < len {
+        let want = len - out.len();
+        // Before the first audio sector, or past the lead-out. A drive that
+        // cannot overread has nothing to offer there, and silence is what
+        // every ripper puts in its place.
+        if position < 0 {
+            let run = (-position).min(want as i64) as usize;
+            out.resize(out.len() + run, 0);
+            *padded += run as u64;
+            position += run as i64;
+            continue;
+        }
+        if position as u64 >= total {
+            out.resize(len, 0);
+            *padded += want as u64;
+            break;
+        }
+        let mut start = 0u64;
+        for (track, size) in audio.iter().zip(sizes) {
+            if (position as u64) < start + size {
+                let within = position as u64 - start;
+                let run = want.min((size - within) as usize);
+                out.extend(fs.read_range(&track.path, within, run)?);
+                position += run as i64;
+                break;
+            }
+            start += size;
+        }
+    }
+    Ok(out)
 }
 
 /// Move a finished dump to where it belongs, under the name it turned out to
@@ -409,6 +533,7 @@ mod tests {
                 digests: Digests { crc32: 0, sha1: [0; 20], bytes: 0 },
             }],
             cue: None,
+            padded: 0,
             spans: Vec::new(),
             mode: crate::cue::DataMode::Mode1,
             unreadable,
@@ -426,6 +551,7 @@ mod tests {
                 })
                 .collect(),
             cue: Some(PathBuf::from("/games/x.cue")),
+            padded: 0,
             spans: (1..=3)
                 .map(|n| crate::cue::TrackSpan {
                     number: n,
@@ -458,6 +584,83 @@ mod tests {
         assert_eq!(d.path(), Some(Path::new("/games/x.cue")));
         assert_eq!(d.bytes(), 300, "the whole disc, not one track of it");
         assert_eq!(d.digests().len(), 3);
+    }
+
+    /// Three audio tracks whose contents are a known run, so a shift can be
+    /// checked byte for byte rather than by hash alone.
+    fn shiftable() -> (crate::host::FakeFs, Vec<DumpedTrack>) {
+        let run: Vec<u8> = (0..120u16).map(|i| i as u8).collect();
+        let fs = crate::host::FakeFs::new();
+        let mut tracks = vec![DumpedTrack {
+            number: 1,
+            path: PathBuf::from("/d/t01.bin"),
+            digests: Digests { crc32: 0, sha1: [0; 20], bytes: 40 },
+        }];
+        fs.write(Path::new("/d/t01.bin"), &run[..40]).unwrap();
+        for (i, chunk) in run[40..].chunks(40).enumerate() {
+            let path = PathBuf::from(format!("/d/t{:02}.bin", i + 2));
+            fs.write(&path, chunk).unwrap();
+            tracks.push(DumpedTrack {
+                number: i as u8 + 2,
+                path,
+                digests: Digests { crc32: 0, sha1: [0; 20], bytes: chunk.len() as u64 },
+            });
+        }
+        (fs, tracks)
+    }
+
+    #[test]
+    fn a_positive_offset_pulls_the_audio_forwards() {
+        // The whole audio run moves; the data track does not.
+        let (fs, mut tracks) = shiftable();
+        correct_read_offset(&fs, &mut tracks, 1).unwrap();
+        assert_eq!(fs.read(Path::new("/d/t01.bin")).unwrap()[..4], [0, 1, 2, 3]);
+        // Track two began at 40; one sample later it begins at 44.
+        assert_eq!(fs.read(Path::new("/d/t02.bin")).unwrap()[..4], [44, 45, 46, 47]);
+    }
+
+    #[test]
+    fn a_shift_reads_across_the_boundary_into_the_next_track() {
+        // The correction is over the audio as one run, not per file - the
+        // bytes that fill the end of one track come from the start of the
+        // next.
+        let (fs, mut tracks) = shiftable();
+        correct_read_offset(&fs, &mut tracks, 1).unwrap();
+        let second = fs.read(Path::new("/d/t02.bin")).unwrap();
+        assert_eq!(second.len(), 40);
+        assert_eq!(second[36..], [80, 81, 82, 83], "taken from track three");
+    }
+
+    #[test]
+    fn what_falls_past_the_end_becomes_silence_and_is_counted() {
+        // A drive that cannot read past the lead-out has nothing to put there,
+        // and how much was invented is worth knowing.
+        let (fs, mut tracks) = shiftable();
+        let padded = correct_read_offset(&fs, &mut tracks, 2).unwrap();
+        assert_eq!(padded, 2, "two samples of silence at the very end");
+        let last = fs.read(Path::new("/d/t03.bin")).unwrap();
+        assert_eq!(last[32..], [0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn no_offset_changes_nothing_at_all() {
+        let (fs, mut tracks) = shiftable();
+        let before: Vec<Vec<u8>> = tracks.iter().map(|t| fs.read(&t.path).unwrap()).collect();
+        assert_eq!(correct_read_offset(&fs, &mut tracks, 0).unwrap(), 0);
+        let after: Vec<Vec<u8>> = tracks.iter().map(|t| fs.read(&t.path).unwrap()).collect();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn a_disc_of_one_data_track_has_no_audio_to_shift() {
+        let fs = crate::host::FakeFs::new().with_file("/d/x.iso", "data");
+        let mut tracks = vec![DumpedTrack {
+            number: 1,
+            path: PathBuf::from("/d/x.iso"),
+            digests: Digests { crc32: 0, sha1: [0; 20], bytes: 4 },
+        }];
+        assert_eq!(correct_read_offset(&fs, &mut tracks, 669).unwrap(), 0);
+        assert_eq!(fs.read(Path::new("/d/x.iso")).unwrap(), b"data");
     }
 
     #[test]

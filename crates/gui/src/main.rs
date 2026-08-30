@@ -1776,11 +1776,12 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 else {
                     return;
                 };
-                let (root, dat_dir) = {
+                let (root, dat_dir, read_offset) = {
                     let p = app.prefs.prefs.borrow();
                     (
                         p.output_dir.clone().unwrap_or_else(|| glib::home_dir().join("Games")),
                         p.dat_dir(),
+                        p.read_offset,
                     )
                 };
                 if dat_dir.is_none() {
@@ -1790,7 +1791,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 let cancel = app.state.borrow().cancel.clone();
                 set_button_label(&app.ui.cancel_button, &tr("Cancel"));
                 app.go(Step::Progress);
-                worker::run_game(device, disc, root, dat_dir, cancel, tx.clone());
+                worker::run_game(device, disc, root, dat_dir, read_offset, cancel, tx.clone());
                 return;
             }
             if app.is_music() {

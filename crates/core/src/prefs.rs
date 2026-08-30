@@ -62,6 +62,14 @@ pub struct Preferences {
     /// What a ripped CD is written as.
     #[serde(default)]
     pub music_format: AudioFormat,
+    /// The drive's audio read offset, in samples.
+    ///
+    /// A property of the drive model, not of any disc: every drive returns
+    /// audio displaced by a fixed amount, and a rip that does not correct for
+    /// it plays perfectly and matches nothing. Zero until somebody says
+    /// otherwise, because a wrong correction is worse than none.
+    #[serde(default)]
+    pub read_offset: i32,
     /// Where Redump datfiles are kept, for naming and verifying game dumps.
     #[serde(default)]
     pub dat_dir: Option<PathBuf>,
@@ -165,6 +173,7 @@ impl Default for Preferences {
             music_quality: music_quality_default(),
             music_template: music_template_default(),
             dat_dir: None,
+            read_offset: 0,
         }
     }
 }
