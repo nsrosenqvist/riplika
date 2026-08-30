@@ -628,6 +628,23 @@ fn remaining_text(r: riplika_core::job::Remaining) -> String {
     }
 }
 
+/// What the picker's search box opens on.
+///
+/// The last search if there was one, then whatever the page settled on, and
+/// failing both the disc's own label - which is all that is known about a disc
+/// nothing could identify. An empty box is the one answer that helps nobody:
+/// the way out of an unidentified disc is to type a name, and a box opened
+/// blank does not suggest that is possible.
+fn opening_query(last_search: &str, settled_on: Option<&str>, label: Option<&str>) -> String {
+    if !last_search.trim().is_empty() {
+        return last_search.to_string();
+    }
+    if let Some(t) = settled_on {
+        return t.to_string();
+    }
+    label.map(|l| riplika_core::identify::label::parse(l).title).unwrap_or_default()
+}
+
 /// A warning, in the reader's language.
 ///
 /// The counterpart to `Warning::text`, which says the same things in English
@@ -1426,11 +1443,11 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
         row.connect_activated(move |_| {
             let query = {
                 let state = app.state.borrow();
-                if state.query.trim().is_empty() {
-                    state.selected.as_ref().map(|c| c.media.title().to_string()).unwrap_or_default()
-                } else {
-                    state.query.clone()
-                }
+                opening_query(
+                    &state.query,
+                    state.selected.as_ref().map(|c| c.media.title()),
+                    state.scan.as_ref().map(|s| s.label.as_str()),
+                )
             };
             let app_for_search = Rc::clone(&app);
             let tx = tx.clone();
@@ -2054,6 +2071,46 @@ mod locking_tests {
         // the others are forms; leaving them loses nothing
         assert_eq!(Step::Progress.tag(), "progress");
         assert_ne!(Step::Settings.tag(), Step::Progress.tag());
+    }
+}
+
+#[cfg(test)]
+mod opening_query_tests {
+    use super::*;
+
+    #[test]
+    fn a_disc_nothing_identified_opens_on_its_own_label() {
+        // The way out of an unidentified disc is to type a name and use it as
+        // given. A box opened empty does not suggest that is possible, and the
+        // label is the only thing known about the disc.
+        assert_eq!(
+            opening_query("", None, Some("PARKS_AND_RECREATION_S6D1")),
+            "Parks And Recreation"
+        );
+    }
+
+    #[test]
+    fn what_was_searched_for_last_wins() {
+        // reopening the picker resumes where it was left
+        assert_eq!(opening_query("the office", Some("Parks"), Some("LABEL")), "the office");
+    }
+
+    #[test]
+    fn otherwise_it_opens_on_what_the_page_settled_on() {
+        assert_eq!(
+            opening_query("", Some("Parks and Recreation"), Some("LABEL")),
+            "Parks and Recreation"
+        );
+        assert_eq!(
+            opening_query("   ", Some("Parks and Recreation"), None),
+            "Parks and Recreation"
+        );
+    }
+
+    #[test]
+    fn a_disc_with_no_label_at_all_opens_empty() {
+        // nothing is known, and inventing something would be worse
+        assert_eq!(opening_query("", None, None), "");
     }
 }
 

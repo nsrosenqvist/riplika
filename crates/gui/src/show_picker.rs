@@ -31,22 +31,7 @@ impl Picker {
                 .build();
             row.set_sensitive(false);
             self.list.append(&row);
-
-            // The catalogues do not have everything, and a disc they have not
-            // heard of is still a disc worth ripping. Episodes come out as
-            // "Episode 3" and can be renamed - far better than an unread disc.
-            let typed = self.search.text().trim().to_string();
-            if !typed.is_empty() {
-                let anyway = adw::ActionRow::builder()
-                    .title(tr("Use this name anyway"))
-                    .subtitle(tr("Episodes are numbered but not named"))
-                    .activatable(true)
-                    .build();
-                anyway.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
-                let on_use = std::rc::Rc::clone(&self.on_use);
-                anyway.connect_activated(move |_| on_use(typed.clone()));
-                self.list.append(&anyway);
-            }
+            self.offer_the_typed_name();
             return;
         }
         let chooser = std::rc::Rc::new(on_choose);
@@ -67,6 +52,30 @@ impl Picker {
             row.connect_activated(move |_| chooser(i));
             self.list.append(&row);
         }
+        // Results that are all wrong are as much of a dead end as no results,
+        // so the way out is offered either way.
+        self.offer_the_typed_name();
+    }
+
+    /// Offer to use what was typed, with no catalogue behind it.
+    ///
+    /// The catalogues do not have everything, and a disc they cannot name is
+    /// still a disc worth ripping: episodes come out numbered but not named,
+    /// which can be corrected, where an unread disc cannot.
+    fn offer_the_typed_name(&self) {
+        let typed = self.search.text().trim().to_string();
+        if typed.is_empty() {
+            return;
+        }
+        let row = adw::ActionRow::builder()
+            .title(tr("Use this name anyway"))
+            .subtitle(tr("Episodes are numbered but not named"))
+            .activatable(true)
+            .build();
+        row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+        let on_use = std::rc::Rc::clone(&self.on_use);
+        row.connect_activated(move |_| on_use(typed.clone()));
+        self.list.append(&row);
     }
 
     /// Say that a search is under way, where its answer will appear.
