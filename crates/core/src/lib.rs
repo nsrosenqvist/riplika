@@ -19,6 +19,7 @@
 //!    pipeline runs end to end in milliseconds without hardware or network.
 
 pub mod audio;
+pub mod cdtext;
 pub mod disc;
 pub mod format;
 pub mod host;

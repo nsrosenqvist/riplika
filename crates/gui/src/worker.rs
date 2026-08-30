@@ -231,8 +231,7 @@ pub fn run_music(
                 let scratch = riplika_core::subs::source::temp_dir("cdrip")?;
                 let report = musicjob::rip(
                     &ports,
-                    Path::new(&device),
-                    &found.toc,
+                    &musicjob::Disc::whole(Path::new(&device), &found.toc),
                     &album,
                     &settings,
                     &scratch.0,

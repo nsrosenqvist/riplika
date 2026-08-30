@@ -93,6 +93,50 @@ impl Album {
     }
 }
 
+impl Album {
+    /// Build an album from the disc's own CD-Text.
+    ///
+    /// Everything a catalogue would have added is missing - no release date,
+    /// no label, no barcode, no cover - but the names are right, which is what
+    /// decides where the files go and what they are called. Far better than
+    /// twelve files called "Track 03".
+    pub fn from_cd_text(toc: &crate::disc::Toc, text: &crate::cdtext::CdText) -> Album {
+        Album {
+            title: text.album.clone().unwrap_or_default(),
+            artist: text.performer.clone().unwrap_or_default(),
+            tracks: toc
+                .audio_tracks()
+                .map(|t| AlbumTrack {
+                    number: u32::from(t.number),
+                    title: text
+                        .title_of(t.number)
+                        .map(str::to_string)
+                        // A disc that names most of its tracks and not one of
+                        // them still beats nothing; the gap gets a number.
+                        .unwrap_or_else(|| format!("Track {:02}", t.number)),
+                    artist: text
+                        .tracks
+                        .iter()
+                        .find(|x| x.number == t.number)
+                        .and_then(|x| x.performer.clone())
+                        .filter(|a| Some(a) != text.performer.as_ref()),
+                    duration: toc.track_duration(t.number),
+                })
+                .collect(),
+            date: None,
+            country: None,
+            barcode: None,
+            label: None,
+            catalogue_number: None,
+            disc: 1,
+            disc_count: 1,
+            disc_title: None,
+            release_id: String::new(),
+            has_cover_art: false,
+        }
+    }
+}
+
 /// A source of album details, looked up by what the disc says it is.
 pub trait MusicCatalogue: Send + Sync {
     fn name(&self) -> &'static str;
@@ -426,6 +470,74 @@ mod tests {
         let albums = mb.by_disc_id(DISC).unwrap();
         assert_eq!(albums[0].title, "Roots");
         assert!(http.requested()[0].contains(DISC));
+    }
+
+    #[test]
+    fn a_disc_that_names_itself_can_be_filed_without_asking_anybody() {
+        use crate::cdtext::{CdText, TrackText};
+        use crate::disc::{Toc, Track};
+
+        let toc = Toc {
+            tracks: vec![
+                Track { number: 1, start: 0, is_data: false },
+                Track { number: 2, start: 15_000, is_data: false },
+            ],
+            leadout: 30_000,
+        };
+        let text = CdText {
+            album: Some("Roots".into()),
+            performer: Some("Shawn McDonald".into()),
+            tracks: vec![
+                TrackText {
+                    number: 1,
+                    title: Some("Clarity".into()),
+                    performer: Some("Shawn McDonald".into()),
+                },
+                TrackText {
+                    number: 2,
+                    title: Some("Captivated".into()),
+                    performer: Some("Shawn McDonald".into()),
+                },
+            ],
+        };
+        let a = Album::from_cd_text(&toc, &text);
+        assert_eq!(a.title, "Roots");
+        assert_eq!(a.artist, "Shawn McDonald");
+        assert_eq!(a.tracks.len(), 2);
+        assert_eq!(a.tracks[0].title, "Clarity");
+        // Lengths come off the table of contents, since CD-Text has none.
+        assert_eq!(a.tracks[0].duration, Some(200_000));
+        // A performer matching the album's is not repeated onto the track, so
+        // this does not look like a compilation.
+        assert!(!a.is_compilation());
+        assert!(!a.has_cover_art);
+        assert_eq!(a.date, None);
+        assert_eq!(a.release_id, "");
+    }
+
+    #[test]
+    fn a_track_the_disc_forgot_to_name_still_gets_a_name() {
+        use crate::cdtext::{CdText, TrackText};
+        use crate::disc::{Toc, Track};
+
+        let toc = Toc {
+            tracks: vec![
+                Track { number: 1, start: 0, is_data: false },
+                Track { number: 2, start: 15_000, is_data: false },
+            ],
+            leadout: 30_000,
+        };
+        let text = CdText {
+            album: Some("Odds and Ends".into()),
+            performer: Some("Someone".into()),
+            tracks: vec![TrackText {
+                number: 1,
+                title: Some("The Only Named One".into()),
+                performer: None,
+            }],
+        };
+        let a = Album::from_cd_text(&toc, &text);
+        assert_eq!(a.tracks[1].title, "Track 02");
     }
 
     #[test]

@@ -146,6 +146,15 @@ pub fn disc(drive: Option<&str>) -> Result<(), String> {
 
     let DiscKind::Audio(toc) = &kind else { return Ok(()) };
     println!("disc id   {}", toc.musicbrainz_id());
+    match riplika_core::cdtext::read(Path::new(&d.device)) {
+        Some(text) => println!(
+            "cd-text   {} - {}, {} track(s) named",
+            text.performer.as_deref().unwrap_or("?"),
+            text.album.as_deref().unwrap_or("?"),
+            text.tracks.iter().filter(|t| t.title.is_some()).count()
+        ),
+        None => println!("cd-text   none"),
+    }
 
     let mb = MusicBrainz::new(&real.http);
     let albums = match mb.by_disc_id(&toc.musicbrainz_id()) {
@@ -187,6 +196,7 @@ pub fn rip_cd(
     out: Option<PathBuf>,
     only: Option<u8>,
     format: Option<&str>,
+    from_disc: bool,
 ) -> Result<(), String> {
     use riplika_core::job::Event;
     use riplika_core::musicjob;
@@ -203,9 +213,16 @@ pub fn rip_cd(
             println!("{}", w.text());
         }
     };
-    let found =
-        musicjob::identify(&device, &real.http, &mut complain).map_err(|e| e.to_string())?;
-    let mut album = match found.albums.into_iter().next() {
+    let found = if from_disc {
+        musicjob::identify_from_disc(&device, &mut complain)
+    } else {
+        musicjob::identify(&device, &real.http, &mut complain)
+    }
+    .map_err(|e| e.to_string())?;
+    if found.from_cd_text {
+        println!("(named from the disc itself; no date, label or cover art to be had)");
+    }
+    let album = match found.albums.first().cloned() {
         Some(a) => a,
         None if found.lookup_failed.is_some() => {
             return Err(
@@ -216,15 +233,8 @@ pub fn rip_cd(
     };
     println!("{} - {}\n", album.artist, album.title);
 
-    // `--track` is for trying it out without sitting through a whole disc, and
-    // the pipeline rips what the listing holds - so the listing is what gets
-    // narrowed, rather than adding a special case to the pipeline.
-    if let Some(n) = only {
-        album.tracks.retain(|t| t.number == u32::from(n));
-        if album.tracks.is_empty() {
-            return Err(format!("track {n} is not on this disc"));
-        }
-    }
+    // `--track` is for trying it out without sitting through a whole disc.
+    let selection = only.map(|n| vec![n]);
 
     let mut settings = prefs.to_settings(
         out.or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Music")))
@@ -254,9 +264,15 @@ pub fn rip_cd(
         _ => {}
     };
     let scratch = riplika_core::subs::source::temp_dir("cdrip").map_err(|e| e.to_string())?;
-    let report =
-        musicjob::rip(&ports, &device, &found.toc, &album, &settings, &scratch.0, &mut say)
-            .map_err(|e| e.to_string())?;
+    let report = musicjob::rip(
+        &ports,
+        &musicjob::Disc { device: &device, toc: &found.toc, tracks: selection.as_deref() },
+        &album,
+        &settings,
+        &scratch.0,
+        &mut say,
+    )
+    .map_err(|e| e.to_string())?;
     println!("\n{}", settings.output_dir.display());
     if !report.is_complete() {
         return Err(format!("{} track(s) could not be written", report.skipped.len()));

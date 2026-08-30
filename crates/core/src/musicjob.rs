@@ -24,6 +24,24 @@ pub struct Ports<'a> {
     pub cancel: Cancel,
 }
 
+/// The disc to read, and how much of it.
+pub struct Disc<'a> {
+    pub device: &'a Path,
+    pub toc: &'a Toc,
+    /// Which tracks to take, by number. `None` takes all of them.
+    ///
+    /// A selection, not a smaller disc: the table of contents has to stay
+    /// whole because a track's length is the distance to the next one, and the
+    /// listing has to stay whole because a track is "6 of 12" either way.
+    pub tracks: Option<&'a [u8]>,
+}
+
+impl<'a> Disc<'a> {
+    pub fn whole(device: &'a Path, toc: &'a Toc) -> Self {
+        Disc { device, toc, tracks: None }
+    }
+}
+
 /// What the disc turned out to be.
 #[derive(Debug, Clone)]
 pub struct Found {
@@ -31,6 +49,12 @@ pub struct Found {
     /// Usually exactly one. More than one means the same pressing was issued
     /// more than once, and somebody has to say which.
     pub albums: Vec<Album>,
+    /// The names came off the disc itself rather than from a catalogue.
+    ///
+    /// Worth saying: CD-Text carries names and nothing else, so there is no
+    /// release date, no label and no cover art to be had, and a rip made this
+    /// way is not missing them by accident.
+    pub from_cd_text: bool,
     /// Why the catalogue could not be asked, when it could not be.
     ///
     /// An empty `albums` means one of two entirely different things - the
@@ -48,12 +72,44 @@ impl Found {
     }
 }
 
+/// Read the disc and take its word for what it is, asking nobody.
+///
+/// What is left when there is no network: CD-Text names the album, the artist
+/// and the tracks, and nothing else.
+pub fn identify_from_disc(device: &Path, events: &mut dyn FnMut(Event)) -> Result<Found> {
+    events(Event::Stage(Stage::Scan));
+    let toc = read_toc(device)?;
+    events(Event::Stage(Stage::Identify));
+    Ok(from_disc(device, toc).unwrap_or_else(|toc| Found {
+        toc,
+        albums: Vec::new(),
+        lookup_failed: None,
+        from_cd_text: false,
+    }))
+}
+
+fn read_toc(device: &Path) -> Result<Toc> {
+    match crate::disc::identify(device) {
+        DiscKind::Audio(toc) => Ok(toc),
+        _ => Err(Error(format!("{} is not holding a music CD", device.display()))),
+    }
+}
+
+/// What the disc says about itself, or the table of contents back unused.
+fn from_disc(device: &Path, toc: Toc) -> std::result::Result<Found, Toc> {
+    match crate::cdtext::read(device) {
+        Some(text) => {
+            let album = Album::from_cd_text(&toc, &text);
+            Ok(Found { toc, albums: vec![album], lookup_failed: None, from_cd_text: true })
+        }
+        None => Err(toc),
+    }
+}
+
 /// Read the disc and ask what it is.
 pub fn identify(device: &Path, http: &dyn Http, events: &mut dyn FnMut(Event)) -> Result<Found> {
     events(Event::Stage(Stage::Scan));
-    let DiscKind::Audio(toc) = crate::disc::identify(device) else {
-        return Err(Error(format!("{} is not holding a music CD", device.display())));
-    };
+    let toc = read_toc(device)?;
 
     events(Event::Stage(Stage::Identify));
     // Not being able to name the album is no reason to refuse the disc, so a
@@ -66,7 +122,15 @@ pub fn identify(device: &Path, http: &dyn Http, events: &mut dyn FnMut(Event)) -
             (Vec::new(), Some(why.to_string()))
         }
     };
-    Ok(Found { toc, albums, lookup_failed })
+    // Nothing from the catalogue - either it had never heard of the disc, or it
+    // never answered. Either way the disc may still say what it is.
+    if albums.is_empty() {
+        match from_disc(device, toc) {
+            Ok(found) => return Ok(Found { lookup_failed, ..found }),
+            Err(toc) => return Ok(Found { toc, albums, lookup_failed, from_cd_text: false }),
+        }
+    }
+    Ok(Found { toc, albums, lookup_failed, from_cd_text: false })
 }
 
 /// Rip, encode and tag every track of `album`.
@@ -78,8 +142,7 @@ pub fn identify(device: &Path, http: &dyn Http, events: &mut dyn FnMut(Event)) -
 /// it is what lets this run against a fake filesystem with no disc.
 pub fn rip(
     ports: &Ports,
-    device: &Path,
-    toc: &Toc,
+    disc: &Disc,
     album: &Album,
     settings: &JobSettings,
     scratch: &Path,
@@ -91,8 +154,10 @@ pub fn rip(
 
     // Tracks the disc has that the listing knows about. A data track at the end
     // of an enhanced CD is not music and is not in the listing either.
-    let wanted: Vec<_> = toc
+    let wanted: Vec<_> = disc
+        .toc
         .audio_tracks()
+        .filter(|t| disc.tracks.is_none_or(|w| w.contains(&t.number)))
         .filter_map(|t| {
             album.tracks.iter().find(|x| x.number == u32::from(t.number)).map(|m| (t.number, m))
         })
@@ -124,7 +189,7 @@ pub fn rip(
             message: Some(meta.title.clone()),
         });
         let wav = scratch.join(format!("track{number:02}.wav"));
-        match read_one(&cd, ports, device, toc, *number, &wav) {
+        match read_one(&cd, ports, disc, *number, &wav) {
             Ok(()) => {}
             // One unreadable track should not cost the other eleven.
             Err(e) => {
@@ -190,17 +255,10 @@ pub fn rip(
     Ok(report)
 }
 
-fn read_one(
-    cd: &CdAudio,
-    ports: &Ports,
-    device: &Path,
-    toc: &Toc,
-    number: u8,
-    wav: &Path,
-) -> Result<()> {
-    cd.rip_track(device, number, wav)?;
+fn read_one(cd: &CdAudio, ports: &Ports, disc: &Disc, number: u8, wav: &Path) -> Result<()> {
+    cd.rip_track(disc.device, number, wav)?;
     let size = ports.fs.size(wav)?;
-    cd.check_size(toc, number, size)
+    cd.check_size(disc.toc, number, size)
 }
 
 /// Fetch the front cover once for the album, not once per track.
@@ -287,8 +345,7 @@ mod tests {
         let mut events = |_: Event| {};
         rip(
             &ports,
-            Path::new("/dev/riplika-no-such-device"),
-            &toc(),
+            &Disc::whole(Path::new("/dev/riplika-no-such-device"), &toc()),
             &album(),
             &settings("/music"),
             Path::new("/scratch"),
@@ -336,8 +393,7 @@ mod tests {
         one.tracks.truncate(1);
         rip(
             &ports,
-            Path::new("/dev/riplika-no-such-device"),
-            &toc(),
+            &Disc::whole(Path::new("/dev/riplika-no-such-device"), &toc()),
             &one,
             &settings("/music"),
             Path::new("/scratch"),
@@ -388,8 +444,7 @@ mod tests {
         let mut events = |_: Event| {};
         let report = rip(
             &ports,
-            Path::new("/dev/riplika-no-such-device"),
-            &t,
+            &Disc::whole(Path::new("/dev/riplika-no-such-device"), &t),
             &album(),
             &settings("/music"),
             Path::new("/scratch"),
@@ -410,8 +465,7 @@ mod tests {
         let mut events = |_: Event| {};
         let r = rip(
             &ports,
-            Path::new("/dev/riplika-no-such-device"),
-            &toc(),
+            &Disc::whole(Path::new("/dev/riplika-no-such-device"), &toc()),
             &album(),
             &settings("/music"),
             Path::new("/scratch"),
@@ -422,15 +476,48 @@ mod tests {
     }
 
     #[test]
+    fn a_selection_takes_some_tracks_without_pretending_the_disc_is_smaller() {
+        // Narrowing the disc instead would make track two's length run to the
+        // lead-out, and tag it as track two of one.
+        let fs = FakeFs::new()
+            .with_file("/scratch/track01.wav", &whole_track())
+            .with_file("/scratch/track02.wav", &whole_track());
+        let runner = FakeRunner::new();
+        let http = FakeHttp::new();
+        let ports = Ports { runner: &runner, fs: &fs, http: &http, cancel: Cancel::new() };
+        let mut events = |_: Event| {};
+        let report = rip(
+            &ports,
+            &Disc {
+                device: Path::new("/dev/riplika-no-such-device"),
+                toc: &toc(),
+                tracks: Some(&[2]),
+            },
+            &album(),
+            &settings("/music"),
+            Path::new("/scratch"),
+            &mut events,
+        )
+        .unwrap();
+        assert_eq!(report.produced.len(), 1);
+        assert_eq!(report.produced[0].item.title, "Captivated");
+        // The total in the tags comes from the listing, which is still whole.
+        let tags = runner.calls().last().unwrap().args.join(" ");
+        assert!(tags.contains("TOTALTRACKS=2"), "{tags}");
+    }
+
+    #[test]
     fn a_catalogue_that_could_not_be_reached_is_not_the_same_as_an_unknown_disc() {
         // Both come back with no album, and telling somebody "no release
         // matches this disc" when the request never went out sends them
         // looking for a fault in a disc that has none.
-        let asked = Found { toc: toc(), albums: Vec::new(), lookup_failed: None };
+        let asked =
+            Found { toc: toc(), albums: Vec::new(), lookup_failed: None, from_cd_text: false };
         let never = Found {
             toc: toc(),
             albums: Vec::new(),
             lookup_failed: Some("503 rate limited".into()),
+            from_cd_text: false,
         };
         assert!(asked.is_unknown());
         assert!(!never.is_unknown());
@@ -447,8 +534,7 @@ mod tests {
         empty.tracks.clear();
         let err = rip(
             &ports,
-            Path::new("/dev/riplika-no-such-device"),
-            &toc(),
+            &Disc::whole(Path::new("/dev/riplika-no-such-device"), &toc()),
             &empty,
             &settings("/music"),
             Path::new("/scratch"),

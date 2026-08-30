@@ -1211,6 +1211,12 @@ impl App {
                 if !detail.is_empty() {
                     lines.push(detail);
                 }
+                // Worth saying where the names came from: CD-Text carries names
+                // and nothing else, so a rip made from it has no release date,
+                // no label and no cover, and is not missing them by accident.
+                if self.state.borrow().music.as_ref().is_some_and(|m| m.from_cd_text) {
+                    lines.push(tr("Named by the disc itself; no cover art or release details"));
+                }
                 self.ui.chosen_row.set_subtitle(&lines.join("\n"));
                 self.ui.identify_next.set_sensitive(!self.is_busy());
             }
