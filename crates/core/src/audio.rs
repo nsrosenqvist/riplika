@@ -1,0 +1,476 @@
+//! Writing a ripped CD out.
+//!
+//! Sibling of [`format`](crate::format) rather than part of it. That trait
+//! answers about muxers, subtitle codecs and where the index goes, and a music
+//! file has none of those; what the two share is the shape - the format answers
+//! for itself, so the planner never branches on which one it is.
+//!
+//! The tag vocabularies do not overlap, which is the main reason this exists.
+//! Vorbis comments are uppercase and spell out `TRACKNUMBER` and `TOTALTRACKS`
+//! as separate fields; ID3 wants lowercase `track` with both numbers in one.
+//! Writing either set into the other produces a file that tags without
+//! complaint and shows up untitled in a library.
+
+use crate::host::Command;
+use crate::identify::music::{Album, AlbumTrack};
+use crate::model::Quality;
+use crate::naming::sanitize;
+use crate::prefs::{AudioFormat, FLAC_COMPRESSION};
+use std::path::{Path, PathBuf};
+
+pub trait AudioTarget: Send + Sync {
+    fn extension(&self) -> &'static str;
+
+    /// What ffmpeg calls the encoder.
+    fn encoder(&self) -> &'static str;
+
+    /// What ffmpeg calls the muxer.
+    ///
+    /// Said outright rather than inferred from the name, because the file is
+    /// written to a `.part` path while it is being made and ffmpeg would have
+    /// nothing to infer from - the same trap the video side fell into.
+    fn muxer(&self) -> &'static str;
+
+    /// Encoder settings for a tier.
+    fn quality_args(&self, quality: Quality) -> Vec<String>;
+
+    /// What this format calls each piece of metadata.
+    fn tags(&self, album: &Album, track: &AlbumTrack) -> Vec<(String, String)>;
+}
+
+pub struct Flac;
+
+impl AudioTarget for Flac {
+    fn extension(&self) -> &'static str {
+        "flac"
+    }
+    fn encoder(&self) -> &'static str {
+        "flac"
+    }
+    fn muxer(&self) -> &'static str {
+        "flac"
+    }
+
+    /// The tier is deliberately ignored: FLAC is lossless, so every level
+    /// decodes to the same audio and only the size moves. The settings screen
+    /// switches the chooser off for the same reason.
+    fn quality_args(&self, _quality: Quality) -> Vec<String> {
+        vec!["-compression_level".into(), FLAC_COMPRESSION.to_string()]
+    }
+
+    fn tags(&self, album: &Album, track: &AlbumTrack) -> Vec<(String, String)> {
+        let mut t = Tagging::new();
+        t.set("TITLE", Some(track.title.clone()));
+        t.set("ARTIST", Some(track.artist.clone().unwrap_or_else(|| album.artist.clone())));
+        t.set("ALBUM", Some(album.title.clone()));
+        t.set("ALBUMARTIST", Some(album.artist.clone()));
+        t.set("DATE", album.date.clone());
+        t.set("TRACKNUMBER", Some(track.number.to_string()));
+        t.set("TOTALTRACKS", Some(album.tracks.len().to_string()));
+        if album.is_multi_disc() {
+            t.set("DISCNUMBER", Some(album.disc.to_string()));
+            t.set("TOTALDISCS", Some(album.disc_count.to_string()));
+            t.set("DISCSUBTITLE", album.disc_title.clone());
+        }
+        t.set("LABEL", album.label.clone());
+        t.set("CATALOGNUMBER", album.catalogue_number.clone());
+        t.set("BARCODE", album.barcode.clone());
+        t.set("MUSICBRAINZ_ALBUMID", non_empty(&album.release_id));
+        if album.is_compilation() {
+            t.set("COMPILATION", Some("1".into()));
+        }
+        t.done()
+    }
+}
+
+pub struct Mp3;
+
+impl AudioTarget for Mp3 {
+    fn extension(&self) -> &'static str {
+        "mp3"
+    }
+    fn encoder(&self) -> &'static str {
+        "libmp3lame"
+    }
+    fn muxer(&self) -> &'static str {
+        "mp3"
+    }
+
+    fn quality_args(&self, quality: Quality) -> Vec<String> {
+        vec!["-q:a".into(), quality.lame_vbr().to_string()]
+    }
+
+    fn tags(&self, album: &Album, track: &AlbumTrack) -> Vec<(String, String)> {
+        let mut t = Tagging::new();
+        t.set("title", Some(track.title.clone()));
+        t.set("artist", Some(track.artist.clone().unwrap_or_else(|| album.artist.clone())));
+        t.set("album", Some(album.title.clone()));
+        t.set("album_artist", Some(album.artist.clone()));
+        t.set("date", album.date.clone());
+        // ID3 puts the total in the same field, separated by a slash, rather
+        // than in one of its own.
+        t.set("track", Some(format!("{}/{}", track.number, album.tracks.len())));
+        if album.is_multi_disc() {
+            t.set("disc", Some(format!("{}/{}", album.disc, album.disc_count)));
+        }
+        // ffmpeg maps this to TPUB; the two below have no frame of their own
+        // and become TXXX, which is where every other tagger puts them too.
+        t.set("publisher", album.label.clone());
+        t.set("CATALOGNUMBER", album.catalogue_number.clone());
+        t.set("BARCODE", album.barcode.clone());
+        t.set("MusicBrainz Album Id", non_empty(&album.release_id));
+        if album.is_compilation() {
+            // Becomes TCMP, which is what keeps a compilation from splitting
+            // into one album per track artist.
+            t.set("compilation", Some("1".into()));
+        }
+        t.done()
+    }
+}
+
+impl AudioFormat {
+    pub fn target(self) -> &'static dyn AudioTarget {
+        match self {
+            AudioFormat::Flac => &Flac,
+            AudioFormat::Mp3 => &Mp3,
+        }
+    }
+}
+
+/// Collects tags, dropping the ones there is nothing to say for.
+///
+/// An empty tag is worse than a missing one: it displaces whatever the player
+/// would otherwise have fallen back to, so a blank ALBUMARTIST hides the
+/// artist rather than leaving it alone.
+struct Tagging(Vec<(String, String)>);
+
+impl Tagging {
+    fn new() -> Self {
+        Tagging(Vec::new())
+    }
+
+    fn set(&mut self, key: &str, value: Option<String>) {
+        if let Some(v) = value.filter(|v| !v.trim().is_empty()) {
+            self.0.push((key.to_string(), v));
+        }
+    }
+
+    fn done(self) -> Vec<(String, String)> {
+        self.0
+    }
+}
+
+fn non_empty(s: &str) -> Option<String> {
+    if s.trim().is_empty() { None } else { Some(s.to_string()) }
+}
+
+/// Turn one ripped track into its finished file.
+///
+/// The cover is attached as a stream rather than written afterwards, and it
+/// carries `comment="Cover (front)"` because without it ffmpeg files the
+/// picture as type 0, "Other" - embedded, and invisible to every player that
+/// asks for the front cover specifically.
+pub fn encode_command(
+    target: &dyn AudioTarget,
+    quality: Quality,
+    source: &Path,
+    cover: Option<&Path>,
+    dest: &Path,
+    album: &Album,
+    track: &AlbumTrack,
+) -> Command {
+    let mut cmd = Command::new("ffmpeg").args(["-v", "error", "-y", "-i"]).path(source);
+    if let Some(art) = cover {
+        cmd = cmd.arg("-i").path(art);
+    }
+    cmd = cmd.args(["-map", "0:a"]);
+    if cover.is_some() {
+        cmd = cmd.args([
+            "-map",
+            "1:v",
+            "-c:v",
+            "copy",
+            "-disposition:v",
+            "attached_pic",
+            "-metadata:s:v",
+            "comment=Cover (front)",
+        ]);
+    }
+    cmd = cmd.args(["-c:a", target.encoder()]).args(target.quality_args(quality));
+    for (key, value) in target.tags(album, track) {
+        cmd = cmd.args(["-metadata", &format!("{key}={value}")]);
+    }
+    cmd.args(["-f", target.muxer()]).path(dest)
+}
+
+/// Where a track goes.
+///
+/// `Artist/Album (Year)/01 - Title`, which is what Jellyfin reads without
+/// being told anything. The year keeps two pressings of one title apart, and a
+/// set with more than one disc gets a folder per disc so the track numbers do
+/// not collide.
+pub fn track_path(root: &Path, album: &Album, track: &AlbumTrack, extension: &str) -> PathBuf {
+    let mut path = root.join(sanitize(&album.artist)).join(sanitize(&album_folder(album)));
+    if album.is_multi_disc() {
+        path = path.join(sanitize(&format!("Disc {}", album.disc)));
+    }
+    path.join(sanitize(&file_name(album, track, extension)))
+}
+
+fn album_folder(album: &Album) -> String {
+    match album.year() {
+        Some(year) => format!("{} ({year})", album.title),
+        None => album.title.clone(),
+    }
+}
+
+fn file_name(album: &Album, track: &AlbumTrack, extension: &str) -> String {
+    // On a compilation the track artist is the useful one and differs line by
+    // line, so it belongs in the name; on a single-artist album it would be
+    // the same words repeated on every file.
+    match &track.artist {
+        Some(artist) if album.is_compilation() => {
+            format!("{:02} - {} - {}.{extension}", track.number, artist, track.title)
+        }
+        _ => format!("{:02} - {}.{extension}", track.number, track.title),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(number: u32, title: &str, artist: Option<&str>) -> AlbumTrack {
+        AlbumTrack {
+            number,
+            title: title.into(),
+            artist: artist.map(str::to_string),
+            duration: Some(205_000),
+        }
+    }
+
+    fn album() -> Album {
+        Album {
+            title: "Roots".into(),
+            artist: "Shawn McDonald".into(),
+            tracks: vec![track(1, "Clarity", None), track(8, "Slow Down", None)],
+            date: Some("2008-03-11".into()),
+            country: Some("US".into()),
+            barcode: Some("094639104222".into()),
+            label: Some("Sparrow Records".into()),
+            catalogue_number: Some("SPD91042".into()),
+            disc: 1,
+            disc_count: 1,
+            disc_title: None,
+            release_id: "43b353ce".into(),
+            has_cover_art: true,
+        }
+    }
+
+    fn tag<'a>(tags: &'a [(String, String)], key: &str) -> Option<&'a str> {
+        tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn flac_is_tagged_in_the_vorbis_vocabulary() {
+        let a = album();
+        let t = Flac.tags(&a, &a.tracks[1]);
+        assert_eq!(tag(&t, "TITLE"), Some("Slow Down"));
+        assert_eq!(tag(&t, "ALBUMARTIST"), Some("Shawn McDonald"));
+        // Vorbis keeps the total in a field of its own.
+        assert_eq!(tag(&t, "TRACKNUMBER"), Some("8"));
+        assert_eq!(tag(&t, "TOTALTRACKS"), Some("2"));
+        assert_eq!(tag(&t, "CATALOGNUMBER"), Some("SPD91042"));
+        assert_eq!(tag(&t, "MUSICBRAINZ_ALBUMID"), Some("43b353ce"));
+    }
+
+    #[test]
+    fn mp3_is_tagged_in_the_id3_vocabulary_instead() {
+        let a = album();
+        let t = Mp3.tags(&a, &a.tracks[1]);
+        assert_eq!(tag(&t, "title"), Some("Slow Down"));
+        assert_eq!(tag(&t, "album_artist"), Some("Shawn McDonald"));
+        // ID3 puts both numbers in the one field.
+        assert_eq!(tag(&t, "track"), Some("8/2"));
+        assert_eq!(tag(&t, "TRACKNUMBER"), None, "that is the other format's word");
+        // ffmpeg turns this one into TPUB.
+        assert_eq!(tag(&t, "publisher"), Some("Sparrow Records"));
+    }
+
+    #[test]
+    fn nothing_worth_saying_means_no_tag_rather_than_an_empty_one() {
+        // An empty tag displaces the fallback a player would otherwise use, so
+        // a blank ALBUMARTIST hides the artist instead of leaving it alone.
+        let mut a = album();
+        a.label = None;
+        a.catalogue_number = Some("   ".into());
+        a.barcode = Some(String::new());
+        let t = Flac.tags(&a, &a.tracks[0]);
+        for absent in ["LABEL", "CATALOGNUMBER", "BARCODE"] {
+            assert_eq!(tag(&t, absent), None, "{absent} should not be written blank");
+        }
+    }
+
+    #[test]
+    fn a_single_disc_release_is_not_told_it_is_disc_one_of_one() {
+        let a = album();
+        assert_eq!(tag(&Flac.tags(&a, &a.tracks[0]), "DISCNUMBER"), None);
+        assert_eq!(tag(&Mp3.tags(&a, &a.tracks[0]), "disc"), None);
+    }
+
+    #[test]
+    fn a_box_set_numbers_its_discs_in_both_vocabularies() {
+        let mut a = album();
+        a.disc = 2;
+        a.disc_count = 4;
+        a.disc_title = Some("Late Years".into());
+        assert_eq!(tag(&Flac.tags(&a, &a.tracks[0]), "DISCNUMBER"), Some("2"));
+        assert_eq!(tag(&Flac.tags(&a, &a.tracks[0]), "TOTALDISCS"), Some("4"));
+        assert_eq!(tag(&Flac.tags(&a, &a.tracks[0]), "DISCSUBTITLE"), Some("Late Years"));
+        assert_eq!(tag(&Mp3.tags(&a, &a.tracks[0]), "disc"), Some("2/4"));
+    }
+
+    #[test]
+    fn a_compilation_is_flagged_so_it_does_not_split_into_one_album_per_artist() {
+        let mut a = album();
+        a.artist = "Various Artists".into();
+        a.tracks = vec![track(1, "One", Some("A Band")), track(2, "Two", Some("Another"))];
+        assert_eq!(tag(&Flac.tags(&a, &a.tracks[0]), "COMPILATION"), Some("1"));
+        assert_eq!(tag(&Mp3.tags(&a, &a.tracks[0]), "compilation"), Some("1"));
+        // The track's own artist is the useful one; the album artist keeps the
+        // record together.
+        assert_eq!(tag(&Flac.tags(&a, &a.tracks[0]), "ARTIST"), Some("A Band"));
+        assert_eq!(tag(&Flac.tags(&a, &a.tracks[0]), "ALBUMARTIST"), Some("Various Artists"));
+    }
+
+    #[test]
+    fn a_track_with_no_artist_of_its_own_takes_the_albums() {
+        let a = album();
+        assert_eq!(tag(&Flac.tags(&a, &a.tracks[0]), "ARTIST"), Some("Shawn McDonald"));
+    }
+
+    #[test]
+    fn flac_ignores_the_tier_and_mp3_does_not() {
+        assert_eq!(Flac.quality_args(Quality::High), Flac.quality_args(Quality::Low));
+        assert_ne!(Mp3.quality_args(Quality::High), Mp3.quality_args(Quality::Low));
+        assert_eq!(Mp3.quality_args(Quality::Medium), vec!["-q:a", "2"]);
+    }
+
+    #[test]
+    fn the_encode_states_its_format_because_the_file_is_written_to_a_part_path() {
+        let a = album();
+        let cmd = encode_command(
+            &Flac,
+            Quality::High,
+            Path::new("/tmp/t.wav"),
+            None,
+            Path::new("/tmp/t.part"),
+            &a,
+            &a.tracks[0],
+        );
+        assert_eq!(cmd.value_of("-f"), Some("flac"));
+        assert_eq!(cmd.value_of("-c:a"), Some("flac"));
+        assert_eq!(cmd.args.last().unwrap(), "/tmp/t.part");
+    }
+
+    #[test]
+    fn the_cover_is_filed_as_a_front_cover_and_not_as_other() {
+        // Without the comment ffmpeg writes picture type 0, "Other": embedded,
+        // and invisible to every player that asks for the front cover.
+        let a = album();
+        let cmd = encode_command(
+            &Flac,
+            Quality::High,
+            Path::new("/tmp/t.wav"),
+            Some(Path::new("/tmp/cover.jpg")),
+            Path::new("/tmp/t.part"),
+            &a,
+            &a.tracks[0],
+        );
+        assert!(cmd.has("attached_pic"));
+        assert!(cmd.args.iter().any(|a| a == "comment=Cover (front)"), "{:?}", cmd.args);
+    }
+
+    #[test]
+    fn with_no_cover_there_is_no_second_input_to_map() {
+        let a = album();
+        let cmd = encode_command(
+            &Flac,
+            Quality::High,
+            Path::new("/tmp/t.wav"),
+            None,
+            Path::new("/tmp/t.part"),
+            &a,
+            &a.tracks[0],
+        );
+        assert!(!cmd.has("attached_pic"));
+        assert!(!cmd.args.iter().any(|a| a == "1:v"), "{:?}", cmd.args);
+    }
+
+    #[test]
+    fn each_tag_is_passed_as_its_own_metadata_argument() {
+        let a = album();
+        let cmd = encode_command(
+            &Mp3,
+            Quality::High,
+            Path::new("/tmp/t.wav"),
+            None,
+            Path::new("/tmp/t.part"),
+            &a,
+            &a.tracks[1],
+        );
+        assert!(cmd.args.iter().any(|x| x == "track=8/2"), "{:?}", cmd.args);
+    }
+
+    #[test]
+    fn a_track_lands_where_a_library_will_look_for_it() {
+        let a = album();
+        assert_eq!(
+            track_path(Path::new("/music"), &a, &a.tracks[1], "flac"),
+            Path::new("/music/Shawn McDonald/Roots (2008)/08 - Slow Down.flac")
+        );
+    }
+
+    #[test]
+    fn a_box_set_gets_a_folder_per_disc_so_track_numbers_do_not_collide() {
+        let mut a = album();
+        a.disc = 2;
+        a.disc_count = 3;
+        assert_eq!(
+            track_path(Path::new("/music"), &a, &a.tracks[0], "flac"),
+            Path::new("/music/Shawn McDonald/Roots (2008)/Disc 2/01 - Clarity.flac")
+        );
+    }
+
+    #[test]
+    fn a_compilation_names_the_artist_on_each_file() {
+        let mut a = album();
+        a.artist = "Various Artists".into();
+        a.tracks = vec![track(1, "One", Some("A Band"))];
+        assert_eq!(
+            track_path(Path::new("/music"), &a, &a.tracks[0], "mp3"),
+            Path::new("/music/Various Artists/Roots (2008)/01 - A Band - One.mp3")
+        );
+    }
+
+    #[test]
+    fn characters_smb_refuses_do_not_reach_the_filename() {
+        let mut a = album();
+        a.title = "AC/DC: Live?".into();
+        a.tracks = vec![track(1, "Who Made Who?", None)];
+        let p = track_path(Path::new("/music"), &a, &a.tracks[0], "flac");
+        let text = p.to_string_lossy();
+        // The colon, slash and question mark are gone from the names - but the
+        // separators between them are still separators.
+        assert!(!text.trim_start_matches("/music/").contains(':'), "{text}");
+        assert!(!text.contains('?'), "{text}");
+    }
+
+    #[test]
+    fn an_album_with_no_date_is_not_filed_under_an_empty_year() {
+        let mut a = album();
+        a.date = None;
+        let p = track_path(Path::new("/music"), &a, &a.tracks[0], "flac");
+        assert!(p.to_string_lossy().contains("/Roots/"), "{}", p.display());
+    }
+}

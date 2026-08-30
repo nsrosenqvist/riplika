@@ -181,6 +181,113 @@ pub fn disc(drive: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
+/// Rip a music CD.
+///
+/// Each track is read whole, checked against the size the table of contents
+/// says it must be, then encoded and only then given its real name - the same
+/// order the video pipeline uses, and for the same reason: a file that appears
+/// under its final name is a file the next run will believe is finished.
+pub fn rip_cd(
+    drive: Option<&str>,
+    out: Option<PathBuf>,
+    only: Option<u8>,
+    format: Option<&str>,
+) -> Result<(), String> {
+    use riplika_core::audio;
+    use riplika_core::disc::DiscKind;
+    use riplika_core::host::{Fs, Runner};
+    use riplika_core::identify::catalogue::Http;
+    use riplika_core::identify::music::{MusicBrainz, MusicCatalogue, cover_art_url};
+    use riplika_core::rip::cd::CdAudio;
+
+    let real = Real::new();
+    let prefs = riplika_core::prefs::Preferences::load();
+    let d = pick_drive(&DvdVideo::new(&real.runner), drive)?;
+    let device = PathBuf::from(&d.device);
+
+    let DiscKind::Audio(toc) = riplika_core::disc::identify(&device) else {
+        return Err(format!("{} is not holding a music CD", d.device));
+    };
+
+    let mb = MusicBrainz::new(&real.http);
+    let albums = mb.by_disc_id(&toc.musicbrainz_id()).map_err(|e| e.to_string())?;
+    let album = albums.into_iter().next().ok_or("no release matches this disc")?;
+    println!("{} - {}\n", album.artist, album.title);
+
+    let root = out
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Music")))
+        .ok_or("no output directory, and no HOME to guess one from")?;
+    let scratch = riplika_core::subs::source::temp_dir("cdrip").map_err(|e| e.to_string())?;
+
+    // Fetched once for the album rather than once per track.
+    let cover = album.has_cover_art.then(|| scratch.0.join("cover.jpg")).filter(|path| {
+        match real.http.get_bytes(&cover_art_url(&album.release_id)) {
+            Ok(bytes) => real.fs.write(path, &bytes).is_ok(),
+            // Art is worth having and not worth failing over.
+            Err(e) => {
+                println!("(no cover art: {e})");
+                false
+            }
+        }
+    });
+
+    let format = match format {
+        Some("flac") => riplika_core::prefs::AudioFormat::Flac,
+        Some("mp3") => riplika_core::prefs::AudioFormat::Mp3,
+        Some(other) => return Err(format!("format must be flac or mp3, not {other:?}")),
+        None => prefs.music_format,
+    };
+    let target = format.target();
+    let cd = CdAudio::new(&real.runner);
+    let wanted: Vec<_> =
+        toc.audio_tracks().filter(|t| only.is_none_or(|n| t.number == n)).collect();
+    if wanted.is_empty() {
+        return Err("no such track on this disc".into());
+    }
+
+    for t in &wanted {
+        let Some(meta) = album.tracks.iter().find(|x| x.number == u32::from(t.number)) else {
+            println!("track {} is not in the release listing; skipped", t.number);
+            continue;
+        };
+        let dest = audio::track_path(&root, &album, meta, target.extension());
+        if let Some(dir) = dest.parent() {
+            real.fs.create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+
+        print!("  {:>2}. {} ... ", meta.number, meta.title);
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+
+        let wav = scratch.0.join(format!("track{:02}.wav", t.number));
+        cd.rip_track(&device, t.number, &wav).map_err(|e| e.to_string())?;
+        let size = real.fs.size(&wav).map_err(|e| e.to_string())?;
+        cd.check_size(&toc, t.number, size).map_err(|e| e.to_string())?;
+
+        let part = dest.with_extension(format!("{}.part", target.extension()));
+        let cmd = audio::encode_command(
+            target,
+            prefs.music_quality,
+            &wav,
+            cover.as_deref(),
+            &part,
+            &album,
+            meta,
+        );
+        let outcome = real.runner.run(&cmd).map_err(|e| e.to_string())?;
+        if !outcome.ok() {
+            return Err(format!("encoding track {} failed: {}", t.number, outcome.last_error()));
+        }
+        real.fs.rename(&part, &dest).map_err(|e| e.to_string())?;
+        let _ = real.fs.remove_file(&wav);
+
+        let written = real.fs.size(&dest).unwrap_or(0);
+        println!("{} MB", written / 1_000_000);
+    }
+    println!("\n{}", root.display());
+    Ok(())
+}
+
 pub fn scan(drive: Option<&str>, which: &str) -> Result<(), String> {
     let real = Real::new();
     // A scan reads chapter times from the IFO tables, never from the video.

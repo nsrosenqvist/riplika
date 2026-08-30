@@ -1,5 +1,6 @@
 //! Stage one: getting the disc onto disk.
 
+pub mod cd;
 pub mod dvd;
 pub mod iso;
 pub mod makemkv;

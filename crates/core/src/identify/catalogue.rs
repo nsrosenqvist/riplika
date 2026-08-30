@@ -17,6 +17,12 @@ use crate::{Error, Result};
 /// Fetches a URL. The only network access in the crate.
 pub trait Http: Send + Sync {
     fn get(&self, url: &str) -> Result<String>;
+
+    /// Fetch something that is not text.
+    ///
+    /// Cover art is a JPEG, and a round trip through `String` would not leave
+    /// it a JPEG.
+    fn get_bytes(&self, url: &str) -> Result<Vec<u8>>;
 }
 
 /// What kind of thing we are looking for.
@@ -425,6 +431,17 @@ impl Http for UreqHttp {
             .map_err(|e| Error(format!("{url}: {e}")))?;
         resp.body_mut().read_to_string().map_err(|e| Error(format!("{url}: {e}")))
     }
+
+    fn get_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        let mut resp = ureq::get(url)
+            .header("User-Agent", USER_AGENT)
+            .call()
+            .map_err(|e| Error(format!("{url}: {e}")))?;
+        let mut buf = Vec::new();
+        std::io::Read::read_to_end(&mut resp.body_mut().as_reader(), &mut buf)
+            .map_err(|e| Error(format!("{url}: {e}")))?;
+        Ok(buf)
+    }
 }
 
 /// Serves canned responses, matched by substring.
@@ -459,6 +476,10 @@ impl Http for FakeHttp {
             .find(|(p, _)| url.contains(p.as_str()))
             .map(|(_, b)| b.clone())
             .ok_or_else(|| Error(format!("no canned response for {url}")))
+    }
+
+    fn get_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        self.get(url).map(String::into_bytes)
     }
 }
 
