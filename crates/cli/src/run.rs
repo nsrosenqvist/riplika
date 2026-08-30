@@ -436,8 +436,16 @@ pub fn rip_game(
         }
     };
     let read_offset = offset.unwrap_or(prefs.read_offset);
-    let dumped = gamejob::dump(&device, &staging, &real.fs, read_offset, &real.cancel, &mut say)
-        .map_err(|e| e.to_string())?;
+    let dumped = gamejob::dump(
+        &device,
+        &staging,
+        &real.fs,
+        &real.runner,
+        read_offset,
+        &real.cancel,
+        &mut say,
+    )
+    .map_err(|e| e.to_string())?;
     println!();
 
     for track in &dumped.tracks {

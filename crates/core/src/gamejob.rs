@@ -90,6 +90,7 @@ pub fn dump(
     device: &Path,
     stem: &Path,
     fs: &dyn Fs,
+    runner: &dyn crate::host::Runner,
     read_offset: i32,
     cancel: &Cancel,
     events: &mut dyn FnMut(Event),
@@ -144,35 +145,93 @@ pub fn dump(
             "{}.part",
             dest.extension().unwrap_or_default().to_string_lossy()
         ));
-        let mut source = Cancellable {
-            inner: match medium {
-                Medium::Cd => Box::new(RawCd::open(device)?),
-                _ => Box::new(PlainDisc::open(device)?),
-            },
-            cancel,
-        };
-        let mut sink = FileSink::with_sector(&part, u64::from(span.start), sector)?;
-        let mut rescue = Rescue::new(Map::new(u64::from(span.start), u64::from(span.end)))
-            .filling_with(vec![0u8; sector]);
-        let whole = sectors.max(1) as f32;
-        let done = f32::from(span.number.saturating_sub(1));
-        rescue.run(&mut source, &mut sink, &mut |p| {
-            events(Event::Progress {
-                stage: Stage::Rip,
-                fraction: if several {
-                    (u64::from(span.start) as f32 + p.fraction * span.sectors() as f32) / whole
+        events(Event::Progress {
+            stage: Stage::Rip,
+            fraction: u64::from(span.start) as f32 / sectors.max(1) as f32,
+            message: Some(format!("track {}", span.number)),
+        });
+
+        match (&toc, span.is_data) {
+            // Audio has no address in it for a drive to sync on, so a long
+            // read of it drifts: two dumps of one disc disagreed on nineteen
+            // tracks of twenty. cdparanoia overlaps its reads and matches the
+            // overlap, which is the whole reason it exists.
+            (Some(toc), false) => {
+                // cdparanoia will not touch a span reaching into a data track,
+                // and the first audio track's pregap does exactly that: it
+                // sits before the audio begins, in the stretch the table of
+                // contents still counts as the data track. That part is read
+                // directly and the rest handed over.
+                let audio_begins =
+                    toc.tracks.iter().find(|t| !t.is_data).map_or(span.start, |t| t.start);
+                let handover = span.start.max(audio_begins).min(span.end);
+                if handover > span.start {
+                    let mut source = Cancellable { inner: Box::new(RawCd::open(device)?), cancel };
+                    let mut sink = FileSink::with_sector(&part, u64::from(span.start), sector)?;
+                    let mut rescue =
+                        Rescue::new(Map::new(u64::from(span.start), u64::from(handover)))
+                            .filling_with(vec![0u8; sector]);
+                    rescue.run(&mut source, &mut sink, &mut |_| {})?;
+                    unreadable += rescue.map.count(crate::rescue::map::State::Bad);
+                }
+
+                let argument = crate::rip::cd::span(toc, handover, span.end)
+                    .ok_or_else(|| Error(format!("track {} is not on this disc", span.number)))?;
+                let handed = part.with_extension("part.cdp");
+                let out =
+                    runner.run(&crate::rip::cd::rip_span_command(device, &argument, &handed))?;
+                if !out.ok() {
+                    return Err(Error(format!(
+                        "cdparanoia could not read track {}: {}",
+                        span.number,
+                        out.last_error()
+                    )));
+                }
+                if handover > span.start {
+                    append_file(fs, &handed, &part)?;
+                    fs.remove_file(&handed)?;
                 } else {
-                    p.fraction
-                },
-                message: Some(if several {
-                    format!("track {} - {}", span.number, p.pass)
-                } else {
-                    p.pass.to_string()
-                }),
-            });
-        })?;
-        let _ = done;
-        unreadable += rescue.map.count(crate::rescue::map::State::Bad);
+                    fs.rename(&handed, &part)?;
+                }
+                // A span written wrongly reads the wrong sectors and says
+                // nothing about it, so the length is checked against what the
+                // table of contents says it must be.
+                let got = fs.size(&part)?;
+                if got != span.bytes() {
+                    return Err(Error(format!(
+                        "track {} came to {got} bytes where the disc says {}",
+                        span.number,
+                        span.bytes()
+                    )));
+                }
+            }
+            // Data sectors carry their own addresses, so they can be read
+            // directly - and through the rescue passes, which know what to do
+            // about the ones a disc will not give up.
+            _ => {
+                let mut source = Cancellable {
+                    inner: match medium {
+                        Medium::Cd => Box::new(RawCd::open(device)?),
+                        _ => Box::new(PlainDisc::open(device)?),
+                    },
+                    cancel,
+                };
+                let mut sink = FileSink::with_sector(&part, u64::from(span.start), sector)?;
+                let mut rescue = Rescue::new(Map::new(u64::from(span.start), u64::from(span.end)))
+                    .filling_with(vec![0u8; sector]);
+                let whole = sectors.max(1) as f32;
+                rescue.run(&mut source, &mut sink, &mut |p| {
+                    events(Event::Progress {
+                        stage: Stage::Rip,
+                        fraction: (u64::from(span.start) as f32
+                            + p.fraction * span.sectors() as f32)
+                            / whole,
+                        message: Some(p.pass.to_string()),
+                    });
+                })?;
+                unreadable += rescue.map.count(crate::rescue::map::State::Bad);
+            }
+        }
         fs.rename(&part, &dest)?;
         parts.push((span.number, dest));
     }
@@ -369,6 +428,22 @@ pub fn file_away(
         moved.cue = Some(path);
     }
     Ok(moved)
+}
+
+/// Add one file to the end of another, a chunk at a time.
+fn append_file(fs: &dyn Fs, from: &Path, to: &Path) -> Result<()> {
+    let size = fs.size(from)?;
+    let mut at = 0u64;
+    while at < size {
+        let want = (crate::hash::CHUNK as u64).min(size - at) as usize;
+        let chunk = fs.read_range(from, at, want)?;
+        if chunk.is_empty() {
+            break;
+        }
+        at += chunk.len() as u64;
+        fs.append(to, &chunk)?;
+    }
+    Ok(())
 }
 
 /// Stops the passes when the user asks.

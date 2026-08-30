@@ -293,6 +293,7 @@ pub fn run_game(
                     Path::new(&device),
                     &staging,
                     &real.fs,
+                    &real.runner,
                     read_offset,
                     &cancel,
                     &mut events,

@@ -21,6 +21,50 @@ pub const BYTES_PER_FRAME: u64 = 2352;
 /// The header cdparanoia writes in front of the audio.
 const WAV_HEADER: u64 = 44;
 
+/// Where a sector falls, as cdparanoia counts: which track, and how far into
+/// it.
+///
+/// Offsets are within a track rather than absolute, which matters here because
+/// a track's *file* begins at its pregap - before the track itself starts. So
+/// the file's first sector belongs, in this reckoning, to the tail of the
+/// track before it.
+pub fn position_of(toc: &Toc, sector: u32) -> Option<(u8, u32)> {
+    let track =
+        toc.tracks.iter().rev().find(|t| t.start <= sector).or_else(|| toc.tracks.first())?;
+    Some((track.number, sector.saturating_sub(track.start)))
+}
+
+/// A span argument covering `[start, end)`.
+///
+/// The span is inclusive of the sector it names last, so the end is written
+/// one short - otherwise every track comes out a sector too long.
+pub fn span(toc: &Toc, start: u32, end: u32) -> Option<String> {
+    let (first_track, from) = position_of(toc, start)?;
+    let (last_track, to) = position_of(toc, end.saturating_sub(1).max(start))?;
+    Some(format!("{first_track}[.{from}]-{last_track}[.{to}]"))
+}
+
+/// Read a run of sectors as raw audio.
+///
+/// The output is raw little-endian samples: the same bytes a raw sector read
+/// returns for audio, and what a preservation database hashes.
+///
+/// The point of coming through cdparanoia rather than reading the sectors
+/// directly is that audio carries no address to sync on, so a drive hands it
+/// back at drifting alignment over a long read - two dumps of one disc
+/// disagreed on nineteen of twenty tracks. Overlapping the reads and matching
+/// the overlap is what corrects that, and this is the thing that does it.
+pub fn rip_span_command(device: &Path, span: &str, dest: &Path) -> Command {
+    Command::new("cdparanoia")
+        .arg("-d")
+        .path(device)
+        // Raw little-endian, so the bytes are the disc's own rather than a
+        // WAV with a header in front of them.
+        .arg("-r")
+        .arg(span)
+        .path(dest)
+}
+
 pub fn rip_track_command(device: &Path, track: u8, dest: &Path) -> Command {
     Command::new("cdparanoia")
         .arg("-d")
@@ -114,6 +158,59 @@ mod tests {
                 .collect(),
             leadout: 225301,
         }
+    }
+
+    /// Cool Boarders 2: a data track and nineteen of music, the audio ones
+    /// each with 150 sectors of silence in front.
+    fn mixed() -> Toc {
+        let index01 = [0u32, 65945, 83819, 99195, 114428];
+        Toc {
+            tracks: index01
+                .iter()
+                .enumerate()
+                .map(|(i, s)| Track { number: i as u8 + 1, start: *s, is_data: i == 0 })
+                .collect(),
+            leadout: 130_960,
+        }
+    }
+
+    #[test]
+    fn a_sector_is_placed_by_which_track_it_falls_in() {
+        let toc = mixed();
+        assert_eq!(position_of(&toc, 83_900), Some((3, 81)));
+        assert_eq!(position_of(&toc, 83_819), Some((3, 0)));
+        // One before track three starts is still track two, near its end.
+        assert_eq!(position_of(&toc, 83_818), Some((2, 17_873)));
+    }
+
+    #[test]
+    fn a_pregap_belongs_to_the_tail_of_the_track_before_it() {
+        // Track three's file begins 150 sectors before track three does, and
+        // cdparanoia counts those sectors as the end of track two.
+        let toc = mixed();
+        assert_eq!(position_of(&toc, 83_669), Some((2, 17_724)));
+    }
+
+    #[test]
+    fn a_span_runs_from_one_track_into_the_next() {
+        let toc = mixed();
+        // Track three's file: [83669, 99045).
+        assert_eq!(span(&toc, 83_669, 99_045).as_deref(), Some("2[.17724]-3[.15225]"));
+    }
+
+    #[test]
+    fn a_span_of_one_sector_does_not_run_backwards() {
+        let toc = mixed();
+        assert_eq!(span(&toc, 83_900, 83_901).as_deref(), Some("3[.81]-3[.81]"));
+    }
+
+    #[test]
+    fn the_command_asks_for_raw_samples_and_nothing_else() {
+        let cmd = rip_span_command(Path::new("/dev/sr0"), "2[.1]-3[.2]", Path::new("/tmp/t.raw"));
+        assert_eq!(cmd.program, "cdparanoia");
+        assert!(cmd.has("-r"), "raw little-endian, not a WAV with a header on it");
+        assert!(cmd.has("2[.1]-3[.2]"), "{:?}", cmd.args);
+        assert_eq!(cmd.args.last().unwrap(), "/tmp/t.raw");
     }
 
     #[test]
