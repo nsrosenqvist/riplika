@@ -465,8 +465,22 @@ pub fn rip_game(
         }
         None => println!("\nNo datfile has this image."),
     }
-    let dest = dumped.path().map(Path::to_path_buf).unwrap_or_default();
-    println!("  {}", dest.display());
+    // Only a match can say what the disc really is, so it is read into a
+    // holding folder first and moved once there is a name to move it under.
+    let filed = gamejob::file_away(
+        &real.fs,
+        &dumped,
+        &root,
+        matched.as_ref().map(|(dat, _)| dat.name.as_str()),
+        &matched
+            .as_ref()
+            .map(|(_, game)| game.name.clone())
+            .unwrap_or_else(|| inspected.describe()),
+    )
+    .map_err(|e| e.to_string())?;
+    for path in filed.cue.iter().chain(filed.tracks.iter().map(|t| &t.path)) {
+        println!("  {}", path.display());
+    }
     Ok(())
 }
 

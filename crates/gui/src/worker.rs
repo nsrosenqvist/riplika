@@ -302,11 +302,18 @@ pub fn run_game(
                     .as_ref()
                     .map(|(_, game)| game.name.clone())
                     .unwrap_or_else(|| disc.describe());
-                let dest = dumped.path().map(Path::to_path_buf).unwrap_or(staging);
+                let filed = gamejob::file_away(
+                    &real.fs,
+                    &dumped,
+                    &root,
+                    matched.as_ref().map(|(dat, _)| dat.name.as_str()),
+                    &name,
+                )?;
+                let dest = filed.path().map(Path::to_path_buf).unwrap_or(staging);
                 events(Event::ItemFinished {
                     index: 0,
                     destination: dest.clone(),
-                    bytes: dumped.bytes(),
+                    bytes: filed.bytes(),
                 });
 
                 let mut report = Report::default();
@@ -320,7 +327,7 @@ pub fn run_game(
                         destination: Some(dest),
                     },
                     destination: PathBuf::new(),
-                    bytes: dumped.bytes(),
+                    bytes: filed.bytes(),
                     subtitles: Vec::new(),
                 });
                 let _ = tx.send(Msg::Finished(Box::new(report)));

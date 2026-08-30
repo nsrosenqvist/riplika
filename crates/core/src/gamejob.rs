@@ -40,6 +40,11 @@ pub struct Dumped {
     pub tracks: Vec<DumpedTrack>,
     /// The sheet tying the tracks together, when there is more than one.
     pub cue: Option<PathBuf>,
+    /// Where each track began and ended, kept so the sheet can be written
+    /// again if the files are renamed - it names them, so renaming without it
+    /// leaves a sheet pointing at files that are no longer there.
+    pub spans: Vec<crate::cue::TrackSpan>,
+    pub mode: crate::cue::DataMode,
     /// Sectors the drive would not give up, which were filled with zeros.
     pub unreadable: u64,
     pub sectors: u64,
@@ -180,19 +185,66 @@ pub fn dump(
         tracks.push(DumpedTrack { number, path, digests });
     }
 
+    let mode = match &toc {
+        Some(toc) => crate::disc::data_mode(device, toc),
+        None => crate::cue::DataMode::Mode1,
+    };
     // The sheet is what says where one track ends and the next begins, and
     // without it the files are a pile rather than a disc.
     let cue = several
         .then(|| -> Result<PathBuf> {
-            let mode = crate::disc::data_mode(device, toc.as_ref().expect("a CD has a toc"));
-            let text = crate::cue::cue_sheet(&name, &spans, mode);
             let path = stem.with_extension("cue");
-            fs.write(&path, text.as_bytes())?;
+            fs.write(&path, crate::cue::cue_sheet(&name, &spans, mode).as_bytes())?;
             Ok(path)
         })
         .transpose()?;
 
-    Ok(Dumped { tracks, cue, unreadable, sectors })
+    Ok(Dumped { tracks, cue, spans, mode, unreadable, sectors })
+}
+
+/// Move a finished dump to where it belongs, under the name it turned out to
+/// have.
+///
+/// Separate from the dump because the name is not known until the bytes are:
+/// the disc is read into a holding folder under whatever it called itself, and
+/// only a match can say what it really is.
+pub fn file_away(
+    fs: &dyn Fs,
+    dumped: &Dumped,
+    root: &Path,
+    system: Option<&str>,
+    name: &str,
+) -> Result<Dumped> {
+    let stem = destination(root, system, name);
+    if stem.parent() == dumped.tracks.first().and_then(|t| t.path.parent()) {
+        // Nothing learned, so nothing to move.
+        return Ok(dumped.clone());
+    }
+    if let Some(dir) = stem.parent() {
+        fs.create_dir_all(dir)?;
+    }
+    let stem_name = stem.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let several = dumped.tracks.len() > 1;
+
+    let mut moved = dumped.clone();
+    for track in &mut moved.tracks {
+        let to = if several {
+            stem.with_file_name(crate::cue::track_file_name(&stem_name, track.number))
+        } else {
+            stem.with_extension("iso")
+        };
+        fs.rename(&track.path, &to)?;
+        track.path = to;
+    }
+    if let Some(old) = &moved.cue {
+        // Written afresh rather than moved: every FILE line in it names a
+        // track by the name it no longer has.
+        let _ = fs.remove_file(old);
+        let path = stem.with_extension("cue");
+        fs.write(&path, crate::cue::cue_sheet(&stem_name, &moved.spans, moved.mode).as_bytes())?;
+        moved.cue = Some(path);
+    }
+    Ok(moved)
 }
 
 /// Stops the passes when the user asks.
@@ -240,17 +292,12 @@ pub fn suggested_name(found: Option<&redump::Found<'_>>, disc: &crate::game::Gam
 /// Matched discs are filed by system, because that is the one grouping a
 /// datfile actually knows and the one an emulator's library expects. Unmatched
 /// ones go in a folder that says what they are.
-pub fn destination(
-    root: &Path,
-    found: Option<&redump::Found<'_>>,
-    system: Option<&str>,
-    disc: &crate::game::GameDisc,
-) -> PathBuf {
-    let folder = match (found, system) {
-        (Some(_), Some(system)) if !system.is_empty() => sanitize(system),
+pub fn destination(root: &Path, system: Option<&str>, name: &str) -> PathBuf {
+    let folder = match system {
+        Some(system) if !system.is_empty() => sanitize(system),
         _ => "Unidentified".to_string(),
     };
-    root.join(folder).join(suggested_stem(found, disc))
+    root.join(folder).join(sanitize(name))
 }
 
 /// Look an image up in every datfile there is.
@@ -330,10 +377,8 @@ mod tests {
 
     #[test]
     fn a_matched_disc_is_filed_under_its_system() {
-        let g = game();
-        let found = Found { game: &g, rom: &g.roms[0] };
         assert_eq!(
-            destination(Path::new("/games"), Some(&found), Some("Sony - PlayStation 2"), &disc()),
+            destination(Path::new("/games"), Some("Sony - PlayStation 2"), "Half-Life (Europe)"),
             Path::new("/games/Sony - PlayStation 2/Half-Life (Europe)")
         );
     }
@@ -341,7 +386,7 @@ mod tests {
     #[test]
     fn an_unmatched_disc_is_filed_where_that_is_obvious() {
         assert_eq!(
-            destination(Path::new("/games"), None, None, &disc()),
+            destination(Path::new("/games"), None, "HALFLIFE"),
             Path::new("/games/Unidentified/HALFLIFE")
         );
     }
@@ -364,6 +409,8 @@ mod tests {
                 digests: Digests { crc32: 0, sha1: [0; 20], bytes: 0 },
             }],
             cue: None,
+            spans: Vec::new(),
+            mode: crate::cue::DataMode::Mode1,
             unreadable,
             sectors: 1_000_000,
         }
@@ -379,6 +426,16 @@ mod tests {
                 })
                 .collect(),
             cue: Some(PathBuf::from("/games/x.cue")),
+            spans: (1..=3)
+                .map(|n| crate::cue::TrackSpan {
+                    number: n,
+                    is_data: n == 1,
+                    start: u32::from(n) * 100,
+                    end: u32::from(n) * 100 + 100,
+                    pregap: if n == 1 { 0 } else { 150 },
+                })
+                .collect(),
+            mode: crate::cue::DataMode::Mode2,
             unreadable: 0,
             sectors: 1_000,
         }
@@ -401,6 +458,52 @@ mod tests {
         assert_eq!(d.path(), Some(Path::new("/games/x.cue")));
         assert_eq!(d.bytes(), 300, "the whole disc, not one track of it");
         assert_eq!(d.digests().len(), 3);
+    }
+
+    #[test]
+    fn filing_a_disc_renames_its_tracks_and_writes_the_sheet_again() {
+        // The sheet names every track file, so renaming the files without
+        // rewriting it leaves a sheet pointing at names that are gone.
+        let fs = crate::host::FakeFs::new()
+            .with_file("/games/Unidentified/x (Track 01).bin", "one")
+            .with_file("/games/Unidentified/x (Track 02).bin", "two")
+            .with_file("/games/Unidentified/x (Track 03).bin", "three")
+            .with_file("/games/Unidentified/x.cue", "old sheet");
+        let mut dumped = many_tracks();
+        for (i, track) in dumped.tracks.iter_mut().enumerate() {
+            track.path = PathBuf::from(format!("/games/Unidentified/x (Track {:02}).bin", i + 1));
+        }
+        dumped.cue = Some(PathBuf::from("/games/Unidentified/x.cue"));
+
+        let filed = file_away(
+            &fs,
+            &dumped,
+            Path::new("/games"),
+            Some("Sony - PlayStation"),
+            "Moto Racer (Europe)",
+        )
+        .unwrap();
+
+        assert_eq!(
+            filed.tracks[0].path,
+            Path::new("/games/Sony - PlayStation/Moto Racer (Europe) (Track 01).bin")
+        );
+        assert_eq!(
+            filed.cue.as_deref(),
+            Some(Path::new("/games/Sony - PlayStation/Moto Racer (Europe).cue"))
+        );
+        let sheet = String::from_utf8(fs.read(filed.cue.as_ref().unwrap()).unwrap()).unwrap();
+        assert!(sheet.contains("Moto Racer (Europe) (Track 01).bin"), "{sheet}");
+        assert!(!sheet.contains("\"x ("), "the old names are gone: {sheet}");
+    }
+
+    #[test]
+    fn a_dump_nobody_could_name_stays_where_it_was_put() {
+        let fs = crate::host::FakeFs::new().with_file("/games/Unidentified/HALFLIFE.iso", "x");
+        let mut dumped = dumped(0);
+        dumped.tracks[0].path = PathBuf::from("/games/Unidentified/HALFLIFE.iso");
+        let filed = file_away(&fs, &dumped, Path::new("/games"), None, "HALFLIFE").unwrap();
+        assert_eq!(filed.tracks[0].path, Path::new("/games/Unidentified/HALFLIFE.iso"));
     }
 
     #[test]
