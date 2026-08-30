@@ -1,6 +1,6 @@
 # Working on Riplika
 
-Riplika turns a disc into a tagged, subtitled library. Four stages: **rip → identify → transcode → subtitles**.
+Riplika turns a disc into a library. Video is four stages — **rip → identify → transcode → subtitles**; music and games are shorter paths off the same drive page, and which one runs is decided by what the disc turns out to be.
 
 This file is what you need before changing anything. The reference material is in [docs/](docs/); this is about how the code is built and why.
 
@@ -21,13 +21,37 @@ core/src/
   naming.rs      what a file is called and where it goes
   prefs.rs       settings, and the XDG directories
   secret.rs      the login keyring
-  rip/           MakeMKV and the free DVD reader; ISO/IFO parsing
-  rescue/        ddrescue for damaged discs; the libdvdcss binding
-  identify/      volume label, disc structure, catalogues
+  rip/           MakeMKV and the free DVD reader; ISO/IFO parsing; cdparanoia
+  rescue/        ddrescue for damaged discs; libdvdcss; raw and plain readers
+  identify/      volume label, disc structure, catalogues, MusicBrainz
   transcode/     what to measure, and the ffmpeg command to build
   subs/          bitmap subtitles to text
-  job.rs         the stages in order, reporting as it goes
+  job.rs         the video stages in order, reporting as it goes
+
+  disc.rs        what kind of disc is in the drive, and its table of contents
+  scsi.rs        commands the kernel has no interface for
+  cdtext.rs      what a CD says about itself when no catalogue knows it
+  audio.rs       FLAC and MP3: encoder settings and tag vocabularies
+  musicjob.rs    rip, encode and tag a CD
+  hash.rs        streaming CRC32 and SHA-1, for images too big to hold
+  redump.rs      datfiles: what a correct dump weighs and hashes to
+  game.rs        what a data disc says about itself
+  gamejob.rs     dump a game disc, then find out what it was
 ```
+
+Three kinds of disc, three ways of being identified, and the difference is
+worth holding on to:
+
+| disc | evidence | when |
+|---|---|---|
+| video | volume label, then the shape of the titles | before the read |
+| music | the table of contents, hashed to a disc id | before the read |
+| game | the bytes themselves, hashed against a datfile | after the read |
+
+So `Catalogue` is the video-shaped one, and `MusicCatalogue` sits beside it
+rather than inside it — searching by title and returning episodes by season are
+questions a CD cannot answer. `AudioTarget` sits beside `Format` for the same
+reason. When a fourth kind arrives, expect a fourth sibling, not a wider trait.
 
 ## Two rules
 
@@ -107,6 +131,11 @@ Commit messages say what changed and why it was wrong before. They are the proje
 - **`DVDCSS_READ_DECRYPT` descrambles whatever it is given**, and a sector's payload starts at byte 128 — so decrypting the volume descriptors leaves their first 128 bytes intact and turns the rest into noise.
 - **DVD title numbering is not contiguous.** One disc here has content at titles 2–19 and again at 39–58. Read the count from the disc, never infer it.
 - **MakeMKV reports chapter *counts*; the free reader reports chapter *durations*.** Only the durations can decompose a play-all, so anything that depends on them must handle their absence.
+- **A CD sector is 2352 bytes, and `/dev/sr0` gives you 2048 of them.** The drive checks the error correction, keeps the user data and discards the sync pattern, header and ECC — and the discarded part is what Redump hashes. An image of cooked sectors is a perfectly good image that matches nothing, and the failure reads as "this disc is not in the database". CDs go through `READ CD` for that reason; DVDs and Blu-rays have no such distinction.
+- **A CD's length comes from its table of contents, not the block device.** On the disc measured here the ISO volume says 339,313 sectors and the lead-out says 339,463. Redump quotes the whole track.
+- **MusicBrainz allows one request a second** and refuses the rest. An empty result therefore means either "never heard of it" or "never asked", and only one of those is worth telling somebody about — `Found::lookup_failed` keeps them apart.
+- **Reading a CD raw is about a fifth the speed of reading it cooked** (0.9 MB/s against 4-plus on the drive here), because the drive cannot read ahead the same way. That is the price of an image that can be verified.
+- **Do not benchmark the drive while something else is using it.** Doing that here produced a figure seven times too low and nearly a wrong conclusion with it.
 
 ## Verifying against real hardware
 
