@@ -241,18 +241,6 @@ pub fn medium(device: &Path) -> Option<Medium> {
     Medium::from_profile(profile)
 }
 
-/// Which track a sector belongs to, and whether it is inside the track or in
-/// the silence in front of it.
-///
-/// The numbers come back binary-coded decimal, as everything in a subchannel
-/// does: track eleven arrives as `0x11`.
-fn sub_q(file: &File, lba: u32) -> Option<SubQ> {
-    let cdb = crate::scsi::read_cd_raw_with_q(lba, 1);
-    let data = crate::scsi::read(file, &cdb, crate::scsi::RAW_WITH_Q).ok()?;
-    let q = data.get(2352..2368)?;
-    Some(SubQ { track: from_bcd(q[1]), index: from_bcd(q[2]), countdown: frames(q[3], q[4], q[5]) })
-}
-
 /// What the subchannel says about one sector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SubQ {
@@ -298,43 +286,74 @@ pub fn pregaps(device: &Path, toc: &Toc) -> Vec<(u8, u32)> {
 
 /// How long the silence in front of one track is.
 ///
-/// Found by bracketing the boundary and then reading the countdown there
-/// rather than by subtracting addresses. The addresses are not reliable to the
-/// sector: on the disc this was written against the drive answered twice with
-/// the same subchannel, so the boundary looked one sector earlier than it was
-/// and the pregap came out 226 - a number that is not a whole count of
-/// anything. The countdown at that sector said 224, meaning 224 frames of
-/// silence left after this one, and 225 is three seconds exactly.
+/// Read as a run rather than searched for. A binary search over single sectors
+/// is what this did first, and it gave different answers on different runs of
+/// the same disc: asked for one scattered sector at a time a drive returns
+/// stale subchannel often enough to move a boundary, and on one disc three
+/// different tracks were reported as having no pregap on three attempts.
+/// Asked for a run of sectors in one command, it is steady.
 fn pregap_of(file: &File, number: u8, below: u32, at: u32) -> Option<u32> {
-    let boundary = first_sector_of(file, number, below, at)?;
-    let q = sub_q(file, boundary)?;
+    // Five and a half seconds. Longer pregaps exist but are rare, and the
+    // previous track's start bounds the search anyway.
+    const WINDOW: u32 = 400;
+    const PER_READ: u32 = 100;
+
+    let span = (at.saturating_sub(below)).min(WINDOW);
+    let mut sectors = Vec::with_capacity(span as usize);
+    let mut lba = at - span;
+    while lba < at {
+        let count = PER_READ.min(at - lba);
+        match run(file, lba, count) {
+            Some(read) => sectors.extend(read),
+            // A run that mixes data sectors with audio ones is refused whole,
+            // which is exactly what happens at the boundary this is looking
+            // for. Asked one sector at a time the drive answers for either.
+            None => {
+                for offset in 0..count {
+                    sectors.push(one(file, lba + offset)?);
+                }
+            }
+        }
+        lba += count;
+    }
+
+    // The first sector the disc files under this track. Before it lies the
+    // previous one; after it, silence and then the music.
+    let first = sectors.iter().position(|q| q.track == number)?;
+    let q = sectors[first];
     if q.index != 0 {
-        // No pregap at all, which is legal and happens on the first track.
+        // No pregap at all, which happens between tracks meant to run together.
         return Some(0);
     }
+    // The countdown says how much silence is left after this sector, and it is
+    // trusted over the address: at one boundary a drive answered twice with
+    // the same subchannel, so the address looked a sector early while the
+    // countdown stayed right.
     Some(q.countdown + 1)
 }
 
-/// The first sector the drive files under `number`, between two known points.
-fn first_sector_of(file: &File, number: u8, below: u32, at: u32) -> Option<u32> {
-    // `at` is inside the track by definition; anything at or before `below` is
-    // inside the one before it. Narrow until they meet.
-    let mut low = below;
-    let mut high = at;
-    if sub_q(file, at)?.track != number {
-        // A drive that will not answer for the subchannel is not worth
-        // guessing on top of.
+/// The subchannel for a run of sectors, or nothing if the drive refused.
+fn run(file: &File, lba: u32, count: u32) -> Option<Vec<SubQ>> {
+    let cdb = crate::scsi::read_cd_raw_with_q(lba, count);
+    let want = count as usize * crate::scsi::RAW_WITH_Q;
+    let data = crate::scsi::read(file, &cdb, want).ok()?;
+    if data.len() < want {
         return None;
     }
-    while high - low > 1 {
-        let middle = low + (high - low) / 2;
-        match sub_q(file, middle) {
-            Some(q) if q.track >= number => high = middle,
-            Some(_) => low = middle,
-            None => return None,
-        }
-    }
-    Some(high)
+    Some((0..count as usize).map(|i| parse_q(&data[i * crate::scsi::RAW_WITH_Q..])).collect())
+}
+
+/// The subchannel for one sector. Answers for data and audio alike, where a
+/// run does not - at the cost of being the reading that can come back stale.
+fn one(file: &File, lba: u32) -> Option<SubQ> {
+    let cdb = crate::scsi::read_cd_raw_with_q(lba, 1);
+    let data = crate::scsi::read(file, &cdb, crate::scsi::RAW_WITH_Q).ok()?;
+    (data.len() >= crate::scsi::RAW_WITH_Q).then(|| parse_q(&data))
+}
+
+fn parse_q(sector: &[u8]) -> SubQ {
+    let q = &sector[2352..2368];
+    SubQ { track: from_bcd(q[1]), index: from_bcd(q[2]), countdown: frames(q[3], q[4], q[5]) }
 }
 
 /// Mode 1, mode 2 or nothing but audio, from the first sector's own header.
@@ -608,6 +627,20 @@ mod tests {
         assert_eq!(offsets.first(), Some(&150));
         assert_eq!(offsets.last(), Some(&225_451));
         assert_eq!(offsets.len(), 13);
+    }
+
+    #[test]
+    fn a_subchannel_is_read_off_the_end_of_the_sector() {
+        // 2352 bytes of sector, then sixteen of subchannel: track, index and
+        // a countdown, all binary-coded.
+        let mut sector = vec![0u8; 2368];
+        sector[2352 + 1] = 0x02; // track two
+        sector[2352 + 2] = 0x00; // in its pregap
+        sector[2352 + 3] = 0x00;
+        sector[2352 + 4] = 0x02;
+        sector[2352 + 5] = 0x74; // 224 frames of silence still to run
+        let q = parse_q(&sector);
+        assert_eq!((q.track, q.index, q.countdown), (2, 0, 224));
     }
 
     #[test]
