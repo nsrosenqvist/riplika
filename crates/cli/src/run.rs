@@ -368,7 +368,7 @@ pub fn rip_game(
     let device = PathBuf::from(&d.device);
 
     let kind = riplika_core::disc::identify(&device);
-    if !matches!(kind, DiscKind::Data | DiscKind::BluRay) {
+    if !matches!(kind, DiscKind::Data(_) | DiscKind::BluRay) {
         return Err(format!("not a data disc: {} is holding {}", d.device, kind.describe()));
     }
 

@@ -746,7 +746,7 @@ fn disc_text(d: &Drive) -> String {
         (_, Some(label)) => label.clone(),
         (Some(DiscKind::DvdVideo), None) => tr("DVD-Video"),
         (Some(DiscKind::BluRay), None) => tr("Blu-ray"),
-        (Some(DiscKind::Data), None) => tr("Data disc"),
+        (Some(DiscKind::Data(_)), None) => tr("Data disc"),
         _ => tr("No disc"),
     }
 }
@@ -1132,7 +1132,8 @@ impl App {
         // settings that cannot apply to what is in the tray.
         let music =
             matches!(selected.as_ref().and_then(|d| d.kind.as_ref()), Some(DiscKind::Audio(_)));
-        let game = matches!(selected.as_ref().and_then(|d| d.kind.as_ref()), Some(DiscKind::Data));
+        let game =
+            matches!(selected.as_ref().and_then(|d| d.kind.as_ref()), Some(DiscKind::Data(_)));
         self.ui.music_group.set_visible(music);
         // A game disc is copied, not encoded: there is no picture to compress,
         // no container to choose and no track to name.
@@ -1197,7 +1198,7 @@ impl App {
     fn is_game(&self) -> bool {
         matches!(
             self.state.borrow().drive.as_ref().and_then(|d| d.kind.as_ref()),
-            Some(DiscKind::Data)
+            Some(DiscKind::Data(_))
         )
     }
 
@@ -1650,7 +1651,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 return;
             }
             // A data disc has no titles to probe: it is copied whole.
-            if matches!(drive.kind.as_ref(), Some(DiscKind::Data)) {
+            if matches!(drive.kind.as_ref(), Some(DiscKind::Data(_))) {
                 worker::analyse_game(drive.device.clone(), tx.clone());
                 return;
             }

@@ -102,6 +102,15 @@ impl Toc {
         self.audio_count() > 0
     }
 
+    /// Does the disc begin with data?
+    ///
+    /// The question that tells a game with a soundtrack from a music CD with
+    /// extras on it: Mixed Mode puts the data first, an enhanced CD puts it
+    /// last.
+    pub fn opens_with_data(&self) -> bool {
+        self.tracks.first().is_some_and(|t| t.is_data)
+    }
+
     pub fn duration(&self) -> Millis {
         frames_to_millis(self.leadout)
     }
@@ -247,7 +256,11 @@ pub enum DiscKind {
     BluRay,
     Audio(Toc),
     /// A filesystem that is neither: a PC game, or anything else pressed.
-    Data,
+    ///
+    /// On a CD it carries the table of contents, because a game can have its
+    /// soundtrack beside it as ordinary audio tracks and copying such a disc
+    /// means knowing where they begin.
+    Data(Option<Toc>),
     /// No disc, or one nothing can be read from.
     Empty,
 }
@@ -262,7 +275,11 @@ impl DiscKind {
         match self {
             DiscKind::DvdVideo => "DVD-Video".into(),
             DiscKind::BluRay => "Blu-ray".into(),
-            DiscKind::Data => "data disc".into(),
+            DiscKind::Data(Some(toc)) if toc.is_audio() => {
+                let n = toc.audio_count();
+                format!("data disc, {n} audio track(s) beside it")
+            }
+            DiscKind::Data(_) => "data disc".into(),
             DiscKind::Empty => "empty".into(),
             DiscKind::Audio(toc) => {
                 let n = toc.audio_count();
@@ -279,13 +296,20 @@ pub fn identify(device: &Path) -> DiscKind {
     let Ok(mut f) = File::open(device) else {
         return DiscKind::Empty;
     };
-    // The table of contents comes first because it is the only thing an audio
-    // CD can answer, and a data disc's TOC is a single data track that tells us
-    // nothing the filesystem will not tell us better.
-    if let Some(toc) = read_toc(&f)
+    // Which track comes first decides what a mixed disc is, and both kinds
+    // exist. A game puts its data first and its soundtrack after - that is
+    // Mixed Mode, and a PlayStation disc is the usual example. An enhanced
+    // music CD does the opposite: audio first, and a data track added at the
+    // end in a session of its own.
+    //
+    // Reading "has any audio track" as "is an album" therefore files every
+    // game with a soundtrack as music, and sends its disc id to MusicBrainz.
+    let toc = read_toc(&f);
+    if let Some(toc) = &toc
         && toc.is_audio()
+        && !toc.opens_with_data()
     {
-        return DiscKind::Audio(toc);
+        return DiscKind::Audio(toc.clone());
     }
     let Some(pvd) = read_at(&mut f, PVD_OFFSET, SECTOR) else {
         return DiscKind::Empty;
@@ -304,7 +328,7 @@ pub fn identify(device: &Path) -> DiscKind {
         // directory says nothing. The drive still knows what it is holding.
         DiscKind::BluRay
     } else {
-        DiscKind::Data
+        DiscKind::Data(toc)
     }
 }
 
@@ -478,6 +502,41 @@ mod tests {
     }
 
     #[test]
+    fn a_game_with_a_soundtrack_is_not_an_album() {
+        // A PlayStation disc is data first and its music after, which is Mixed
+        // Mode. Reading "has audio tracks" as "is an album" filed Moto Racer
+        // as a music CD and sent its disc id to MusicBrainz.
+        let mut toc = roots();
+        toc.tracks.insert(0, Track { number: 0, start: 0, is_data: true });
+        assert!(toc.is_audio());
+        assert!(toc.opens_with_data());
+    }
+
+    #[test]
+    fn an_enhanced_music_cd_still_is_one() {
+        // The other way round: audio first, a data track added at the end in a
+        // session of its own. That is a music CD with extras, not a game.
+        let mut toc = roots();
+        toc.tracks.push(Track { number: 13, start: 250_000, is_data: true });
+        assert!(toc.is_audio());
+        assert!(!toc.opens_with_data());
+    }
+
+    #[test]
+    fn a_disc_of_nothing_but_audio_opens_with_audio() {
+        assert!(!roots().opens_with_data());
+    }
+
+    #[test]
+    fn a_data_disc_says_what_is_beside_the_data() {
+        let mut toc = roots();
+        toc.tracks.insert(0, Track { number: 0, start: 0, is_data: true });
+        let described = DiscKind::Data(Some(toc)).describe();
+        assert!(described.contains("12 audio"), "{described}");
+        assert_eq!(DiscKind::Data(None).describe(), "data disc");
+    }
+
+    #[test]
     fn a_data_track_does_not_count_as_music() {
         let mut toc = roots();
         toc.tracks.push(Track { number: 13, start: 200_000, is_data: true });
@@ -647,7 +706,9 @@ mod tests {
     #[test]
     fn a_filesystem_that_is_neither_is_a_data_disc() {
         let img = iso_with(&["SETUP.EXE;1", "DATA"], "HALF_LIFE");
-        assert_eq!(probe(&img, "data"), DiscKind::Data);
+        // No table of contents to be had from a file, which is not the same
+        // as a disc that has none.
+        assert_eq!(probe(&img, "data"), DiscKind::Data(None));
     }
 
     #[test]
