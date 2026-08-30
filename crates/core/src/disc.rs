@@ -241,6 +241,115 @@ pub fn medium(device: &Path) -> Option<Medium> {
     Medium::from_profile(profile)
 }
 
+/// Which track a sector belongs to, and whether it is inside the track or in
+/// the silence in front of it.
+///
+/// The numbers come back binary-coded decimal, as everything in a subchannel
+/// does: track eleven arrives as `0x11`.
+fn sub_q(file: &File, lba: u32) -> Option<SubQ> {
+    let cdb = crate::scsi::read_cd_raw_with_q(lba, 1);
+    let data = crate::scsi::read(file, &cdb, crate::scsi::RAW_WITH_Q).ok()?;
+    let q = data.get(2352..2368)?;
+    Some(SubQ { track: from_bcd(q[1]), index: from_bcd(q[2]), countdown: frames(q[3], q[4], q[5]) })
+}
+
+/// What the subchannel says about one sector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SubQ {
+    track: u8,
+    /// Zero inside a pregap, one and upwards inside the track proper.
+    index: u8,
+    /// Position within the track. In a pregap this counts *down* to zero at
+    /// the last silent sector, so it says how much silence is left.
+    countdown: u32,
+}
+
+fn frames(minutes: u8, seconds: u8, frame: u8) -> u32 {
+    (u32::from(from_bcd(minutes)) * 60 + u32::from(from_bcd(seconds))) * 75
+        + u32::from(from_bcd(frame))
+}
+
+fn from_bcd(byte: u8) -> u8 {
+    (byte >> 4) * 10 + (byte & 0x0F)
+}
+
+/// How much silence runs in front of each track.
+///
+/// The table of contents says where a track's music starts; a track's *file*
+/// starts at the pregap in front of it, and how long that is the table does
+/// not say. Two seconds is the usual answer and assuming it is how a ripper
+/// gets most discs right and some wrong - on the disc this was written
+/// against, one pregap is three seconds.
+///
+/// So it is found by asking the disc: the pregap is where the subchannel
+/// starts naming the next track, which is a boundary a handful of reads can
+/// bracket.
+pub fn pregaps(device: &Path, toc: &Toc) -> Vec<(u8, u32)> {
+    let Ok(file) = File::open(device) else { return Vec::new() };
+    let mut out = Vec::new();
+    for pair in toc.tracks.windows(2) {
+        let (previous, track) = (&pair[0], &pair[1]);
+        if let Some(gap) = pregap_of(&file, track.number, previous.start, track.start) {
+            out.push((track.number, gap));
+        }
+    }
+    out
+}
+
+/// How long the silence in front of one track is.
+///
+/// Found by bracketing the boundary and then reading the countdown there
+/// rather than by subtracting addresses. The addresses are not reliable to the
+/// sector: on the disc this was written against the drive answered twice with
+/// the same subchannel, so the boundary looked one sector earlier than it was
+/// and the pregap came out 226 - a number that is not a whole count of
+/// anything. The countdown at that sector said 224, meaning 224 frames of
+/// silence left after this one, and 225 is three seconds exactly.
+fn pregap_of(file: &File, number: u8, below: u32, at: u32) -> Option<u32> {
+    let boundary = first_sector_of(file, number, below, at)?;
+    let q = sub_q(file, boundary)?;
+    if q.index != 0 {
+        // No pregap at all, which is legal and happens on the first track.
+        return Some(0);
+    }
+    Some(q.countdown + 1)
+}
+
+/// The first sector the drive files under `number`, between two known points.
+fn first_sector_of(file: &File, number: u8, below: u32, at: u32) -> Option<u32> {
+    // `at` is inside the track by definition; anything at or before `below` is
+    // inside the one before it. Narrow until they meet.
+    let mut low = below;
+    let mut high = at;
+    if sub_q(file, at)?.track != number {
+        // A drive that will not answer for the subchannel is not worth
+        // guessing on top of.
+        return None;
+    }
+    while high - low > 1 {
+        let middle = low + (high - low) / 2;
+        match sub_q(file, middle) {
+            Some(q) if q.track >= number => high = middle,
+            Some(_) => low = middle,
+            None => return None,
+        }
+    }
+    Some(high)
+}
+
+/// Mode 1, mode 2 or nothing but audio, from the first sector's own header.
+pub fn data_mode(device: &Path, toc: &Toc) -> crate::cue::DataMode {
+    let Some(first) = toc.tracks.first().filter(|t| t.is_data) else {
+        return crate::cue::DataMode::Audio;
+    };
+    let Ok(file) = File::open(device) else { return crate::cue::DataMode::Audio };
+    let cdb = crate::scsi::read_cd_raw(first.start, 1);
+    match crate::scsi::read(&file, &cdb, 2352) {
+        Ok(sector) => crate::cue::DataMode::of_sector(&sector),
+        Err(_) => crate::cue::DataMode::Audio,
+    }
+}
+
 /// The table of contents, for a disc that has one.
 pub fn toc(device: &Path) -> Option<Toc> {
     read_toc(&File::open(device).ok()?)
@@ -499,6 +608,24 @@ mod tests {
         assert_eq!(offsets.first(), Some(&150));
         assert_eq!(offsets.last(), Some(&225_451));
         assert_eq!(offsets.len(), 13);
+    }
+
+    #[test]
+    fn a_countdown_is_read_as_frames() {
+        // 00:02:74 is two seconds and seventy-four frames: 224, meaning 225
+        // sectors of silence counting the one it was read from.
+        assert_eq!(frames(0x00, 0x02, 0x74), 224);
+        assert_eq!(frames(0x00, 0x01, 0x74), 149);
+        assert_eq!(frames(0x01, 0x00, 0x00), 4500);
+    }
+
+    #[test]
+    fn subchannel_numbers_arrive_binary_coded() {
+        // Track eleven comes back as 0x11, not as eleven.
+        assert_eq!(from_bcd(0x00), 0);
+        assert_eq!(from_bcd(0x09), 9);
+        assert_eq!(from_bcd(0x11), 11);
+        assert_eq!(from_bcd(0x99), 99);
     }
 
     #[test]

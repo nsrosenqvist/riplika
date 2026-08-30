@@ -20,6 +20,7 @@
 
 pub mod audio;
 pub mod cdtext;
+pub mod cue;
 pub mod disc;
 pub mod format;
 pub mod game;

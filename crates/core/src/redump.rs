@@ -89,6 +89,20 @@ impl Dat {
         crc_only
     }
 
+    /// A game whose every track matches, in order.
+    ///
+    /// A disc with audio on it is only right when all of it is right, and one
+    /// track matching proves nothing about the rest - a mis-cut boundary
+    /// leaves track one perfect and everything after it shifted.
+    pub fn find_all(&self, tracks: &[Digests]) -> Option<&Game> {
+        self.games.iter().find(|game| {
+            let roms: Vec<&Rom> =
+                game.roms.iter().filter(|r| !r.name.to_lowercase().ends_with(".cue")).collect();
+            roms.len() == tracks.len()
+                && roms.iter().zip(tracks).all(|(rom, got)| matches(rom, got))
+        })
+    }
+
     pub fn len(&self) -> usize {
         self.games.len()
     }
@@ -202,6 +216,17 @@ pub fn parse(xml: &str) -> Result<Dat> {
         return Err(Error("no games in this datfile; is it a Redump datfile?".into()));
     }
     Ok(dat)
+}
+
+/// Does one file match one entry? Size first because it is free.
+fn matches(rom: &Rom, got: &Digests) -> bool {
+    if rom.size != got.bytes {
+        return false;
+    }
+    match &rom.sha1 {
+        Some(sha1) => sha1.eq_ignore_ascii_case(&got.sha1_hex()),
+        None => rom.crc32 == Some(got.crc32),
+    }
 }
 
 fn rom_of(tag: &str) -> Option<Rom> {
@@ -394,6 +419,37 @@ mod tests {
     fn an_image_of_the_wrong_size_is_not_even_hashed_against() {
         let d = dat();
         assert!(d.find(&digests(123, "da39a3ee5e6b4b0d3255bfef95601890afd80709", 0)).is_none());
+    }
+
+    #[test]
+    fn a_disc_of_several_tracks_matches_when_all_of_them_do() {
+        let d = dat();
+        let tracks = [
+            digests(10_633_392, "a129332bf4d4a44a5098a74ba86f1150eded4bc7", 0x9d36_26e2),
+            digests(301_157_136, "75bcec88e76e4a6fc6ec2b60de03fb37afda7ace", 0x0fed_f856),
+        ];
+        let game = d.find_all(&tracks).expect("both tracks match");
+        assert_eq!(game.name, "Hatsukoi Monogatari (Japan) (Rev 1)");
+    }
+
+    #[test]
+    fn one_good_track_out_of_two_is_not_a_match() {
+        // A boundary cut one sector wrong leaves the first track perfect and
+        // everything after it shifted, which is exactly the failure that must
+        // not read as success.
+        let d = dat();
+        let tracks = [
+            digests(10_633_392, "a129332bf4d4a44a5098a74ba86f1150eded4bc7", 0x9d36_26e2),
+            digests(301_157_136, "0000000000000000000000000000000000000000", 0),
+        ];
+        assert!(d.find_all(&tracks).is_none());
+    }
+
+    #[test]
+    fn a_disc_with_the_wrong_number_of_tracks_is_not_that_disc() {
+        let d = dat();
+        let one = [digests(10_633_392, "a129332bf4d4a44a5098a74ba86f1150eded4bc7", 0x9d36_26e2)];
+        assert!(d.find_all(&one).is_none(), "two tracks were expected");
     }
 
     #[test]

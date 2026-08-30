@@ -10,7 +10,7 @@
 
 use riplika_core::Warning;
 use riplika_core::gamejob;
-use riplika_core::host::{Cancel, Fs, RealFs, RealRunner, Runner};
+use riplika_core::host::{Cancel, RealFs, RealRunner, Runner};
 use riplika_core::identify::catalogue::{Catalogue, Catalogues, Tmdb, TvMaze, UreqHttp, Wikidata};
 use riplika_core::identify::music::Album;
 use riplika_core::job::{Event, Pipeline, Ports, Report};
@@ -287,35 +287,26 @@ pub fn run_game(
                 let dats = dat_dir
                     .map(|d| riplika_core::redump::load_all(&real.fs, &d))
                     .unwrap_or_default();
-                let staging = root.join("Unidentified").join(gamejob::suggested_name(None, &disc));
+                let staging = root.join("Unidentified").join(gamejob::suggested_stem(None, &disc));
                 let dumped =
                     gamejob::dump(Path::new(&device), &staging, &real.fs, &cancel, &mut events)?;
                 if let Some(why) = gamejob::shortfall(&dumped) {
                     events(Event::Warning(Warning::FreeReaderIncomplete { why }));
                 }
 
-                let matched = gamejob::identify(&dats, &dumped.digests);
-                let system = matched.as_ref().map(|(dat, _)| dat.name.clone());
-                let dest = gamejob::destination(
-                    &root,
-                    matched.as_ref().map(|(_, f)| f),
-                    system.as_deref(),
-                    &disc,
-                );
-                if dest != staging {
-                    if let Some(dir) = dest.parent() {
-                        real.fs.create_dir_all(dir)?;
-                    }
-                    real.fs.rename(&staging, &dest)?;
-                }
+                // A disc of several tracks is only right when all of them
+                // are: one track matching proves nothing about a boundary cut
+                // in the wrong place.
+                let matched = gamejob::identify_all(&dats, &dumped);
                 let name = matched
                     .as_ref()
-                    .map(|(_, f)| f.game.name.clone())
+                    .map(|(_, game)| game.name.clone())
                     .unwrap_or_else(|| disc.describe());
+                let dest = dumped.path().map(Path::to_path_buf).unwrap_or(staging);
                 events(Event::ItemFinished {
                     index: 0,
                     destination: dest.clone(),
-                    bytes: dumped.digests.bytes,
+                    bytes: dumped.bytes(),
                 });
 
                 let mut report = Report::default();
@@ -329,7 +320,7 @@ pub fn run_game(
                         destination: Some(dest),
                     },
                     destination: PathBuf::new(),
-                    bytes: dumped.digests.bytes,
+                    bytes: dumped.bytes(),
                     subtitles: Vec::new(),
                 });
                 let _ = tx.send(Msg::Finished(Box::new(report)));

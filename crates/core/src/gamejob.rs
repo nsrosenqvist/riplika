@@ -23,14 +23,41 @@ use crate::rescue::{FileSink, PlainDisc, RawCd, ReadError, Rescue, SECTOR, Secto
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
 
+/// One track's file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DumpedTrack {
+    pub number: u8,
+    pub path: PathBuf,
+    pub digests: Digests,
+}
+
 /// What came off the disc.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dumped {
-    pub path: PathBuf,
-    pub digests: Digests,
+    /// One entry for an ordinary data disc, one per track for a disc with
+    /// audio on it - which is what a preservation database stores and
+    /// therefore the only thing it can recognise.
+    pub tracks: Vec<DumpedTrack>,
+    /// The sheet tying the tracks together, when there is more than one.
+    pub cue: Option<PathBuf>,
     /// Sectors the drive would not give up, which were filled with zeros.
     pub unreadable: u64,
     pub sectors: u64,
+}
+
+impl Dumped {
+    pub fn digests(&self) -> Vec<Digests> {
+        self.tracks.iter().map(|t| t.digests).collect()
+    }
+
+    /// The file to speak of when there is one worth naming.
+    pub fn path(&self) -> Option<&Path> {
+        self.cue.as_deref().or_else(|| self.tracks.first().map(|t| t.path.as_path()))
+    }
+
+    pub fn bytes(&self) -> u64 {
+        self.tracks.iter().map(|t| t.digests.bytes).sum()
+    }
 }
 
 impl Dumped {
@@ -44,10 +71,14 @@ impl Dumped {
     }
 }
 
-/// Read the whole disc into `dest`.
+/// Read the whole disc into `stem`.
+///
+/// A data disc becomes one file. A disc with audio beside the data becomes one
+/// file per track and a cue sheet, because that is what it is: a flat image of
+/// such a disc is a perfectly good copy that no database can recognise.
 pub fn dump(
     device: &Path,
-    dest: &Path,
+    stem: &Path,
     fs: &dyn Fs,
     cancel: &Cancel,
     events: &mut dyn FnMut(Event),
@@ -58,54 +89,110 @@ pub fn dump(
     // image of cooked sectors is a good image that matches nothing.
     let medium = crate::disc::medium(device).unwrap_or(Medium::Dvd);
     let sector = medium.raw_sector();
-    let sectors = match medium {
+    let toc = (medium == Medium::Cd).then(|| crate::disc::toc(device)).flatten();
+    let sectors = match &toc {
         // The table of contents is authoritative for a CD; the block device
         // reports the cooked length, which is a different number.
-        Medium::Cd => crate::disc::toc(device)
-            .map(|t| u64::from(t.leadout))
-            .ok_or_else(|| Error(format!("{} has no table of contents", device.display())))?,
-        _ => PlainDisc::sectors(device)?,
+        Some(toc) => u64::from(toc.leadout),
+        None => PlainDisc::sectors(device)?,
     };
     if sectors == 0 {
         return Err(Error(format!("{} has nothing in it", device.display())));
     }
-    events(Event::Stage(Stage::Rip));
 
-    // Written under a temporary name and moved only when whole, so a killed
-    // dump does not leave something that looks like a finished image.
-    let part = dest.with_extension("iso.part");
-    if let Some(dir) = part.parent() {
+    let spans = match &toc {
+        Some(toc) if toc.tracks.len() > 1 => {
+            crate::cue::layout(toc, &crate::disc::pregaps(device, toc))
+        }
+        _ => vec![crate::cue::TrackSpan {
+            number: 1,
+            is_data: true,
+            start: 0,
+            end: sectors as u32,
+            pregap: 0,
+        }],
+    };
+    let several = spans.len() > 1;
+    if let Some(dir) = stem.parent() {
         fs.create_dir_all(dir)?;
     }
-    let unreadable = {
-        let inner: Box<dyn SectorSource> = match medium {
-            Medium::Cd => Box::new(RawCd::open(device)?),
-            _ => Box::new(PlainDisc::open(device)?),
+
+    events(Event::Stage(Stage::Rip));
+    let name = stem.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let mut unreadable = 0;
+    let mut parts: Vec<(u8, PathBuf)> = Vec::new();
+    for span in &spans {
+        let dest = if several {
+            stem.with_file_name(crate::cue::track_file_name(&name, span.number))
+        } else {
+            stem.with_extension("iso")
         };
-        let mut source = Cancellable { inner, cancel };
-        let mut sink = FileSink::with_sector(&part, 0, sector)?;
-        let mut rescue = Rescue::new(Map::new(0, sectors)).filling_with(vec![0u8; sector]);
+        // Written under a temporary name and moved only when whole, so a
+        // killed dump does not leave something that looks finished.
+        let part = dest.with_extension(format!(
+            "{}.part",
+            dest.extension().unwrap_or_default().to_string_lossy()
+        ));
+        let mut source = Cancellable {
+            inner: match medium {
+                Medium::Cd => Box::new(RawCd::open(device)?),
+                _ => Box::new(PlainDisc::open(device)?),
+            },
+            cancel,
+        };
+        let mut sink = FileSink::with_sector(&part, u64::from(span.start), sector)?;
+        let mut rescue = Rescue::new(Map::new(u64::from(span.start), u64::from(span.end)))
+            .filling_with(vec![0u8; sector]);
+        let whole = sectors.max(1) as f32;
+        let done = f32::from(span.number.saturating_sub(1));
         rescue.run(&mut source, &mut sink, &mut |p| {
             events(Event::Progress {
                 stage: Stage::Rip,
-                fraction: p.fraction,
-                message: Some(p.pass.to_string()),
+                fraction: if several {
+                    (u64::from(span.start) as f32 + p.fraction * span.sectors() as f32) / whole
+                } else {
+                    p.fraction
+                },
+                message: Some(if several {
+                    format!("track {} - {}", span.number, p.pass)
+                } else {
+                    p.pass.to_string()
+                }),
             });
         })?;
-        rescue.map.count(crate::rescue::map::State::Bad)
-    };
+        let _ = done;
+        unreadable += rescue.map.count(crate::rescue::map::State::Bad);
+        fs.rename(&part, &dest)?;
+        parts.push((span.number, dest));
+    }
 
     events(Event::Stage(Stage::Verify));
-    let digests = hash::of_file(fs, &part, &mut |at, total| {
-        events(Event::Progress {
-            stage: Stage::Verify,
-            fraction: at as f32 / total.max(1) as f32,
-            message: None,
-        });
-    })?;
+    let total: u64 = parts.len() as u64;
+    let mut tracks = Vec::new();
+    for (index, (number, path)) in parts.into_iter().enumerate() {
+        let digests = hash::of_file(fs, &path, &mut |at, size| {
+            events(Event::Progress {
+                stage: Stage::Verify,
+                fraction: (index as f32 + at as f32 / size.max(1) as f32) / total.max(1) as f32,
+                message: None,
+            });
+        })?;
+        tracks.push(DumpedTrack { number, path, digests });
+    }
 
-    fs.rename(&part, dest)?;
-    Ok(Dumped { path: dest.to_path_buf(), digests, unreadable, sectors })
+    // The sheet is what says where one track ends and the next begins, and
+    // without it the files are a pile rather than a disc.
+    let cue = several
+        .then(|| -> Result<PathBuf> {
+            let mode = crate::disc::data_mode(device, toc.as_ref().expect("a CD has a toc"));
+            let text = crate::cue::cue_sheet(&name, &spans, mode);
+            let path = stem.with_extension("cue");
+            fs.write(&path, text.as_bytes())?;
+            Ok(path)
+        })
+        .transpose()?;
+
+    Ok(Dumped { tracks, cue, unreadable, sectors })
 }
 
 /// Stops the passes when the user asks.
@@ -126,19 +213,29 @@ impl SectorSource for Cancellable<'_> {
     }
 }
 
-/// What to call the image.
+/// What to call the disc, without an extension.
+///
+/// A stem rather than a filename because one disc can be several files: an
+/// image is `<stem>.iso`, but a disc with audio on it is `<stem> (Track NN).bin`
+/// once per track and a `<stem>.cue` over the top.
 ///
 /// A match gives the preservation project's own name, which is the point of
 /// matching: it is the name every other copy of that disc has. Failing that,
 /// what the disc itself offered - which is a guess, and looks like one.
-pub fn suggested_name(found: Option<&redump::Found<'_>>, disc: &crate::game::GameDisc) -> String {
-    match found {
-        Some(f) => sanitize(&f.rom.name),
-        None => sanitize(&format!("{}.iso", disc.describe())),
-    }
+pub fn suggested_stem(found: Option<&redump::Found<'_>>, disc: &crate::game::GameDisc) -> String {
+    let name = match found {
+        Some(f) => f.rom.name.rsplit_once('.').map_or(f.rom.name.clone(), |(s, _)| s.to_string()),
+        None => disc.describe(),
+    };
+    sanitize(&name)
 }
 
-/// Where the image goes under `root`.
+/// What a single-file image is called.
+pub fn suggested_name(found: Option<&redump::Found<'_>>, disc: &crate::game::GameDisc) -> String {
+    format!("{}.iso", suggested_stem(found, disc))
+}
+
+/// Where the disc's files go under `root`, as a stem for them to share.
 ///
 /// Matched discs are filed by system, because that is the one grouping a
 /// datfile actually knows and the one an emulator's library expects. Unmatched
@@ -153,7 +250,7 @@ pub fn destination(
         (Some(_), Some(system)) if !system.is_empty() => sanitize(system),
         _ => "Unidentified".to_string(),
     };
-    root.join(folder).join(suggested_name(found, disc))
+    root.join(folder).join(suggested_stem(found, disc))
 }
 
 /// Look an image up in every datfile there is.
@@ -162,6 +259,15 @@ pub fn identify<'a>(
     digests: &Digests,
 ) -> Option<(&'a Dat, redump::Found<'a>)> {
     dats.iter().find_map(|(_, dat)| dat.find(digests).map(|found| (dat, found)))
+}
+
+/// Look a whole dump up, however many files it came to.
+pub fn identify_all<'a>(
+    dats: &'a [(PathBuf, Dat)],
+    dumped: &Dumped,
+) -> Option<(&'a Dat, &'a redump::Game)> {
+    let tracks = dumped.digests();
+    dats.iter().find_map(|(_, dat)| dat.find_all(&tracks).map(|game| (dat, game)))
 }
 
 /// How much of the disc is worth telling somebody about.
@@ -205,18 +311,21 @@ mod tests {
     fn a_matched_disc_takes_the_name_every_other_copy_has() {
         let g = game();
         let found = Found { game: &g, rom: &g.roms[0] };
+        assert_eq!(suggested_stem(Some(&found), &disc()), "Half-Life (Europe)");
         assert_eq!(suggested_name(Some(&found), &disc()), "Half-Life (Europe).iso");
     }
 
     #[test]
     fn an_unmatched_disc_is_named_from_what_it_offered_and_looks_like_a_guess() {
         assert_eq!(suggested_name(None, &disc()), "HALFLIFE.iso");
+        assert_eq!(suggested_stem(None, &disc()), "HALFLIFE");
         let ps2 = GameDisc {
             label: Some("SLUS_202.02".into()),
             serial: Some("SLUS-20202".into()),
             root: Vec::new(),
         };
         assert_eq!(suggested_name(None, &ps2), "SLUS_202.02 (SLUS-20202).iso");
+        assert_eq!(suggested_stem(None, &ps2), "SLUS_202.02 (SLUS-20202)");
     }
 
     #[test]
@@ -225,7 +334,7 @@ mod tests {
         let found = Found { game: &g, rom: &g.roms[0] };
         assert_eq!(
             destination(Path::new("/games"), Some(&found), Some("Sony - PlayStation 2"), &disc()),
-            Path::new("/games/Sony - PlayStation 2/Half-Life (Europe).iso")
+            Path::new("/games/Sony - PlayStation 2/Half-Life (Europe)")
         );
     }
 
@@ -233,7 +342,7 @@ mod tests {
     fn an_unmatched_disc_is_filed_where_that_is_obvious() {
         assert_eq!(
             destination(Path::new("/games"), None, None, &disc()),
-            Path::new("/games/Unidentified/HALFLIFE.iso")
+            Path::new("/games/Unidentified/HALFLIFE")
         );
     }
 
@@ -249,11 +358,54 @@ mod tests {
 
     fn dumped(unreadable: u64) -> Dumped {
         Dumped {
-            path: PathBuf::from("/games/x.iso"),
-            digests: Digests { crc32: 0, sha1: [0; 20], bytes: 0 },
+            tracks: vec![DumpedTrack {
+                number: 1,
+                path: PathBuf::from("/games/x.iso"),
+                digests: Digests { crc32: 0, sha1: [0; 20], bytes: 0 },
+            }],
+            cue: None,
             unreadable,
             sectors: 1_000_000,
         }
+    }
+
+    fn many_tracks() -> Dumped {
+        Dumped {
+            tracks: (1..=3)
+                .map(|n| DumpedTrack {
+                    number: n,
+                    path: PathBuf::from(format!("/games/x (Track {n:02}).bin")),
+                    digests: Digests { crc32: 0, sha1: [0; 20], bytes: 100 },
+                })
+                .collect(),
+            cue: Some(PathBuf::from("/games/x.cue")),
+            unreadable: 0,
+            sectors: 1_000,
+        }
+    }
+
+    #[test]
+    fn a_stem_carries_no_extension_because_one_disc_can_be_many_files() {
+        // Appending to a name that already ended in .iso produced
+        // "MOTO_RACER.iso (Track 01).bin".
+        let g = game();
+        let found = Found { game: &g, rom: &g.roms[0] };
+        assert!(!suggested_stem(Some(&found), &disc()).contains(".iso"));
+        assert!(!suggested_stem(None, &disc()).contains('.'));
+    }
+
+    #[test]
+    fn a_disc_of_several_tracks_is_spoken_of_by_its_cue_sheet() {
+        // The sheet is the disc; the track files on their own are a pile.
+        let d = many_tracks();
+        assert_eq!(d.path(), Some(Path::new("/games/x.cue")));
+        assert_eq!(d.bytes(), 300, "the whole disc, not one track of it");
+        assert_eq!(d.digests().len(), 3);
+    }
+
+    #[test]
+    fn a_single_file_dump_is_spoken_of_by_that_file() {
+        assert_eq!(dumped(0).path(), Some(Path::new("/games/x.iso")));
     }
 
     #[test]

@@ -80,6 +80,21 @@ pub fn read_cd_raw(lba: u32, sectors: u32) -> [u8; 12] {
     [0xBE, 0x00, l[0], l[1], l[2], l[3], n[1], n[2], n[3], 0xF8, 0x00, 0x00]
 }
 
+/// `READ CD`, and the Q subchannel with it.
+///
+/// Sixteen bytes are appended to each sector saying which track it belongs to
+/// and whether it is inside the track or in the silence in front of it. That
+/// second fact is what a cue sheet needs and the table of contents does not
+/// carry.
+pub fn read_cd_raw_with_q(lba: u32, sectors: u32) -> [u8; 12] {
+    let mut cdb = read_cd_raw(lba, sectors);
+    cdb[10] = 0x02;
+    cdb
+}
+
+/// Bytes a raw sector takes when the Q subchannel comes with it.
+pub const RAW_WITH_Q: usize = 2352 + 16;
+
 const SG_IO: libc::c_ulong = 0x2285;
 const SG_DXFER_FROM_DEV: i32 = -3;
 
@@ -136,6 +151,14 @@ mod tests {
         // but it should be obvious what happens if it did.
         let cdb = read_cd_raw(0, 0x00FF_FFFF);
         assert_eq!(&cdb[6..9], &[0xFF, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn asking_for_the_subchannel_changes_only_the_last_byte() {
+        let plain = read_cd_raw(1234, 1);
+        let with_q = read_cd_raw_with_q(1234, 1);
+        assert_eq!(with_q[10], 0x02, "formatted Q");
+        assert_eq!(plain[..10], with_q[..10], "the read itself is the same read");
     }
 
     #[test]

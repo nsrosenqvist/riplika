@@ -144,6 +144,29 @@ pub fn disc(drive: Option<&str>) -> Result<(), String> {
     let kind = riplika_core::disc::identify(Path::new(&d.device));
     println!("{}  {}", d.device, kind.describe());
 
+    if let DiscKind::Data(Some(toc)) = &kind
+        && toc.is_audio()
+    {
+        let gaps = riplika_core::disc::pregaps(Path::new(&d.device), toc);
+        let mode = riplika_core::disc::data_mode(Path::new(&d.device), toc);
+        let spans = riplika_core::cue::layout(toc, &gaps);
+        println!("mode      {mode:?}");
+        println!(
+            "{:>5}  {:>8} {:>8} {:>7}  {:>12}",
+            "track", "start", "sectors", "pregap", "bytes"
+        );
+        for span in &spans {
+            println!(
+                "{:>5}  {:>8} {:>8} {:>7}  {:>12}",
+                span.number,
+                span.start,
+                span.sectors(),
+                span.pregap,
+                span.bytes()
+            );
+        }
+        return Ok(());
+    }
     let DiscKind::Audio(toc) = &kind else { return Ok(()) };
     println!("disc id   {}", toc.musicbrainz_id());
     match riplika_core::cdtext::read(Path::new(&d.device)) {
@@ -395,7 +418,7 @@ pub fn rip_game(
 
     // Dumped beside the destination and moved into place once named, since the
     // name is not known until the bytes are.
-    let staging = root.join("Unidentified").join(gamejob::suggested_name(None, &inspected));
+    let staging = root.join("Unidentified").join(gamejob::suggested_stem(None, &inspected));
     let mut last = String::new();
     let mut say = |e: Event| {
         if let Event::Progress { stage, fraction, message } = e {
@@ -415,31 +438,34 @@ pub fn rip_game(
         .map_err(|e| e.to_string())?;
     println!();
 
-    println!("  size   {}", dumped.digests.bytes);
-    println!("  crc32  {}", dumped.digests.crc32_hex());
-    println!("  sha1   {}", dumped.digests.sha1_hex());
+    for track in &dumped.tracks {
+        let label = if dumped.tracks.len() > 1 {
+            format!("track {:02}", track.number)
+        } else {
+            "image".into()
+        };
+        println!(
+            "  {label}  {:>12}  {}  {}",
+            track.digests.bytes,
+            track.digests.crc32_hex(),
+            track.digests.sha1_hex()
+        );
+    }
     if let Some(why) = gamejob::shortfall(&dumped) {
         println!("\n{why}");
     }
 
-    let matched = gamejob::identify(&dats, &dumped.digests);
-    let system = matched.as_ref().map(|(dat, _)| dat.name.clone());
-    let dest = gamejob::destination(
-        &root,
-        matched.as_ref().map(|(_, f)| f),
-        system.as_deref(),
-        &inspected,
-    );
+    // A disc of several tracks is only right when all of them are: one track
+    // matching proves nothing about a boundary cut in the wrong place.
+    let matched = gamejob::identify_all(&dats, &dumped);
     match &matched {
-        Some((dat, found)) => println!("\n{}\n  {}", found.game.name, dat.name),
+        Some((dat, game)) => println!("\n{}\n  {}", game.name, dat.name),
+        None if dumped.tracks.len() > 1 => {
+            println!("\nNo datfile has this disc.");
+        }
         None => println!("\nNo datfile has this image."),
     }
-    if dest != staging {
-        if let Some(dir) = dest.parent() {
-            real.fs.create_dir_all(dir).map_err(|e| e.to_string())?;
-        }
-        real.fs.rename(&staging, &dest).map_err(|e| e.to_string())?;
-    }
+    let dest = dumped.path().map(Path::to_path_buf).unwrap_or_default();
     println!("  {}", dest.display());
     Ok(())
 }
