@@ -30,29 +30,9 @@ const MAX_TITLE: u32 = 99;
 /// Titles shorter than this are menu stubs and first-play jumps.
 const MIN_TITLE_MS: Millis = 5_000;
 
-/// ISO 9660 puts its primary volume descriptor in sector 16.
-const PVD_OFFSET: u64 = 16 * 2048;
-
-/// Read the volume label out of an ISO 9660 primary volume descriptor.
-///
-/// The label is the one clue a DVD gives about what it is, and it costs a
-/// single 2 KB read - no library, no disc spin-up beyond what is already
-/// happening.
-pub fn volume_label(pvd: &[u8]) -> Option<String> {
-    // type 1, then the magic, or this is not a primary volume descriptor
-    if pvd.len() < 72 || pvd[0] != 1 || &pvd[1..6] != b"CD001" {
-        return None;
-    }
-    let raw = &pvd[40..72];
-    let label: String = raw
-        .iter()
-        .map(|b| *b as char)
-        .collect::<String>()
-        .trim_end_matches(['\0', ' '])
-        .trim()
-        .to_string();
-    if label.is_empty() { None } else { Some(label) }
-}
+/// Parsing the descriptor lives with the rest of the disc probing now; the
+/// name stays here because this is where callers look for it.
+pub use crate::disc::volume_label;
 
 fn read_volume_label(device: &Path) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
@@ -62,6 +42,9 @@ fn read_volume_label(device: &Path) -> Option<String> {
     f.read_exact(&mut buf).ok()?;
     volume_label(&buf)
 }
+
+/// ISO 9660 puts its primary volume descriptor in sector 16.
+const PVD_OFFSET: u64 = 16 * 2048;
 
 /// libdvdcss decryption methods, in the order worth trying.
 ///
@@ -590,6 +573,7 @@ impl super::Ripper for DvdVideo<'_> {
                 id: device.to_string_lossy().into_owned(),
                 name: model_of(&device),
                 disc_label: read_volume_label(&device),
+                kind: Some(crate::disc::identify(&device)),
                 device: device.to_string_lossy().into_owned(),
             })
             .collect())
@@ -839,6 +823,7 @@ pub(crate) mod tests {
             device: "/dev/riplika-no-such-device".into(),
             name: "d".into(),
             disc_label: Some("X".into()),
+            kind: None,
         }
     }
 
@@ -971,6 +956,7 @@ mod health_tests {
             device: "/dev/riplika-no-such-device".into(),
             name: "drive".into(),
             disc_label: Some("DISC".into()),
+            kind: None,
         }
     }
 
@@ -1010,6 +996,7 @@ mod tolerance_tests {
             device: "/dev/riplika-no-such-device".into(),
             name: "d".into(),
             disc_label: Some("X".into()),
+            kind: None,
         }
     }
 
@@ -1249,6 +1236,7 @@ mod scan_progress_tests {
             device: "/dev/riplika-no-such-device".into(),
             name: "d".into(),
             disc_label: Some("DISC".into()),
+            kind: None,
         }
     }
 
@@ -1299,6 +1287,7 @@ mod cancel_tests {
             device: "/dev/riplika-no-such-device".into(),
             name: "d".into(),
             disc_label: Some("X".into()),
+            kind: None,
         }
     }
 
@@ -1371,6 +1360,7 @@ mod health_enforcement_tests {
             device: "/dev/riplika-no-such-device".into(),
             name: "d".into(),
             disc_label: Some("DISC".into()),
+            kind: None,
         }
     }
 

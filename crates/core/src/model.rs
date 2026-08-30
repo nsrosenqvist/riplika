@@ -6,6 +6,7 @@
 //! result is a *value* rather than a side effect: the GUI has to be able to show
 //! "I think this is Parks and Recreation season 7" and let you say no.
 
+use crate::disc::DiscKind;
 use crate::lang::{Language, LanguageSet};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -154,11 +155,32 @@ pub struct Drive {
     pub name: String,
     /// Volume label when a disc is loaded.
     pub disc_label: Option<String>,
+    /// What the disc turned out to be, when the drive was probed for it.
+    ///
+    /// `None` means nobody looked. A reader that reports only a volume
+    /// label leaves it unset and [`Drive::has_disc`] falls back to that.
+    pub kind: Option<DiscKind>,
 }
 
 impl Drive {
     pub fn has_disc(&self) -> bool {
-        self.disc_label.is_some()
+        match &self.kind {
+            Some(kind) => kind.has_disc(),
+            // An audio CD carries no volume label, so this fallback calls
+            // one an empty drive. That is why anything that can probe the
+            // device should, and only a parsed-from-text drive should not.
+            None => self.disc_label.is_some(),
+        }
+    }
+
+    /// What to show for this drive in a listing.
+    pub fn describe_disc(&self) -> String {
+        match (&self.kind, &self.disc_label) {
+            (Some(DiscKind::Audio(toc)), _) => DiscKind::Audio(toc.clone()).describe(),
+            (_, Some(label)) => label.clone(),
+            (Some(kind), None) if kind.has_disc() => kind.describe(),
+            _ => "(empty)".into(),
+        }
     }
 }
 

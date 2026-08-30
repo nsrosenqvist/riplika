@@ -371,6 +371,7 @@ mod tests {
                 device: "/dev/sr0".into(),
                 name: "drive".into(),
                 disc_label: Some(label.into()),
+                kind: None,
             },
             label: label.into(),
             titles: durations

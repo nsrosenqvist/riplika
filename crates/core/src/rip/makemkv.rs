@@ -93,6 +93,7 @@ pub fn parse_drives(output: &str) -> Vec<Drive> {
             device,
             name: f[4].trim().to_string(),
             disc_label: if label.is_empty() { None } else { Some(label) },
+            kind: None,
         });
     }
     out

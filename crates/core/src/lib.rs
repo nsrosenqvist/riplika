@@ -18,6 +18,7 @@
 //!    `Catalogue` all have fake implementations used by the tests, so the whole
 //!    pipeline runs end to end in milliseconds without hardware or network.
 
+pub mod disc;
 pub mod format;
 pub mod host;
 pub mod identify;

@@ -166,7 +166,13 @@ impl Ripper for MakeMkv<'_> {
         // drives; it reports failure for the disc and success for the listing,
         // so the exit status is not meaningful here.
         let out = self.runner.run(&makemkv::drives_command())?;
-        let drives = makemkv::parse_drives(&out.stdout);
+        let mut drives = makemkv::parse_drives(&out.stdout);
+        // MakeMKV names the device but not what kind of disc is in it, and it
+        // reports an audio CD with no label at all - which would read as an
+        // empty drive. The device is right here, so ask it directly.
+        for drive in &mut drives {
+            drive.kind = Some(crate::disc::identify(Path::new(&drive.device)));
+        }
         if drives.is_empty()
             && let Some(msg) = makemkv::parse_error(&out.stdout)
         {
@@ -357,6 +363,7 @@ TINFO:0,27,0,"title_t00.mkv"
                 device: "/dev/sr0".into(),
                 name: "d".into(),
                 disc_label: Some("X".into()),
+                kind: None,
             },
             label: "X".into(),
             titles: vec![
@@ -532,6 +539,7 @@ TINFO:0,27,0,"title_t00.mkv"
             device: "/dev/sr0".into(),
             name: "drive".into(),
             disc_label: Some("DISC".into()),
+            kind: None,
         }
     }
 

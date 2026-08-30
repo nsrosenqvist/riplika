@@ -124,13 +124,7 @@ pub fn drives(which: &str) -> Result<(), String> {
     // No titles are read here, so chapter accuracy has nothing to apply to.
     let r = reader(which, &real.runner, false)?;
     for d in r.drives().map_err(|e| e.to_string())? {
-        println!(
-            "{:8} {:12} {:32} {}",
-            d.id,
-            d.device,
-            d.name,
-            d.disc_label.as_deref().unwrap_or("(empty)")
-        );
+        println!("{:8} {:12} {:32} {}", d.id, d.device, d.name, d.describe_disc());
     }
     Ok(())
 }
@@ -657,6 +651,7 @@ mod tests {
             device: format!("/dev/{id}"),
             name: "drive".into(),
             disc_label: label.map(str::to_string),
+            kind: None,
         }
     }
 

@@ -13,6 +13,7 @@ mod worker;
 use crate::i18n::{tr, tr_args, tr_n};
 use adw::prelude::*;
 use gtk::glib;
+use riplika_core::disc::DiscKind;
 use riplika_core::job::{Event, Report};
 use riplika_core::lang::{self, LanguageSet};
 use riplika_core::model::*;
@@ -654,6 +655,25 @@ fn opening_query(last_search: &str, settled_on: Option<&str>, label: Option<&str
 /// Where a warning carries a `why`, that text came from the operating system,
 /// ffmpeg or libdvdcss and is English whatever happens here. Only the sentence
 /// around it is ours to translate.
+/// What the drive page calls the disc.
+///
+/// Mirrors `Drive::describe_disc`, which stays English because the CLI and the
+/// job log read it; this is the same information said in the user's language.
+fn disc_text(d: &Drive) -> String {
+    match (&d.kind, &d.disc_label) {
+        (Some(DiscKind::Audio(toc)), _) => {
+            let tracks = tr_n("%d track", "%d tracks", toc.audio_count() as u32);
+            let minutes = tr_n("%d minute", "%d minutes", (toc.duration() / 60_000) as u32);
+            tr_args("Audio CD, %1$s, %2$s", &[&tracks, &minutes])
+        }
+        (_, Some(label)) => label.clone(),
+        (Some(DiscKind::DvdVideo), None) => tr("DVD-Video"),
+        (Some(DiscKind::BluRay), None) => tr("Blu-ray"),
+        (Some(DiscKind::Data), None) => tr("Data disc"),
+        _ => tr("No disc"),
+    }
+}
+
 fn warning_text(w: &Warning) -> String {
     match w {
         Warning::CouldNotIdentify { why } => tr_args("could not identify the disc: %1$s", &[why]),
@@ -956,34 +976,31 @@ impl App {
     fn drive_status(drives: &[Drive], selected: Option<&Drive>) -> (String, String, bool) {
         if drives.is_empty() {
             return (
-                "No disc drive".into(),
-                "No optical drive was found. Connect one and look again.".into(),
+                tr("No disc drive"),
+                tr("No optical drive was found. Connect one and look again."),
                 false,
             );
         }
         match selected {
-            Some(d) => match &d.disc_label {
-                // The label is what the disc calls itself, and seeing it is the
-                // first confirmation that the right disc is in the tray.
-                Some(label) => (label.clone(), format!("{} in {}", d.name, d.device), true),
-                None => (
-                    "No disc".into(),
-                    format!("Insert a DVD into {}, then look again.", d.device),
-                    false,
-                ),
-            },
-            None => ("No disc".into(), "Choose a drive.".into(), false),
+            // What the disc calls itself, or failing a label, what it turned
+            // out to be. Seeing it is the first confirmation that the right
+            // disc is in the tray.
+            Some(d) if d.has_disc() => {
+                (disc_text(d), tr_args("%1$s in %2$s", &[&d.name, &d.device]), true)
+            }
+            Some(d) => (
+                tr("No disc"),
+                tr_args("Insert a disc into %1$s, then look again.", &[&d.device]),
+                false,
+            ),
+            None => (tr("No disc"), tr("Choose a drive."), false),
         }
     }
 
     fn show_drives(&self, drives: &[Drive]) {
         let model = gtk::StringList::new(&[]);
         for d in drives {
-            model.append(&format!(
-                "{}  -  {}",
-                d.device,
-                d.disc_label.as_deref().unwrap_or("empty")
-            ));
+            model.append(&format!("{}  -  {}", d.device, disc_text(d)));
         }
         self.ui.drive_combo.set_model(Some(&model));
         // A chooser offering one option is not a choice worth showing.
@@ -1820,6 +1837,7 @@ mod drive_page_tests {
             device: device.into(),
             name: "PIONEER BD-RW".into(),
             disc_label: label.map(str::to_string),
+            kind: None,
         }
     }
 

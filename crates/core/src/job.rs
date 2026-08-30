@@ -761,6 +761,7 @@ mod tests {
                 device: "/dev/sr0".into(),
                 name: "drive".into(),
                 disc_label: Some("PARKS_AND_RECREATION_S7D1".into()),
+                kind: None,
             },
             label: "PARKS_AND_RECREATION_S7D1".into(),
             titles: vec![
@@ -1176,6 +1177,7 @@ mod preview_tests {
             device: "/dev/sr0".into(),
             name: "d".into(),
             disc_label: Some("PARKS_AND_RECREATION_S7D1".into()),
+            kind: None,
         }
     }
 
@@ -1315,6 +1317,7 @@ mod selection_tests {
                 device: "/dev/sr0".into(),
                 name: "d".into(),
                 disc_label: Some("PARKS_AND_RECREATION_S7D1".into()),
+                kind: None,
             },
             label: "PARKS_AND_RECREATION_S7D1".into(),
             titles: vec![
