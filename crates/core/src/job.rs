@@ -27,6 +27,8 @@ pub enum Stage {
     Identify,
     Rip,
     Organise,
+    /// Checking a finished image against what it should be.
+    Verify,
     Subtitles,
     Transcode,
 }
@@ -38,6 +40,7 @@ impl Stage {
             Stage::Identify => "Identifying",
             Stage::Rip => "Ripping",
             Stage::Organise => "Sorting titles",
+            Stage::Verify => "Verifying",
             Stage::Subtitles => "Reading subtitles",
             Stage::Transcode => "Transcoding",
         }

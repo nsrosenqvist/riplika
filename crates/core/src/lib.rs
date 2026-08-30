@@ -22,6 +22,8 @@ pub mod audio;
 pub mod cdtext;
 pub mod disc;
 pub mod format;
+pub mod game;
+pub mod gamejob;
 pub mod hash;
 pub mod host;
 pub mod identify;

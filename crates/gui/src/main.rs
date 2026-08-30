@@ -800,6 +800,7 @@ fn stage_label(stage: riplika_core::job::Stage) -> String {
         Stage::Identify => tr("Identifying"),
         Stage::Rip => tr("Ripping"),
         Stage::Organise => tr("Sorting titles"),
+        Stage::Verify => tr("Verifying"),
         Stage::Subtitles => tr("Reading subtitles"),
         Stage::Transcode => tr("Transcoding"),
     }

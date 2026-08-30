@@ -280,12 +280,119 @@ pub fn rip_cd(
     Ok(())
 }
 
+/// Dump a game disc and work out what it was.
+pub fn rip_game(
+    drive: Option<&str>,
+    out: Option<PathBuf>,
+    dat: Option<&Path>,
+) -> Result<(), String> {
+    use riplika_core::disc::DiscKind;
+    use riplika_core::job::{Event, Stage};
+    use riplika_core::{game, gamejob, rip::iso};
+
+    let real = Real::new();
+    let prefs = riplika_core::prefs::Preferences::load();
+    let d = pick_drive(&DvdVideo::new(&real.runner), drive)?;
+    let device = PathBuf::from(&d.device);
+
+    let kind = riplika_core::disc::identify(&device);
+    if !matches!(kind, DiscKind::Data | DiscKind::BluRay) {
+        return Err(format!("{} is holding a {}, not a data disc", d.device, kind.describe()));
+    }
+
+    // What the disc says before anything is read off it. For a PlayStation
+    // that is a real identification; for a PC disc it is a volume label and a
+    // hope.
+    let mut source = riplika_core::rescue::PlainDisc::open(&device).map_err(|e| e.to_string())?;
+    let inspected = game::inspect(&mut |lba, count| {
+        use riplika_core::rescue::SectorSource;
+        source.read(lba, count as u64).map_err(|_| riplika_core::Error("read failed".into()))
+    })
+    .unwrap_or_default();
+    println!("{}", inspected.describe());
+    if let Some(serial) = &inspected.serial {
+        println!("  PlayStation serial {serial}");
+    }
+    let _ = iso::SECTOR;
+
+    let root = out
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Games")))
+        .ok_or("no output directory, and no HOME to guess one from")?;
+
+    let dats = load_dats(&real, dat.map(Path::to_path_buf).or_else(|| prefs.dat_dir()))?;
+    println!("{} disc(s) known from datfiles\n", dats.iter().map(|(_, d)| d.len()).sum::<usize>());
+
+    // Dumped beside the destination and moved into place once named, since the
+    // name is not known until the bytes are.
+    let staging = root.join("Unidentified").join(gamejob::suggested_name(None, &inspected));
+    let mut last = String::new();
+    let mut say = |e: Event| {
+        if let Event::Progress { stage, fraction, message } = e {
+            let what = match stage {
+                Stage::Verify => "hashing".to_string(),
+                _ => message.unwrap_or_else(|| "reading".into()),
+            };
+            let line = format!("  {what} {:.0}%", fraction * 100.0);
+            if line != last {
+                print!("\r{line}   ");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+                last = line;
+            }
+        }
+    };
+    let dumped = gamejob::dump(&device, &staging, &real.fs, &real.cancel, &mut say)
+        .map_err(|e| e.to_string())?;
+    println!();
+
+    println!("  size   {}", dumped.digests.bytes);
+    println!("  crc32  {}", dumped.digests.crc32_hex());
+    println!("  sha1   {}", dumped.digests.sha1_hex());
+    if let Some(why) = gamejob::shortfall(&dumped) {
+        println!("\n{why}");
+    }
+
+    let matched = gamejob::identify(&dats, &dumped.digests);
+    let system = matched.as_ref().map(|(dat, _)| dat.name.clone());
+    let dest = gamejob::destination(
+        &root,
+        matched.as_ref().map(|(_, f)| f),
+        system.as_deref(),
+        &inspected,
+    );
+    match &matched {
+        Some((dat, found)) => println!("\n{}\n  {}", found.game.name, dat.name),
+        None => println!("\nNo datfile has this image."),
+    }
+    if dest != staging {
+        if let Some(dir) = dest.parent() {
+            real.fs.create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        real.fs.rename(&staging, &dest).map_err(|e| e.to_string())?;
+    }
+    println!("  {}", dest.display());
+    Ok(())
+}
+
+fn load_dats(
+    real: &Real,
+    where_from: Option<PathBuf>,
+) -> Result<Vec<(PathBuf, riplika_core::redump::Dat)>, String> {
+    use riplika_core::redump;
+    let Some(where_from) = where_from else { return Ok(Vec::new()) };
+    if where_from.is_dir() {
+        return Ok(redump::load_all(&real.fs, &where_from));
+    }
+    let bytes = real.fs.read(&where_from).map_err(|e| e.to_string())?;
+    let dat = redump::parse(&String::from_utf8_lossy(&bytes)).map_err(|e| e.to_string())?;
+    Ok(vec![(where_from, dat)])
+}
+
 /// Say what a dumped image is, and whether it is whole.
 ///
 /// One act, not two: a hit in a preservation datfile names the disc *and*
 /// proves the dump is byte-for-byte right.
 pub fn check_dump(image: &Path, dat: Option<&Path>) -> Result<(), String> {
-    use riplika_core::{hash, redump};
+    use riplika_core::hash;
 
     let real = Real::new();
     let prefs = riplika_core::prefs::Preferences::load();
@@ -294,13 +401,7 @@ pub fn check_dump(image: &Path, dat: Option<&Path>) -> Result<(), String> {
         .or_else(|| prefs.dat_dir())
         .ok_or("no datfiles: pass --dat, or put them in the configured folder")?;
 
-    let dats = if where_from.is_dir() {
-        redump::load_all(&real.fs, &where_from)
-    } else {
-        let bytes = real.fs.read(&where_from).map_err(|e| e.to_string())?;
-        let dat = redump::parse(&String::from_utf8_lossy(&bytes)).map_err(|e| e.to_string())?;
-        vec![(where_from.clone(), dat)]
-    };
+    let dats = load_dats(&real, Some(where_from.clone()))?;
     if dats.is_empty() {
         return Err(format!("no datfiles found in {}", where_from.display()));
     }

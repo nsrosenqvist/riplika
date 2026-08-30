@@ -117,6 +117,18 @@ enum Cmd {
         #[arg(long)]
         from_disc: bool,
     },
+    /// Dump a game disc to an image and identify it.
+    RipGame {
+        /// Drive to read, by device or MakeMKV id.
+        #[arg(long)]
+        drive: Option<String>,
+        /// Where the image goes. Defaults to ~/Games.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// A datfile, or a directory of them. Defaults to the configured one.
+        #[arg(long)]
+        dat: Option<PathBuf>,
+    },
     /// Identify a dumped game image against Redump datfiles.
     CheckDump {
         /// The image to check.
@@ -364,6 +376,7 @@ fn dispatch() -> Result<(), String> {
         Cmd::Drives { source } => run::drives(&source.reader),
         Cmd::Disc { drive } => run::disc(drive.as_deref()),
         Cmd::CheckDump { image, dat } => run::check_dump(&image, dat.as_deref()),
+        Cmd::RipGame { drive, out, dat } => run::rip_game(drive.as_deref(), out, dat.as_deref()),
         Cmd::RipCd { drive, out, track, format, from_disc } => {
             run::rip_cd(drive.as_deref(), out, track, format.as_deref(), from_disc)
         }
