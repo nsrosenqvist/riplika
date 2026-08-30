@@ -29,6 +29,7 @@ core/src/
   job.rs         the video stages in order, reporting as it goes
 
   disc.rs        what kind of disc is in the drive, and its table of contents
+  cue.rs         where one track ends and the next begins
   scsi.rs        commands the kernel has no interface for
   cdtext.rs      what a CD says about itself when no catalogue knows it
   audio.rs       FLAC and MP3: encoder settings and tag vocabularies
@@ -138,6 +139,10 @@ Commit messages say what changed and why it was wrong before. They are the proje
 - **MusicBrainz allows one request a second** and refuses the rest. An empty result therefore means either "never heard of it" or "never asked", and only one of those is worth telling somebody about — `Found::lookup_failed` keeps them apart.
 - **Reading a CD raw is about a fifth the speed of reading it cooked** (0.9 MB/s against 4-plus on the drive here), because the drive cannot read ahead the same way. That is the price of an image that can be verified.
 - **Do not benchmark the drive while something else is using it.** Doing that here produced a figure seven times too low and nearly a wrong conclusion with it.
+- **A disc with audio tracks on it is not necessarily a music disc.** Which track comes *first* decides. Mixed Mode puts data first and its soundtrack after — that is a PlayStation game, and reading "has audio tracks" as "is an album" filed one as music and sent its disc id to MusicBrainz. An enhanced music CD does the opposite: audio first, data track last, in a session of its own.
+- **A track's file starts at its pregap, not where the table of contents says the track starts.** The gap is usually 150 sectors and assuming that is how a ripper gets most discs right and some wrong: on the Moto Racer disc here, track two's pregap is 225. Read it from the Q subchannel.
+- **The drive can repeat a subchannel answer.** At that same boundary two consecutive sectors came back with identical Q data, so the boundary looked one sector early and the pregap computed as 226 — not a whole count of anything. The *countdown* field in the same answer was right. Trust the countdown, not the address.
+- **A disc is only identified when every track matches.** A boundary cut one sector wrong leaves the first file perfect and shifts everything after it, so checking one track proves nothing.
 
 ## Verifying against real hardware
 
