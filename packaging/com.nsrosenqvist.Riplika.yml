@@ -128,6 +128,11 @@ modules:
       - install -Dm755 target/release/riplika /app/bin/riplika
       - install -Dm644 data/com.nsrosenqvist.Riplika.desktop
           /app/share/applications/com.nsrosenqvist.Riplika.desktop
+      # The name matters twice over: flatpak exports only icons named after the
+      # app id, and the desktop entry's Icon= is that same name. Anywhere else
+      # or anything else and the launcher shows a blank square.
+      - install -Dm644 data/icons/hicolor/scalable/apps/com.nsrosenqvist.Riplika.svg
+          /app/share/icons/hicolor/scalable/apps/com.nsrosenqvist.Riplika.svg
       # the translations, where i18n::init looks inside a sandbox
       - ./po/install.sh /app/share
 

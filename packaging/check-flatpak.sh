@@ -34,6 +34,13 @@ check "the desktop entry shipped"      bash -c \
   "flatpak run --command=sh $APP -c 'test -f /app/share/applications/$APP.desktop'"
 check "it declares the DVD mime type"  bash -c \
   "flatpak run --command=sh $APP -c 'grep -q x-content/video-dvd /app/share/applications/$APP.desktop'"
+# Two halves of one thing. Flatpak exports only icons named after the app id,
+# and the entry's Icon= has to be that same name - either half wrong and the
+# application launches with a blank square where its icon should be.
+check "the icon shipped"               bash -c \
+  "flatpak run --command=sh $APP -c 'test -f /app/share/icons/hicolor/scalable/apps/$APP.svg'"
+check "the entry points at that icon"  bash -c \
+  "flatpak run --command=sh $APP -c 'grep -qx Icon=$APP /app/share/applications/$APP.desktop'"
 echo
 echo "  $pass passed, $fail failed"
 exit $fail
