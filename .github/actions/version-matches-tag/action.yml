@@ -1,0 +1,30 @@
+# Refusing to build a tag that disagrees with the tree it points at.
+#
+# The alternative is to write the tag's version into the manifest here, which
+# is tempting and wrong: what gets built is the tagged commit, so a commit
+# whose Cargo.toml says something else is a commit that builds as the wrong
+# version for anybody who checks it out. Patching in the workflow hides that
+# rather than fixing it.
+#
+# So the version is committed first and the tag put on that commit - which
+# `./release.sh` does in one step - and this only checks that it was.
+name: Version matches tag
+description: Fail unless the workspace version is the one being tagged
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -eu
+        WANTED="${GITHUB_REF_NAME#v}"
+        # The first `version = ` in the file is [workspace.package]'s, which
+        # every crate here inherits. `0,/re/` stops at the first match; `1,/re/`
+        # would start looking from the second line and is a different thing.
+        HAVE=$(sed -n '0,/^version = /s/^version = "\(.*\)"/\1/p' Cargo.toml)
+        if [ "$WANTED" != "$HAVE" ]; then
+          echo "::error::$GITHUB_REF_NAME is version $WANTED, but Cargo.toml says $HAVE"
+          echo "The tagged commit is what gets built, so it has to say so itself."
+          echo "Move the tag onto a commit that sets the version - ./release.sh $WANTED"
+          exit 1
+        fi
+        echo "Cargo.toml and $GITHUB_REF_NAME agree on $WANTED"

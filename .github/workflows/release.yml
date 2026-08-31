@@ -2,9 +2,14 @@
 #
 # The tag is the whole input: `v0.3.0` is a release, `v0.3.0-rc.1` is a
 # pre-release, and nothing else distinguishes them. Everything the tag implies
-# - the version written into the binaries, whether GitHub marks it as a draft
-# of the real thing - is read from it once and passed around, so there is no
-# second place that could disagree about which release this is.
+# - whether GitHub marks it as a draft of the real thing - is read from it once
+# and passed around, so there is no second place that could disagree about
+# which release this is.
+#
+# The version itself is not written here. It is committed first and the tag put
+# on that commit, by ./release.sh, and the jobs below only check that the tree
+# they are building says what the tag says. Setting it here would build the
+# right number and leave the tagged commit saying the old one.
 #
 # Two things are handed out. The flatpak is how somebody installs the window;
 # the tarball is the pair of binaries for anybody who wants the command line,
@@ -68,7 +73,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/version-from-tag
+      - uses: ./.github/actions/version-matches-tag
       - uses: ./.github/actions/gui-build-deps
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --workspace
@@ -83,7 +88,7 @@ jobs:
           # Blu-ray, which the flatpak cannot.
           install -m755 target/release/riplika target/release/riplika-gui "$DIR/"
           strip "$DIR/riplika" "$DIR/riplika-gui"
-          cp README.md "$DIR/"
+          cp README.md LICENSE "$DIR/"
           # i18n::init looks for a locale tree beside the binary before it
           # looks at /app or /usr, so the tarball carries its own and works
           # wherever it is unpacked.
@@ -102,7 +107,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/version-from-tag
+      - uses: ./.github/actions/version-matches-tag
       # The same build CI does, asked to keep the result this time.
       - uses: ./.github/actions/flatpak-build
         with:
