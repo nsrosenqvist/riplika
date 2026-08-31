@@ -33,6 +33,8 @@ pub enum Msg {
     Music(Box<musicjob::Found>),
     /// A data disc, and the little it says about itself.
     Game(Box<riplika_core::game::GameDisc>),
+    /// What the disc in the drive turned out to be, asked just now.
+    Kind(Box<riplika_core::disc::DiscKind>),
     Candidates(Vec<Candidate>),
     /// Releases a search by name turned up, to choose between.
     Releases(Vec<riplika_core::identify::music::Match>),
@@ -111,6 +113,19 @@ pub fn list_drives(allow_makemkv: bool, tx: Sender<Msg>) {
                 let _ = tx.send(Msg::Failed(e.to_string()));
             }
         }
+    });
+}
+
+/// Ask the drive what it is holding, right now.
+///
+/// The drive list carries a kind too, but that was read whenever the list was
+/// last built - before this disc was put in, if the tray has been opened
+/// since. Choosing a pipeline from it sent a music CD down the game path and
+/// left it there, so the question is asked again at the moment it matters.
+pub fn identify_disc(device: String, tx: Sender<Msg>) {
+    std::thread::spawn(move || {
+        let kind = riplika_core::disc::identify(std::path::Path::new(&device));
+        let _ = tx.send(Msg::Kind(Box::new(kind)));
     });
 }
 

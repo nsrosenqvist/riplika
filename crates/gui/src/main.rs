@@ -827,6 +827,28 @@ fn warning_text(w: &Warning) -> String {
     }
 }
 
+/// Drop everything that was true of the disc that has just come out.
+///
+/// Every one of these was read off a particular disc, so leaving any of them
+/// describes the disc that is gone as though it were the disc that is there.
+/// That is not tidiness: the kind is what chooses the pipeline, and a stale
+/// one sent a music CD down the game path, where it was reported as a data
+/// disc with no name and nothing could be searched for.
+fn forget_the_disc(state: &mut State) {
+    state.scan = None;
+    state.candidates.clear();
+    state.selected = None;
+    state.chosen = None;
+    state.items.clear();
+    state.game = None;
+    state.album = None;
+    state.music = None;
+    state.offering = Offering::Nothing;
+    if let Some(drive) = state.drive.as_mut() {
+        drive.kind = None;
+    }
+}
+
 /// Is there another answer the reader could pick, for a disc of this kind?
 ///
 /// Everything but a game. A film or a show is chosen from what the catalogues
@@ -1579,18 +1601,37 @@ impl App {
     fn handle(&self, msg: Msg) {
         match msg {
             Msg::Drives(d) => self.show_drives(&d),
+            Msg::Kind(kind) => {
+                // What the disc actually is, as of a moment ago. Recorded
+                // before anything is read, so every later question about the
+                // kind - which page to show, whether the identity can be
+                // chosen - is asked of this rather than of a stale snapshot.
+                if let Some(drive) = self.state.borrow_mut().drive.as_mut() {
+                    drive.kind = Some((*kind).clone());
+                }
+                let Some(drive) = self.state.borrow().drive.clone() else {
+                    return;
+                };
+                let tx = self.sender();
+                match *kind {
+                    // A music disc needs none of the video machinery: no title
+                    // probing, no structure matching, no catalogue guessing
+                    // from a label. Its table of contents says what it is.
+                    DiscKind::Audio(_) => worker::analyse_music(drive.device, tx),
+                    // A data disc has no titles to probe: it is copied whole.
+                    DiscKind::Data(_) => worker::analyse_game(drive.device, tx),
+                    _ => {
+                        let allow = self.prefs.prefs.borrow().use_makemkv();
+                        let cancel = self.state.borrow().cancel.clone();
+                        worker::analyse(drive, allow, cancel, tx);
+                    }
+                }
+            }
             Msg::Ejected => {
                 // Everything known about the disc referred to the one that has
                 // just come out, so it goes rather than being left to look
                 // current beside an empty tray.
-                {
-                    let mut state = self.state.borrow_mut();
-                    state.scan = None;
-                    state.candidates.clear();
-                    state.selected = None;
-                    state.chosen = None;
-                    state.items.clear();
-                }
+                forget_the_disc(&mut self.state.borrow_mut());
                 self.show_choice();
                 self.toast(&tr("Drive open"));
                 self.go(Step::Drive);
@@ -1833,21 +1874,10 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             app.state.borrow_mut().cancel = riplika_core::host::Cancel::new();
             set_button_label(&app.ui.cancel_button, &tr("Cancel"));
             app.go(Step::Progress);
-            let cancel = app.state.borrow().cancel.clone();
-            // A music disc needs none of the video machinery: no title probing,
-            // no structure matching, no catalogue guessing from a label. Its
-            // table of contents says what it is.
-            if matches!(drive.kind.as_ref(), Some(DiscKind::Audio(_))) {
-                worker::analyse_music(drive.device.clone(), tx.clone());
-                return;
-            }
-            // A data disc has no titles to probe: it is copied whole.
-            if matches!(drive.kind.as_ref(), Some(DiscKind::Data(_))) {
-                worker::analyse_game(drive.device.clone(), tx.clone());
-                return;
-            }
-            let allow = app.prefs.prefs.borrow().use_makemkv();
-            worker::analyse(drive, allow, cancel, tx.clone());
+            // Which pipeline this is depends on what is in the tray now, not
+            // on what was in it when the drive list was last built. Asked
+            // again here; Msg::Kind carries the answer and dispatches.
+            worker::identify_disc(drive.device.clone(), tx.clone());
         });
     }
 
@@ -2394,6 +2424,56 @@ mod drive_page_tests {
         // the rule the page applies to the dropdown's visibility
         assert!(![drive("/dev/sr0", Some("A"))].len() > 1);
         assert!([drive("/dev/sr0", Some("A")), drive("/dev/sr1", None)].len() > 1);
+    }
+}
+
+#[cfg(test)]
+mod ejecting_tests {
+    use super::*;
+
+    fn loaded() -> State {
+        State {
+            drive: Some(Drive {
+                id: "disc:0".into(),
+                device: "/dev/sr0".into(),
+                name: "HL-DT-ST BD-RE".into(),
+                disc_label: Some("COOLBOARDERS2".into()),
+                kind: Some(DiscKind::Data(None)),
+            }),
+            game: Some(riplika_core::game::GameDisc::default()),
+            candidates: vec![],
+            ..State::default()
+        }
+    }
+
+    #[test]
+    fn the_kind_goes_with_the_disc() {
+        // The one that mattered. The kind chooses the pipeline, so a stale one
+        // sent the next disc - a music CD - down the game path, where it came
+        // out as an unnamed data disc with nothing to search for.
+        let mut state = loaded();
+        forget_the_disc(&mut state);
+        assert_eq!(state.drive.as_ref().and_then(|d| d.kind.clone()), None);
+    }
+
+    #[test]
+    fn nothing_read_off_the_old_disc_is_left_describing_the_new_one() {
+        let mut state = loaded();
+        forget_the_disc(&mut state);
+        assert!(state.game.is_none(), "the last disc's name");
+        assert!(state.album.is_none());
+        assert!(state.music.is_none());
+        assert!(state.scan.is_none());
+        assert!(state.selected.is_none());
+        assert!(state.candidates.is_empty());
+    }
+
+    #[test]
+    fn the_drive_itself_stays_selected() {
+        // The tray opening does not mean a different drive was meant.
+        let mut state = loaded();
+        forget_the_disc(&mut state);
+        assert_eq!(state.drive.as_ref().map(|d| d.device.clone()), Some("/dev/sr0".to_string()));
     }
 }
 
