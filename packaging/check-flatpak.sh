@@ -37,6 +37,14 @@ check "it declares the DVD mime type"  bash -c \
 # Two halves of one thing. Flatpak exports only icons named after the app id,
 # and the entry's Icon= has to be that same name - either half wrong and the
 # application launches with a blank square where its icon should be.
+# Each library it can be asked to write to. A missing one does not fail at
+# startup: it fails at the end of a rip, on the directory it cannot create.
+check "it can write to Videos"         bash -c \
+  "flatpak run --command=sh $APP -c 'mkdir -p ~/Videos && test -w ~/Videos'"
+check "it can write to Music"          bash -c \
+  "flatpak run --command=sh $APP -c 'mkdir -p ~/Music && test -w ~/Music'"
+check "it can write to Games"          bash -c \
+  "flatpak run --command=sh $APP -c 'mkdir -p ~/Games && test -w ~/Games'"
 check "the icon shipped"               bash -c \
   "flatpak run --command=sh $APP -c 'test -f /app/share/icons/hicolor/scalable/apps/$APP.svg'"
 check "the entry points at that icon"  bash -c \

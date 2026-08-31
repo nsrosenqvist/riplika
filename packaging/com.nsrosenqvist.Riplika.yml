@@ -36,8 +36,21 @@ finish-args:
   - --device=all
   # catalogue lookups against TVmaze and TMDB
   - --share=network
-  # somewhere to write the library, and somewhere to put the working rip
+  # somewhere to write the library, and somewhere to put the working rip.
+  #
+  # One per kind, because they are three different libraries and a disc goes to
+  # the one that matches it. Without the music line a CD rip fails outright:
+  # inside the sandbox ~/Music does not merely refuse to be written, it does
+  # not exist, so the rip stops on a directory it cannot create.
+  #
+  # Games are not an XDG directory - there is no xdg-games - so the folder is
+  # named outright. Somebody who configures a library somewhere else has to
+  # grant that path themselves; flatpak has no way for the application to ask
+  # for it, and --filesystem=home to avoid the question would hand it
+  # everything.
   - --filesystem=xdg-videos
+  - --filesystem=xdg-music
+  - --filesystem=~/Games
   - --filesystem=xdg-download
 
 modules:
