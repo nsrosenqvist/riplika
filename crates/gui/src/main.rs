@@ -1136,6 +1136,12 @@ impl App {
         self.refresh_settings_page();
     }
 
+    /// Show where this disc's files will go.
+    ///
+    /// Only that. It used to re-tick every control on the page from the saved
+    /// preferences as well, which meant choosing an output folder silently
+    /// undid the format and quality chosen for the disc in the drive: select
+    /// MP3, pick a folder, and the rip came out FLAC without a word.
     fn refresh_paths(&self) {
         let kind = self.state.borrow().drive.as_ref().and_then(|d| d.kind.clone());
         let prefs = self.prefs.prefs.borrow();
@@ -1143,6 +1149,16 @@ impl App {
         // Videos to somebody who has a CD in the drive.
         let output = prefs.output_for(riplika_core::prefs::Library::of(kind.as_ref()));
         self.ui.output_dir.set_subtitle(&output.to_string_lossy());
+    }
+
+    /// Set every control on the rip page from the saved preferences.
+    ///
+    /// For when the preferences themselves have changed, and at startup. Not
+    /// for anything else: these controls are the disc in the drive's own
+    /// settings, deliberately allowed to differ from what is persisted, and
+    /// re-ticking them throws that away.
+    fn apply_prefs_to_controls(&self) {
+        let prefs = self.prefs.prefs.borrow();
         self.ui.video.set_selected(match prefs.video {
             Quality::High => 0,
             Quality::Medium => 1,
@@ -1653,6 +1669,10 @@ impl App {
                 if let Some(drive) = self.state.borrow_mut().drive.as_mut() {
                     drive.kind = Some((*kind).clone());
                 }
+                // Where this disc's files go depends on what it is, and until
+                // now nothing re-read that once the answer arrived: the page
+                // was still offering Videos to somebody holding a CD.
+                self.refresh_paths();
                 let Some(drive) = self.state.borrow().drive.clone() else {
                     return;
                 };
@@ -1878,6 +1898,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
     *app.tx.borrow_mut() = Some(tx.clone());
 
     app.refresh_paths();
+    app.apply_prefs_to_controls();
     worker::list_drives(app.prefs.prefs.borrow().use_makemkv(), tx.clone());
 
     // Drain the worker channel on the main loop. Polling rather than an async
@@ -2051,8 +2072,13 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
         let window = window.clone();
         app.clone().ui.output_dir.connect_activated(move |_| {
             let app2 = Rc::clone(&app);
+            // For the library this disc belongs to, not for all three: a
+            // folder picked with a CD in the drive is a decision about music.
+            let library = riplika_core::prefs::Library::of(
+                app.state.borrow().drive.as_ref().and_then(|d| d.kind.as_ref()),
+            );
             choose_folder(&window, "Output folder", move |p| {
-                app2.prefs.prefs.borrow_mut().output_dir = Some(p);
+                app2.prefs.prefs.borrow_mut().set_output_for(library, p);
                 app2.prefs.save();
                 app2.refresh_paths();
             });
@@ -2074,11 +2100,7 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 };
                 let (root, dat_dir, read_offset) = {
                     let p = app.prefs.prefs.borrow();
-                    (
-                        p.output_dir.clone().unwrap_or_else(|| glib::home_dir().join("Games")),
-                        p.dat_dir(),
-                        p.read_offset,
-                    )
+                    (p.output_for(riplika_core::prefs::Library::Games), p.dat_dir(), p.read_offset)
                 };
                 if dat_dir.is_none() {
                     app.toast(&tr("No datfiles: the dump will be filed under the disc's label"));
@@ -2166,6 +2188,10 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                     app2.show_languages(&scan.all_languages());
                 }
                 app2.refresh_paths();
+                // The preferences themselves just changed, so the page follows
+                // them. Choosing an output folder does not, which is why that
+                // is the one call site that refreshes only the paths.
+                app2.apply_prefs_to_controls();
             });
         });
     }

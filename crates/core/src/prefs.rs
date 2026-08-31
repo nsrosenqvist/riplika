@@ -54,7 +54,14 @@ pub struct Preferences {
     pub accurate_chapters: bool,
     pub include_extras: bool,
     pub drop_commentary: bool,
+    /// Where finished video goes. Historically the only one, hence the name.
     pub output_dir: Option<PathBuf>,
+    /// Where finished music goes.
+    #[serde(default)]
+    pub music_dir: Option<PathBuf>,
+    /// Where game images go.
+    #[serde(default)]
+    pub games_dir: Option<PathBuf>,
     pub rip_dir: Option<PathBuf>,
     pub glyph_table: Option<PathBuf>,
     pub words_dir: Option<PathBuf>,
@@ -164,6 +171,8 @@ impl Default for Preferences {
             include_extras: true,
             drop_commentary: true,
             output_dir: None,
+            music_dir: None,
+            games_dir: None,
             rip_dir: None,
             glyph_table: None,
             words_dir: None,
@@ -231,7 +240,30 @@ impl Preferences {
     /// A configured folder is a choice and is honoured whatever is in the
     /// drive; without one, the kind decides.
     pub fn output_for(&self, library: Library) -> PathBuf {
-        self.output_dir.clone().unwrap_or_else(|| default_output_dir(library))
+        self.configured(library).unwrap_or_else(|| default_output_dir(library))
+    }
+
+    /// The folder chosen for this library, if one was.
+    ///
+    /// One setting cannot serve three libraries. It used to, and choosing a
+    /// folder while a CD was in the drive therefore sent every later game
+    /// image to the music folder as well - which is not a preference anybody
+    /// expressed.
+    pub fn configured(&self, library: Library) -> Option<PathBuf> {
+        match library {
+            Library::Video => self.output_dir.clone(),
+            Library::Music => self.music_dir.clone(),
+            Library::Games => self.games_dir.clone(),
+        }
+    }
+
+    /// Remember a folder for one library, leaving the others alone.
+    pub fn set_output_for(&mut self, library: Library, dir: PathBuf) {
+        match library {
+            Library::Video => self.output_dir = Some(dir),
+            Library::Music => self.music_dir = Some(dir),
+            Library::Games => self.games_dir = Some(dir),
+        }
     }
 
     /// Is MakeMKV installed?
@@ -683,13 +715,23 @@ mod music_format_tests {
     }
 
     #[test]
-    fn a_configured_folder_is_a_choice_and_outranks_the_kind() {
-        let p = Preferences {
-            output_dir: Some(PathBuf::from("/media/everything")),
-            ..Preferences::default()
-        };
+    fn a_folder_chosen_for_one_library_does_not_move_the_others() {
+        // Choosing a folder while a CD was in the drive used to set the one
+        // folder there was, so every later game image went to the music
+        // library too - a preference nobody expressed.
+        let mut p = Preferences::default();
+        p.set_output_for(Library::Music, PathBuf::from("/media/albums"));
+        assert_eq!(p.output_for(Library::Music), PathBuf::from("/media/albums"));
+        assert!(p.output_for(Library::Games).ends_with("Games"));
+        assert!(p.output_for(Library::Video).ends_with("Videos"));
+    }
+
+    #[test]
+    fn a_folder_chosen_for_a_library_is_used_for_it() {
+        let mut p = Preferences::default();
         for library in [Library::Video, Library::Music, Library::Games] {
-            assert_eq!(p.output_for(library), PathBuf::from("/media/everything"));
+            p.set_output_for(library, PathBuf::from("/media/x"));
+            assert_eq!(p.output_for(library), PathBuf::from("/media/x"));
         }
     }
 }
