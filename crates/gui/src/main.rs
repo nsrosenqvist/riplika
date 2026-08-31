@@ -181,6 +181,14 @@ struct Ui {
     log_scroll: gtk::ScrolledWindow,
     cancel_button: gtk::Button,
     results: adw::PreferencesGroup,
+    /// The rows put into `results`, so they can be taken out again.
+    ///
+    /// An AdwPreferencesGroup cannot be emptied by walking its children: its
+    /// first child is an internal box, not a row, and asking it to remove that
+    /// is refused - leaving the box still there, still the first child, and
+    /// the loop going round again. It did that several thousand times a second
+    /// until the disk filled. What went in is remembered instead.
+    result_rows: RefCell<Vec<adw::ActionRow>>,
     results_status: adw::StatusPage,
 }
 
@@ -669,6 +677,7 @@ fn build_ui() -> Ui {
         log_scroll,
         cancel_button,
         results,
+        result_rows: RefCell::new(Vec::new()),
         results_status,
     }
 }
@@ -1050,8 +1059,9 @@ impl App {
     }
 
     fn settings(&self) -> JobSettings {
+        let kind = self.state.borrow().drive.as_ref().and_then(|d| d.kind.clone());
         let prefs = self.prefs.prefs.borrow();
-        let output = prefs.output_dir.clone().unwrap_or_else(|| glib::home_dir().join("Videos"));
+        let output = prefs.output_for(riplika_core::prefs::Library::of(kind.as_ref()));
         let mut s = prefs.to_settings(output, self.chosen_languages());
         s.include_extended_cuts = self.ui.include_extended.is_active();
         s.include_extras = self.ui.include_extras.is_active();
@@ -1105,8 +1115,11 @@ impl App {
     }
 
     fn refresh_paths(&self) {
+        let kind = self.state.borrow().drive.as_ref().and_then(|d| d.kind.clone());
         let prefs = self.prefs.prefs.borrow();
-        let output = prefs.output_dir.clone().unwrap_or_else(|| glib::home_dir().join("Videos"));
+        // What this disc will actually use, so the page is not promising
+        // Videos to somebody who has a CD in the drive.
+        let output = prefs.output_for(riplika_core::prefs::Library::of(kind.as_ref()));
         self.ui.output_dir.set_subtitle(&output.to_string_lossy());
         self.ui.video.set_selected(match prefs.video {
             Quality::High => 0,
@@ -1536,8 +1549,8 @@ impl App {
     }
 
     fn show_report(&self, r: &Report) {
-        while let Some(c) = self.ui.results.first_child() {
-            self.ui.results.remove(&c);
+        for row in self.ui.result_rows.borrow_mut().drain(..) {
+            self.ui.results.remove(&row);
         }
         for p in &r.produced {
             let langs: Vec<&str> = p.subtitles.iter().map(|s| s.language.name.as_str()).collect();
@@ -1550,6 +1563,7 @@ impl App {
                 ))
                 .build();
             self.ui.results.add(&row);
+            self.ui.result_rows.borrow_mut().push(row);
         }
         for (f, why) in &r.skipped {
             let row = adw::ActionRow::builder()
@@ -1558,6 +1572,7 @@ impl App {
                 .css_classes(vec!["error".to_string()])
                 .build();
             self.ui.results.add(&row);
+            self.ui.result_rows.borrow_mut().push(row);
         }
         self.ui.results_status.set_title(if r.is_complete() {
             "Done"

@@ -172,6 +172,15 @@ pub fn music_preview(template: &str, extension: &str) -> String {
         year: Some(2008),
         date: Some("2008-03-11".into()),
     };
+    // Shown as the path it will make, slashes and all, so a template that
+    // lays out folders can be seen doing it before a disc is ripped with it.
+    if template.contains('/') {
+        let mut parts = render_path(template, &f);
+        if let Some(name) = parts.pop() {
+            parts.push(sanitize(&format!("{name}.{extension}")));
+            return parts.join("/");
+        }
+    }
     format!("{}.{extension}", sanitize(&render(template, &f)))
 }
 
@@ -188,6 +197,36 @@ const RESERVED: &[&str] = &[
 ///
 /// A colon becomes ` - ` rather than being dropped, because it is nearly always
 /// separating a title from a subtitle and the dash preserves that reading.
+/// Fill a template that may name directories as well as a file.
+///
+/// Splitting happens *before* the fields are filled in, which is the whole
+/// safety of it: a slash in a value - AC/DC, He/She - cannot then invent a
+/// directory, because by the time the value arrives its segment has already
+/// been decided and the slash is sanitised into the name like any other
+/// character a filesystem will not take.
+///
+/// Segments that come out empty are dropped, as are `.` and `..`: a template
+/// that renders to nothing for a field somebody left blank should shorten the
+/// path, not put a nameless directory in it or climb out of the library.
+pub fn render_path(template: &str, f: &dyn Tokens) -> Vec<String> {
+    template
+        .split('/')
+        .filter_map(|segment| {
+            // Emptiness is decided before sanitising, not after: sanitize()
+            // answers "untitled" for a name it cannot make anything of, which
+            // is right for a file and wrong for a folder - a template with
+            // {year} in it and a release with no date would otherwise file the
+            // record under a directory called "untitled".
+            let filled = render(segment, f);
+            if filled.trim().is_empty() {
+                return None;
+            }
+            let clean = sanitize(&filled);
+            (clean != "." && clean != "..").then_some(clean)
+        })
+        .collect()
+}
+
 pub fn sanitize(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for ch in name.chars() {
@@ -565,5 +604,70 @@ mod template_tests {
         };
         let name = file_name(&media, &item, Container::Mp4, Some("{title}"));
         assert_eq!(name, "Doppelgangers - Extended Cut.mp4");
+    }
+
+    #[test]
+    fn a_music_preview_shows_the_folders_a_slash_makes() {
+        assert_eq!(
+            music_preview("{artist}/{album}/{track} - {title}", "flac"),
+            "Shawn McDonald/Roots/08 - Slow Down.flac"
+        );
+    }
+
+    #[test]
+    fn a_preview_without_slashes_is_still_just_a_filename() {
+        assert_eq!(music_preview("{track} - {title}", "flac"), "08 - Slow Down.flac");
+    }
+
+    #[test]
+    fn a_path_template_is_split_before_it_is_filled_in() {
+        // Otherwise a value containing a slash invents a directory, and a
+        // value containing ../ climbs out of the library entirely.
+        struct Nasty;
+        impl Tokens for Nasty {
+            fn value(&self, token: &str, _width: usize) -> Option<String> {
+                match token {
+                    "artist" => Some("AC/DC".into()),
+                    "title" => Some("../../etc/passwd".into()),
+                    _ => None,
+                }
+            }
+        }
+        assert_eq!(render_path("{artist}/{title}", &Nasty), vec!["AC-DC", "..-..-etc-passwd"]);
+    }
+
+    #[test]
+    fn a_segment_that_renders_to_nothing_is_dropped_not_named_untitled() {
+        // A known field with nothing in it - a release with no date - renders
+        // empty. sanitize() would call that "untitled", which is right for a
+        // file and wrong for a folder, so the segment goes instead.
+        let f = MusicFields {
+            albumartist: "Shawn McDonald".into(),
+            artist: "Shawn McDonald".into(),
+            album: "Roots".into(),
+            title: "Clarity".into(),
+            track: Some(1),
+            disc: None,
+            year: None,
+            date: None,
+        };
+        assert_eq!(render_path("{year}/{album}/{title}", &f), vec!["Roots", "Clarity"]);
+    }
+
+    #[test]
+    fn a_token_nobody_recognises_is_left_standing_even_in_a_folder_name() {
+        // Same rule as everywhere else: a typo should be visible in the output
+        // rather than silently swallowed into a shorter path.
+        let f = MusicFields {
+            albumartist: "A".into(),
+            artist: "A".into(),
+            album: "B".into(),
+            title: "C".into(),
+            track: Some(1),
+            disc: None,
+            year: None,
+            date: None,
+        };
+        assert_eq!(render_path("{albm}/{title}", &f), vec!["{albm}", "C"]);
     }
 }

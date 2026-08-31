@@ -9,6 +9,7 @@
 //! file falls back to those defaults rather than refusing to start. Preferences
 //! are a convenience; losing them should cost a re-tick, not a launch.
 
+use crate::disc::DiscKind;
 use crate::lang::{self, LanguageSet};
 use crate::model::{Container, Quality};
 use serde::{Deserialize, Serialize};
@@ -178,7 +179,61 @@ impl Default for Preferences {
     }
 }
 
+/// Where finished files go for a disc of this kind, when nothing is configured.
+///
+/// A music library and a video library are not the same folder and nothing
+/// downstream treats them alike - a media server scans them separately, and an
+/// album filed under Videos is an album it will try to read as a film. Games
+/// are not a library at all; they are images waiting to be checked against a
+/// datfile.
+///
+/// Here rather than in each front end because there are three of them and
+/// three copies of "music goes in Music" is three chances to disagree - which
+/// is what had happened: the command line knew, and the window put a CD in
+/// Videos.
+pub fn default_output_dir(library: Library) -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    home.join(match library {
+        Library::Music => "Music",
+        Library::Games => "Games",
+        Library::Video => "Videos",
+    })
+}
+
+/// Which of the three collections a disc's output belongs to.
+///
+/// Named rather than taken from `DiscKind` at every call site, because the
+/// command line knows it is ripping a CD without having a `DiscKind` in its
+/// hand, and asking the drive again to find out what it already knows would
+/// be a read for nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Library {
+    Video,
+    Music,
+    Games,
+}
+
+impl Library {
+    /// Where a disc of this kind goes. Video for anything not yet looked at:
+    /// it is the common case and the one the rest of the window assumes.
+    pub fn of(kind: Option<&DiscKind>) -> Library {
+        match kind {
+            Some(DiscKind::Audio(_)) => Library::Music,
+            Some(DiscKind::Data(_)) => Library::Games,
+            _ => Library::Video,
+        }
+    }
+}
+
 impl Preferences {
+    /// Where a disc of this kind should be written.
+    ///
+    /// A configured folder is a choice and is honoured whatever is in the
+    /// drive; without one, the kind decides.
+    pub fn output_for(&self, library: Library) -> PathBuf {
+        self.output_dir.clone().unwrap_or_else(|| default_output_dir(library))
+    }
+
     /// Is MakeMKV installed?
     pub fn makemkv_available() -> bool {
         crate::host::which(MAKEMKV).is_some()
@@ -600,5 +655,41 @@ mod music_format_tests {
         let back: Preferences = serde_json::from_value(v).expect("an older file still loads");
         assert_eq!(back.music_format, AudioFormat::Flac);
         assert_eq!(back.music_quality, Quality::High);
+    }
+
+    #[test]
+    fn each_kind_of_disc_has_a_library_of_its_own() {
+        // A CD went to Videos, where a media server reads it as a film.
+        let toc = crate::disc::Toc { tracks: Vec::new(), leadout: 0 };
+        assert_eq!(Library::of(Some(&DiscKind::Audio(toc.clone()))), Library::Music);
+        assert_eq!(Library::of(Some(&DiscKind::Data(None))), Library::Games);
+        assert_eq!(Library::of(Some(&DiscKind::DvdVideo)), Library::Video);
+        assert_eq!(Library::of(Some(&DiscKind::BluRay)), Library::Video);
+    }
+
+    #[test]
+    fn a_disc_nobody_has_looked_at_yet_is_assumed_to_be_video() {
+        // The common case, and what the rest of the window is laid out for.
+        assert_eq!(Library::of(None), Library::Video);
+        assert_eq!(Library::of(Some(&DiscKind::Empty)), Library::Video);
+    }
+
+    #[test]
+    fn the_defaults_are_three_different_folders() {
+        let dirs = [Library::Video, Library::Music, Library::Games].map(default_output_dir);
+        assert!(dirs[0].ends_with("Videos"), "{:?}", dirs[0]);
+        assert!(dirs[1].ends_with("Music"), "{:?}", dirs[1]);
+        assert!(dirs[2].ends_with("Games"), "{:?}", dirs[2]);
+    }
+
+    #[test]
+    fn a_configured_folder_is_a_choice_and_outranks_the_kind() {
+        let p = Preferences {
+            output_dir: Some(PathBuf::from("/media/everything")),
+            ..Preferences::default()
+        };
+        for library in [Library::Video, Library::Music, Library::Games] {
+            assert_eq!(p.output_for(library), PathBuf::from("/media/everything"));
+        }
     }
 }

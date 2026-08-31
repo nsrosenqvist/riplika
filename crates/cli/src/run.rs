@@ -260,8 +260,7 @@ pub fn rip_cd(
     let selection = only.map(|n| vec![n]);
 
     let mut settings = prefs.to_settings(
-        out.or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Music")))
-            .ok_or("no output directory, and no HOME to guess one from")?,
+        out.unwrap_or_else(|| prefs.output_for(riplika_core::prefs::Library::Music)),
         prefs.languages(),
     );
     settings.music_format = match format {
@@ -410,9 +409,7 @@ pub fn rip_game(
         println!("  PlayStation serial {serial}");
     }
 
-    let root = out
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Games")))
-        .ok_or("no output directory, and no HOME to guess one from")?;
+    let root = out.unwrap_or_else(|| prefs.output_for(riplika_core::prefs::Library::Games));
 
     let dats = load_dats(&real, dat.map(Path::to_path_buf).or_else(|| prefs.dat_dir()))?;
     println!("{} disc(s) known from datfiles\n", dats.iter().map(|(_, d)| d.len()).sum::<usize>());

@@ -159,7 +159,10 @@ where
     let music_naming = adw::PreferencesGroup::builder()
         .title(tr("Track filenames"))
         .description(format!(
-            "Tokens: {}",
+            "{}\nTokens: {}",
+            tr(
+                "A slash makes a folder, so {artist}/{album}/{track} - {title} lays out the library"
+            ),
             naming::MUSIC_TOKENS.iter().map(|(t, _)| *t).collect::<Vec<_>>().join("  ")
         ))
         .build();

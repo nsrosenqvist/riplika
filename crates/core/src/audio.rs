@@ -205,11 +205,16 @@ pub fn encode_command(
 
 /// Where a track goes.
 ///
-/// `Artist/Album (Year)/` is fixed, which is what Jellyfin reads without being
-/// told anything; the filename is the part a template decides. Same division
-/// as the video side, where `Season NN/` is fixed and the episode name is not.
-/// A set with more than one disc gets a folder per disc so track numbers from
-/// different discs do not collide.
+/// `Artist/Album (Year)/` by default, which is what Jellyfin reads without
+/// being told anything, and the template decides only the filename. Same
+/// division as the video side, where `Season NN/` is fixed and the episode
+/// name is not. A set with more than one disc gets a folder per disc so track
+/// numbers from different discs do not collide.
+///
+/// A template containing a slash takes the whole thing over instead:
+/// `{artist}/{album}/{track} - {title}` means exactly that, and none of the
+/// above is put in front of it. It is the only way to lay a library out any
+/// other way, and doing both would produce `Artist/Album/Artist/Album/`.
 pub fn track_path(
     root: &Path,
     album: &Album,
@@ -217,11 +222,30 @@ pub fn track_path(
     extension: &str,
     template: Option<&str>,
 ) -> PathBuf {
+    let template = template.unwrap_or(naming::DEFAULT_TRACK_TEMPLATE);
+    let fields = fields(album, track);
+
+    // A template with slashes in it says where the file goes as well as what
+    // it is called, so it describes the whole path under the library and the
+    // usual artist/album folders are not added in front of it - somebody who
+    // has written "{artist}/{album}/..." meant that and not "artist/album"
+    // twice over.
+    if template.contains('/') {
+        let mut parts = naming::render_path(template, &fields);
+        if let Some(name) = parts.pop() {
+            let mut path = root.to_path_buf();
+            for dir in parts {
+                path = path.join(dir);
+            }
+            return path.join(sanitize(&format!("{name}.{extension}")));
+        }
+    }
+
     let mut path = root.join(sanitize(&album.artist)).join(sanitize(&album_folder(album)));
     if album.is_multi_disc() {
         path = path.join(sanitize(&format!("Disc {}", album.disc)));
     }
-    let stem = render(template.unwrap_or(naming::DEFAULT_TRACK_TEMPLATE), &fields(album, track));
+    let stem = render(template, &fields);
     path.join(sanitize(&format!("{stem}.{extension}")))
 }
 
@@ -440,6 +464,55 @@ mod tests {
             track_path(Path::new("/music"), &a, &a.tracks[1], "flac", None),
             Path::new("/music/Shawn McDonald/Roots (2008)/08 - Slow Down.flac")
         );
+    }
+
+    #[test]
+    fn a_template_with_slashes_in_it_lays_out_the_folders_too() {
+        let a = album();
+        assert_eq!(
+            track_path(
+                Path::new("/music"),
+                &a,
+                &a.tracks[1],
+                "flac",
+                Some("{artist}/{album}/{track} - {title}")
+            ),
+            Path::new("/music/Shawn McDonald/Roots/08 - Slow Down.flac"),
+            "the usual Artist/Album (Year) is not put in front of it as well"
+        );
+    }
+
+    #[test]
+    fn a_slash_in_a_name_cannot_invent_a_folder() {
+        // The template is split before the fields are filled in, so a band
+        // with a slash in its name is one directory, not two - and a value
+        // cannot climb out of the library by containing "../" either.
+        let mut a = album();
+        a.artist = "AC/DC".into();
+        a.tracks[0].artist = Some("../../etc".into());
+        let p = track_path(
+            Path::new("/music"),
+            &a,
+            &a.tracks[0],
+            "flac",
+            Some("{albumartist}/{artist}/{title}"),
+        );
+        assert_eq!(p, Path::new("/music/AC-DC/..-..-etc/Clarity.flac"), "{p:?}");
+        assert!(p.starts_with("/music"));
+    }
+
+    #[test]
+    fn a_template_that_renders_to_nothing_shortens_the_path_rather_than_naming_a_folder_nothing() {
+        let mut a = album();
+        a.date = None;
+        let p = track_path(
+            Path::new("/music"),
+            &a,
+            &a.tracks[0],
+            "flac",
+            Some("{year}/{album}/{title}"),
+        );
+        assert_eq!(p, Path::new("/music/Roots/Clarity.flac"), "{p:?}");
     }
 
     #[test]
