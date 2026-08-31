@@ -130,6 +130,14 @@ impl Output {
     }
 }
 
+/// What a job's error says when it was stopped rather than went wrong.
+///
+/// A value both sides agree on, because the two do different things with it:
+/// the command line prints it, and the window has to tell a stop from a
+/// failure to show the right sentence. Comparing against a literal in two
+/// crates is how they come to disagree.
+pub const CANCELLED: &str = "cancelled";
+
 /// A shared flag the user can raise to stop a running job.
 #[derive(Debug, Clone, Default)]
 pub struct Cancel(Arc<AtomicBool>);
@@ -148,7 +156,7 @@ impl Cancel {
     }
 
     pub fn check(&self) -> Result<()> {
-        if self.is_cancelled() { Err(Error("cancelled".into())) } else { Ok(()) }
+        if self.is_cancelled() { Err(Error(CANCELLED.into())) } else { Ok(()) }
     }
 }
 
@@ -710,5 +718,16 @@ mod tests {
         let out = r.run(&Command::new("cat")).unwrap();
         assert!(out.ok());
         assert_eq!(out.stdout, "");
+    }
+
+    #[test]
+    fn a_stop_is_told_apart_from_a_fault() {
+        // The window shows a different sentence for each, and used to show
+        // core's own word - a lowercase toast reading "cancelled".
+        let cancel = Cancel::new();
+        cancel.cancel();
+        let stopped = cancel.check().expect_err("it was cancelled");
+        assert!(stopped.is_cancelled());
+        assert!(!crate::Error("the drive would not open".into()).is_cancelled());
     }
 }

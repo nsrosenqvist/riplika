@@ -109,6 +109,25 @@ modules:
         # the stable branch, pinned - a branch name would drift
         commit: b35605ace3ddf7c1a5d67a2eb553f034aef41d55
 
+  # LAME, for MP3. ffmpeg has a FLAC encoder of its own and no MP3 one, so
+  # without this a FLAC rip works, an MP3 rip gets as far as encoding and
+  # fails on every track with "Encoder not found", and the settings screen
+  # offers a format that cannot be produced.
+  - name: lame
+    config-opts:
+      - --enable-shared
+      - --disable-static
+      - --disable-frontend
+    sources:
+      - type: archive
+        url: https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz
+        sha256: ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e
+      # 3.100 exports a symbol its own source does not define, and the link
+      # fails on it. Every distribution carries this same one-line removal.
+      - type: shell
+        commands:
+          - sed -i '/lame_init_old/d' include/libmp3lame.sym
+
   # ffmpeg must be built --enable-libdvdnav --enable-libdvdread: without them
   # there is no dvdvideo demuxer and the application cannot read a disc at all.
   - name: ffmpeg
@@ -126,6 +145,7 @@ modules:
       - --enable-libdvdnav
       - --enable-libdvdread
       - --enable-libx264
+      - --enable-libmp3lame
     sources:
       - type: archive
         url: https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz

@@ -173,13 +173,45 @@ pub fn analyse(drive: Drive, allow_makemkv: bool, cancel: Cancel, tx: Sender<Msg
 ///
 /// On a thread, because a drive still reading will not answer until it stops -
 /// and the window must not stop with it.
+/// Wait until the drive admits it is empty, or give up waiting.
+///
+/// `eject` returns when the drive has accepted the request, not when the tray
+/// has opened and the kernel has noticed. Listing the drives at that moment
+/// reads the disc on its way out and puts it straight back on the page, which
+/// is what left the last disc's details there after ejecting it.
+///
+/// Bounded, because a drive that will not open must not hang the window - and
+/// reporting the eject anyway is right: the request was made and accepted, and
+/// the listing that follows will say what is actually in there.
+fn wait_for_the_tray(device: &str) -> bool {
+    use riplika_core::disc::DiscKind;
+    let path = std::path::Path::new(device);
+    for _ in 0..25 {
+        if riplika_core::disc::identify(path) == DiscKind::Empty {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    false
+}
+
 pub fn eject(device: String, tx: Sender<Msg>) {
     std::thread::spawn(move || {
         let real = Real::new(Cancel::new());
         let cmd = riplika_core::rip::eject_command(std::path::Path::new(&device));
         match real.runner.run(&cmd) {
             Ok(out) if out.ok() => {
-                let _ = tx.send(Msg::Ejected);
+                if wait_for_the_tray(&device) {
+                    let _ = tx.send(Msg::Ejected);
+                } else {
+                    // Accepted and nothing happened: something else is using
+                    // the drive, or it will not open. Saying so beats clearing
+                    // the page and then listing the same disc straight back
+                    // onto it, which is what it looks like from the outside.
+                    let _ = tx.send(Msg::Failed(
+                        "the drive took the request but the disc is still in it".into(),
+                    ));
+                }
             }
             Ok(out) => {
                 let _ =

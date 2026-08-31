@@ -13,6 +13,12 @@ check "ffmpeg has the dvdvideo demuxer" bash -c \
   "flatpak run --command=ffmpeg $APP -hide_banner -demuxers 2>/dev/null | grep -q dvdvideo"
 check "ffmpeg has libx264"             bash -c \
   "flatpak run --command=ffmpeg $APP -hide_banner -encoders 2>/dev/null | grep -q ' libx264'"
+# Both formats the settings screen offers. FLAC is ffmpeg's own; MP3 needs a
+# library that has to be built, and without it the rip fails at the encode.
+check "ffmpeg can encode MP3"          bash -c \
+  "flatpak run --command=ffmpeg $APP -hide_banner -encoders 2>/dev/null | grep -q libmp3lame"
+check "ffmpeg can encode FLAC"         bash -c \
+  "flatpak run --command=ffmpeg $APP -hide_banner -encoders 2>/dev/null | grep -qE ' flac'"
 check "ffprobe is present"             bash -c \
   "flatpak run --command=ffprobe $APP -version >/dev/null 2>&1"
 check "libdvdcss is present"           bash -c \

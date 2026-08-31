@@ -56,6 +56,16 @@ pub use model::*;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error(pub String);
 
+impl Error {
+    /// Was this a stop rather than a fault?
+    ///
+    /// Worth telling apart: a run somebody stopped needs no apology and no
+    /// explanation, where a run that failed needs both.
+    pub fn is_cancelled(&self) -> bool {
+        self.0 == crate::host::CANCELLED
+    }
+}
+
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)

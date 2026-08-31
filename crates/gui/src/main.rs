@@ -1632,6 +1632,29 @@ impl App {
     }
 
     /// Empty the log, so a second disc does not begin with the first one's.
+    /// Begin a piece of work: clear what the last one left, and show it.
+    ///
+    /// Four places used to move to the progress page and only one of them
+    /// cleared anything, so cancelling a rip and starting another showed the
+    /// cancelled one's bar, heading and log while the new disc was being
+    /// identified. Beginning work is one thing and is done in one place.
+    ///
+    /// Answers with the cancellation token for the run, since a fresh one is
+    /// part of beginning: a cancelled run must not poison the next.
+    fn start_working(&self, heading: &str, busy: &str) -> riplika_core::host::Cancel {
+        self.ui.stage_label.set_label(heading);
+        self.ui.progress.set_fraction(0.0);
+        self.ui.progress_text.set_label("");
+        self.clear_log();
+        self.state.borrow_mut().eta = riplika_core::job::Eta::default();
+        self.set_busy(Some(busy));
+        let cancel = riplika_core::host::Cancel::new();
+        self.state.borrow_mut().cancel = cancel.clone();
+        set_button_label(&self.ui.cancel_button, &tr("Cancel"));
+        self.go(Step::Progress);
+        cancel
+    }
+
     fn clear_log(&self) {
         self.ui.log.buffer().set_text("");
         self.ui.log_scroll.set_visible(false);
@@ -1783,6 +1806,15 @@ impl App {
             }
             Msg::Failed(e) => {
                 self.set_busy(None);
+                // A stop is not a fault. Core says so in one word, which read
+                // as a lowercase toast saying "cancelled" and nothing else.
+                if riplika_core::Error(e.clone()).is_cancelled() {
+                    self.state.borrow_mut().searching = false;
+                    self.toast(&tr("Cancelled. Nothing further was written."));
+                    self.log_line(&tr("Cancelled"));
+                    set_button_label(&self.ui.cancel_button, &tr("Close"));
+                    return;
+                }
                 // A search that failed left the picker spinning for an answer
                 // that was never coming.
                 self.state.borrow_mut().searching = false;
@@ -1945,14 +1977,9 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 app.toast(&tr("Already working - wait for it, or cancel it first"));
                 return;
             }
-            app.ui.stage_label.set_label("Scanning disc");
-            app.clear_log();
-            app.set_busy(Some("Reading disc..."));
             // A scan takes minutes and there is nothing to abandon it with on
             // this page, so show the progress page, which has the cancel button.
-            app.state.borrow_mut().cancel = riplika_core::host::Cancel::new();
-            set_button_label(&app.ui.cancel_button, &tr("Cancel"));
-            app.go(Step::Progress);
+            app.start_working("Scanning disc", "Reading disc...");
             // Which pipeline this is depends on what is in the tray now, not
             // on what was in it when the drive list was last built. Asked
             // again here; Msg::Kind carries the answer and dispatches.
@@ -2105,10 +2132,8 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 if dat_dir.is_none() {
                     app.toast(&tr("No datfiles: the dump will be filed under the disc's label"));
                 }
-                app.state.borrow_mut().cancel = riplika_core::host::Cancel::new();
-                let cancel = app.state.borrow().cancel.clone();
-                set_button_label(&app.ui.cancel_button, &tr("Cancel"));
-                app.go(Step::Progress);
+                let cancel = app
+                    .start_working(&stage_label(riplika_core::job::Stage::Rip), "Dumping disc...");
                 worker::run_game(device, disc, root, dat_dir, read_offset, cancel, tx.clone());
                 return;
             }
@@ -2130,10 +2155,8 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                     None => return,
                 };
                 let settings = app.settings();
-                app.state.borrow_mut().cancel = riplika_core::host::Cancel::new();
-                let cancel = app.state.borrow().cancel.clone();
-                set_button_label(&app.ui.cancel_button, &tr("Cancel"));
-                app.go(Step::Progress);
+                let cancel = app
+                    .start_working(&stage_label(riplika_core::job::Stage::Rip), "Ripping disc...");
                 worker::run_music(device, found, album, settings, cancel, tx.clone());
                 return;
             }
@@ -2155,11 +2178,8 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             if settings.glyph_table.is_none() {
                 app.toast("No glyph table: subtitles will stay as bitmaps");
             }
-            // A fresh token, so a cancelled run does not poison the next one.
-            app.state.borrow_mut().cancel = riplika_core::host::Cancel::new();
-            let cancel = app.state.borrow().cancel.clone();
-            set_button_label(&app.ui.cancel_button, &tr("Cancel"));
-            app.go(Step::Progress);
+            let cancel =
+                app.start_working(&stage_label(riplika_core::job::Stage::Rip), "Ripping disc...");
             let allow = app.prefs.prefs.borrow().use_makemkv();
             worker::run(
                 scan,
