@@ -493,8 +493,16 @@ fn build_ui() -> Ui {
     music.add(&music_quality);
 
     let containers = gtk::StringList::new(&["MP4", "Matroska"]);
-    let container =
-        adw::ComboRow::builder().title(tr("Container")).model(&containers).selected(0).build();
+    let container = adw::ComboRow::builder()
+        .title(tr("Container"))
+        // The one row on this page that said only its own name. What the
+        // choice costs is not guessable from "MP4" and "Matroska": MP4 holds
+        // a title and nothing else, so the show, season and episode a media
+        // server files by have to come from the filename instead.
+        .subtitle(tr("MP4 plays on anything; Matroska carries the show and episode tags too"))
+        .model(&containers)
+        .selected(0)
+        .build();
     let accurate_chapters = adw::SwitchRow::builder()
         .title(tr("Exact chapter marks"))
         .subtitle(tr("Reads the disc twice. Without it chapter marks drift a second or two"))

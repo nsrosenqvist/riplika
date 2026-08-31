@@ -11,6 +11,7 @@ use adw::prelude::*;
 use riplika_core::host;
 use riplika_core::lang;
 use riplika_core::naming;
+use riplika_core::prefs::Library;
 use riplika_core::prefs::{MAKEMKV, Preferences};
 use riplika_core::secret;
 use std::cell::RefCell;
@@ -221,6 +222,32 @@ where
     //
     // Where a rip lands is a real question: it wants tens of gigabytes, and a
     // small home partition is a good reason to put it elsewhere.
+    // One row per library, because there is one folder per library and a
+    // single "output folder" could not say which it meant. It used to be
+    // settable only from the rip page, where what it referred to depended on
+    // what was in the drive - so a folder picked with a CD loaded quietly
+    // became the answer for films as well.
+    let libraries = adw::PreferencesGroup::builder()
+        .title(tr("Libraries"))
+        .description(tr("Where finished files go. Each kind of disc has its own."))
+        .build();
+    let video_dir = folder_row(
+        "Video",
+        &describe(&Some(store.prefs.borrow().output_for(Library::Video)), "Videos"),
+    );
+    let music_dir = folder_row(
+        "Music",
+        &describe(&Some(store.prefs.borrow().output_for(Library::Music)), "Music"),
+    );
+    let games_dir = folder_row(
+        "Games",
+        &describe(&Some(store.prefs.borrow().output_for(Library::Games)), "Games"),
+    );
+    libraries.add(&video_dir);
+    libraries.add(&music_dir);
+    libraries.add(&games_dir);
+    page.add(&libraries);
+
     let folders = adw::PreferencesGroup::builder()
         .title(tr("Working folder"))
         .description(format!(
@@ -442,6 +469,34 @@ where
         |p| p.rip_dir.clone(),
         on_change.clone(),
     );
+
+    for (row, library, title) in [
+        (&video_dir, Library::Video, "Video library"),
+        (&music_dir, Library::Music, "Music library"),
+        (&games_dir, Library::Games, "Game library"),
+    ] {
+        let store2 = Rc::clone(&store);
+        let row2 = row.clone();
+        let dialog2 = dialog.clone();
+        let on_change2 = on_change.clone();
+        row.connect_activated(move |_| {
+            let chooser = gtk::FileDialog::builder().title(title).build();
+            let (store3, row3, on_change3) = (Rc::clone(&store2), row2.clone(), on_change2.clone());
+            let handle = move |res: Result<gtk::gio::File, gtk::glib::Error>| {
+                if let Ok(f) = res
+                    && let Some(path) = f.path()
+                {
+                    store3.prefs.borrow_mut().set_output_for(library, path);
+                    store3.save();
+                    let now = store3.prefs.borrow().output_for(library);
+                    row3.set_subtitle(&now.to_string_lossy());
+                    on_change3();
+                }
+            };
+            let root = dialog2.root().and_downcast::<gtk::Window>();
+            chooser.select_folder(root.as_ref(), gtk::gio::Cancellable::NONE, handle);
+        });
+    }
 
     pick(
         &dats,
