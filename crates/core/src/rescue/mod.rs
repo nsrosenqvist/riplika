@@ -63,6 +63,14 @@ pub trait SectorSource {
     /// Returns the bytes on success. A partial read is a failure: the caller
     /// narrows the range itself rather than guessing which part arrived.
     fn read(&mut self, lba: u64, count: u64) -> std::result::Result<Vec<u8>, ReadError>;
+
+    /// Sectors the source knows came back as a guess rather than as read.
+    ///
+    /// Only a CD read with C2 error pointers can answer this; everything else
+    /// says nothing, which is not the same as saying all is well.
+    fn damaged(&self) -> Vec<u64> {
+        Vec::new()
+    }
 }
 
 /// Somewhere recovered sectors go.
@@ -364,6 +372,12 @@ pub fn zero_sector() -> Vec<u8> {
 /// So this asks the drive for whole sectors with `READ CD` instead.
 pub struct RawCd {
     file: std::fs::File,
+    /// Sectors the drive said it had to guess at, as it said so.
+    ///
+    /// Empty unless [`watching_c2`](RawCd::watching_c2) was asked for. A
+    /// sector that is re-read cleanly leaves the set, so what is left at the
+    /// end is the damage as of the last time each sector was looked at.
+    damaged: Option<std::collections::BTreeSet<u64>>,
 }
 
 impl RawCd {
@@ -372,22 +386,71 @@ impl RawCd {
     pub fn open(path: &Path) -> Result<RawCd> {
         let file =
             std::fs::File::open(path).map_err(|e| Error(format!("{}: {e}", path.display())))?;
-        Ok(RawCd { file })
+        Ok(RawCd { file, damaged: None })
     }
+
+    /// Ask the drive for its C2 error pointers along with every sector.
+    ///
+    /// Audio has no error correction a host can check - that is the whole
+    /// difference between an audio sector and a data one - so a wrong sector
+    /// comes back looking exactly like a right one. C2 is the drive saying
+    /// which bytes it had to guess at, and it is the only account of a bad
+    /// audio read that does not require reading the disc a second time.
+    pub fn watching_c2(mut self) -> RawCd {
+        self.damaged = Some(std::collections::BTreeSet::new());
+        self
+    }
+}
+
+/// Split a C2 read apart: sector bytes out, flags into `damaged`.
+///
+/// A sector that comes back clean is taken out of the set, so what is left
+/// after a rescue is the damage as of the last look at each sector rather than
+/// every sector that was ever flagged on the way.
+fn split_c2(
+    data: &[u8],
+    lba: u64,
+    count: u64,
+    damaged: &mut std::collections::BTreeSet<u64>,
+) -> Vec<u8> {
+    let mut sectors = Vec::with_capacity(count as usize * RawCd::SECTOR);
+    for i in 0..count as usize {
+        let whole = &data[i * crate::scsi::RAW_WITH_C2..][..crate::scsi::RAW_WITH_C2];
+        sectors.extend_from_slice(&whole[..RawCd::SECTOR]);
+        if whole[RawCd::SECTOR..].iter().any(|&b| b != 0) {
+            damaged.insert(lba + i as u64);
+        } else {
+            damaged.remove(&(lba + i as u64));
+        }
+    }
+    sectors
 }
 
 impl SectorSource for RawCd {
     fn read(&mut self, lba: u64, count: u64) -> std::result::Result<Vec<u8>, ReadError> {
-        let cdb = crate::scsi::read_cd_raw(lba as u32, count as u32);
-        let want = count as usize * Self::SECTOR;
-        match crate::scsi::read(&self.file, &cdb, want) {
-            Ok(data) if data.len() == want => Ok(data),
+        let watching = self.damaged.is_some();
+        let stride = if watching { crate::scsi::RAW_WITH_C2 } else { Self::SECTOR };
+        let cdb = if watching {
+            crate::scsi::read_cd_raw_with_c2(lba as u32, count as u32)
+        } else {
+            crate::scsi::read_cd_raw(lba as u32, count as u32)
+        };
+        let want = count as usize * stride;
+        match crate::scsi::read_sectors(&self.file, &cdb, stride, count as usize) {
+            Ok(data) if data.len() == want => Ok(match &mut self.damaged {
+                Some(damaged) => split_c2(&data, lba, count, damaged),
+                None => data,
+            }),
             // A short answer is a partial read, which the passes are entitled
             // to treat as no read at all: they narrow the range and try again.
             Ok(_) => Err(ReadError::Unreadable),
             Err(crate::scsi::Failed::Refused) => Err(ReadError::Unreadable),
             Err(crate::scsi::Failed::Fatal(why)) => Err(ReadError::Fatal(why)),
         }
+    }
+
+    fn damaged(&self) -> Vec<u64> {
+        self.damaged.iter().flatten().copied().collect()
     }
 }
 
@@ -834,5 +897,55 @@ mod image_tests {
             assert!(meta.blocks() < 1000, "{} blocks allocated", meta.blocks());
         }
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[cfg(test)]
+mod c2_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    /// One sector's worth of bytes with a C2 field appended.
+    fn sector(fill: u8, flags: &[usize]) -> Vec<u8> {
+        let mut whole = vec![fill; crate::scsi::RAW_WITH_C2];
+        whole[RawCd::SECTOR..].fill(0);
+        for &byte in flags {
+            whole[RawCd::SECTOR + byte / 8] |= 1 << (byte % 8);
+        }
+        whole
+    }
+
+    #[test]
+    fn the_sector_comes_out_and_the_error_pointers_do_not() {
+        let mut damaged = BTreeSet::new();
+        let read = [sector(0xAB, &[]), sector(0xCD, &[])].concat();
+        let out = split_c2(&read, 100, 2, &mut damaged);
+        assert_eq!(out.len(), 2 * RawCd::SECTOR, "no room left for the C2 bytes");
+        assert!(out[..RawCd::SECTOR].iter().all(|&b| b == 0xAB));
+        assert!(out[RawCd::SECTOR..].iter().all(|&b| b == 0xCD));
+    }
+
+    #[test]
+    fn a_sector_with_any_bit_set_is_one_the_drive_had_to_guess_at() {
+        let mut damaged = BTreeSet::new();
+        let read = [sector(0, &[]), sector(0, &[1000]), sector(0, &[])].concat();
+        split_c2(&read, 500, 3, &mut damaged);
+        assert_eq!(damaged.iter().copied().collect::<Vec<_>>(), vec![501]);
+    }
+
+    #[test]
+    fn reading_a_flagged_sector_again_cleanly_clears_it() {
+        let mut damaged = BTreeSet::new();
+        split_c2(&sector(0, &[0]), 42, 1, &mut damaged);
+        assert_eq!(damaged.len(), 1, "flagged on the first reading");
+        split_c2(&sector(0, &[]), 42, 1, &mut damaged);
+        assert!(damaged.is_empty(), "the retry read it, so it is not damage any more");
+    }
+
+    #[test]
+    fn a_source_that_cannot_tell_says_nothing_rather_than_saying_all_is_well() {
+        let disc = PlainDisc::open(std::path::Path::new("/dev/null"));
+        assert!(disc.is_ok(), "/dev/null opens");
+        assert!(disc.unwrap().damaged().is_empty());
     }
 }

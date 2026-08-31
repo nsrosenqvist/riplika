@@ -529,6 +529,12 @@ pub enum Warning {
     FreeReaderIncomplete { why: String },
     /// The free reader could not read the disc at all.
     FreeReaderFailed { why: String },
+    /// The drive's C2 error pointers say part of an audio track is damaged.
+    ///
+    /// Not fatal on its own - the track is read again, and if two readings
+    /// agree it is kept - but worth saying, because a disc that reports this
+    /// will keep reporting it and the reader may want to clean it.
+    TrackDamaged { track: u8, sectors: usize },
 }
 
 impl Warning {
@@ -573,6 +579,10 @@ impl Warning {
             Warning::FreeReaderFailed { why } => {
                 format!("the free reader failed ({why}); using MakeMKV")
             }
+            Warning::TrackDamaged { track, sectors } => format!(
+                "track {track} is damaged: the drive had to guess at {}",
+                plural(*sectors, "sector")
+            ),
         }
     }
 }

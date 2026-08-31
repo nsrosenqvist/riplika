@@ -788,6 +788,10 @@ fn warning_text(w: &Warning) -> String {
         Warning::FreeReaderFailed { why } => {
             tr_args("the free reader failed (%1$s); using MakeMKV", &[why])
         }
+        Warning::TrackDamaged { track, sectors } => tr_args(
+            "track %1$s is damaged: the drive had to guess at %2$s",
+            &[&track.to_string(), &tr_n("%d sector", "%d sectors", *sectors as u32)],
+        ),
     }
 }
 

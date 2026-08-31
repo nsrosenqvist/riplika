@@ -336,7 +336,8 @@ fn pregap_of(file: &File, number: u8, below: u32, at: u32) -> Option<u32> {
 fn run(file: &File, lba: u32, count: u32) -> Option<Vec<SubQ>> {
     let cdb = crate::scsi::read_cd_raw_with_q(lba, count);
     let want = count as usize * crate::scsi::RAW_WITH_Q;
-    let data = crate::scsi::read(file, &cdb, want).ok()?;
+    let data =
+        crate::scsi::read_sectors(file, &cdb, crate::scsi::RAW_WITH_Q, count as usize).ok()?;
     if data.len() < want {
         return None;
     }
@@ -347,7 +348,7 @@ fn run(file: &File, lba: u32, count: u32) -> Option<Vec<SubQ>> {
 /// run does not - at the cost of being the reading that can come back stale.
 fn one(file: &File, lba: u32) -> Option<SubQ> {
     let cdb = crate::scsi::read_cd_raw_with_q(lba, 1);
-    let data = crate::scsi::read(file, &cdb, crate::scsi::RAW_WITH_Q).ok()?;
+    let data = crate::scsi::read_sectors(file, &cdb, crate::scsi::RAW_WITH_Q, 1).ok()?;
     (data.len() >= crate::scsi::RAW_WITH_Q).then(|| parse_q(&data))
 }
 
@@ -363,7 +364,7 @@ pub fn data_mode(device: &Path, toc: &Toc) -> crate::cue::DataMode {
     };
     let Ok(file) = File::open(device) else { return crate::cue::DataMode::Audio };
     let cdb = crate::scsi::read_cd_raw(first.start, 1);
-    match crate::scsi::read(&file, &cdb, 2352) {
+    match crate::scsi::read_sectors(&file, &cdb, 2352, 1) {
         Ok(sector) => crate::cue::DataMode::of_sector(&sector),
         Err(_) => crate::cue::DataMode::Audio,
     }

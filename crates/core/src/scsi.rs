@@ -24,7 +24,51 @@ pub enum Failed {
 }
 
 /// Send a command and read back what it produces.
+///
+/// The answer is cut to the length the drive says it sent. For a reply that
+/// carries its own length - the table of contents, CD-Text - that is the right
+/// thing. For a run of fixed-size sectors it is not; see [`read_sectors`].
 pub fn read(file: &File, cdb: &[u8], expect: usize) -> std::result::Result<Vec<u8>, Failed> {
+    let (mut buffer, resid) = transfer(file, cdb, expect)?;
+    buffer.truncate(buffer.len().saturating_sub(resid));
+    Ok(buffer)
+}
+
+/// Read a run of whole sectors, disbelieving a residual too small to be one.
+///
+/// The USB bridge in front of at least one drive here reports a residual on
+/// transfers that plainly completed: the buffer comes back filled to the last
+/// byte, every sector's sync pattern sits at its exact stride, and yet the
+/// drive claims 96 or 256 bytes were never sent. Cutting the answer there
+/// leaves a part sector, which every caller reads as a failed read - so a good
+/// read of two sectors was being thrown away, and the pregap scan was falling
+/// back to its slow path against a drive that had answered correctly.
+///
+/// A residual shorter than a single sector cannot describe a missing sector,
+/// so it is noise and is ignored. One sector or more is believed.
+pub fn read_sectors(
+    file: &File,
+    cdb: &[u8],
+    sector: usize,
+    count: usize,
+) -> std::result::Result<Vec<u8>, Failed> {
+    let (mut buffer, resid) = transfer(file, cdb, sector * count)?;
+    buffer.truncate(believable(buffer.len(), resid, sector));
+    Ok(buffer)
+}
+
+/// How much of an answer to keep, given what the drive says it held back.
+fn believable(got: usize, resid: usize, sector: usize) -> usize {
+    if resid < sector { got } else { got.saturating_sub(resid) }
+}
+
+/// The ioctl itself, answering with what came back and what the drive says it
+/// held back.
+fn transfer(
+    file: &File,
+    cdb: &[u8],
+    expect: usize,
+) -> std::result::Result<(Vec<u8>, usize), Failed> {
     let mut buffer = vec![0u8; expect];
     let mut command = cdb.to_vec();
     let mut sense = [0u8; 32];
@@ -46,9 +90,7 @@ pub fn read(file: &File, cdb: &[u8], expect: usize) -> std::result::Result<Vec<u
     if hdr.status != 0 || hdr.host_status != 0 {
         return Err(Failed::Refused);
     }
-    let got = buffer.len().saturating_sub(hdr.resid.max(0) as usize);
-    buffer.truncate(got);
-    Ok(buffer)
+    Ok((buffer, hdr.resid.max(0) as usize))
 }
 
 /// Open the device and send one command. For the one-off questions.
@@ -95,6 +137,24 @@ pub fn read_cd_raw_with_q(lba: u32, sectors: u32) -> [u8; 12] {
 /// Bytes a raw sector takes when the Q subchannel comes with it.
 pub const RAW_WITH_Q: usize = 2352 + 16;
 
+/// `READ CD`, and the drive's own account of what it could not read.
+///
+/// C2 is one bit per byte of the sector, set where the drive's error
+/// correction gave up and handed back a guess. It is the difference between
+/// "these two passes disagree" and "the disc is damaged from here on", and it
+/// costs nothing but the extra bytes.
+pub fn read_cd_raw_with_c2(lba: u32, sectors: u32) -> [u8; 12] {
+    let mut cdb = read_cd_raw(lba, sectors);
+    cdb[9] = 0xFA;
+    cdb
+}
+
+/// One bit per byte of a 2352-byte sector, rounded up to whole bytes.
+pub const C2_BYTES: usize = 294;
+
+/// Bytes a raw sector takes when the C2 error pointers come with it.
+pub const RAW_WITH_C2: usize = 2352 + C2_BYTES;
+
 const SG_IO: libc::c_ulong = 0x2285;
 const SG_DXFER_FROM_DEV: i32 = -3;
 
@@ -128,6 +188,42 @@ struct SgIoHdr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_residual_shorter_than_a_sector_is_not_believed() {
+        // What this drive reports on transfers that plainly completed: the
+        // buffer comes back filled, the sync patterns are all at their stride,
+        // and the residual still says a few dozen bytes never arrived.
+        for lie in [88, 96, 128, 176, 192, 256] {
+            assert_eq!(believable(4704, lie, 2352), 4704, "residual of {lie} is noise");
+        }
+    }
+
+    #[test]
+    fn a_residual_of_a_whole_sector_or_more_is_believed() {
+        assert_eq!(believable(4704, 2352, 2352), 2352);
+        assert_eq!(believable(7056, 4704, 2352), 2352);
+    }
+
+    #[test]
+    fn a_residual_longer_than_the_answer_leaves_nothing_rather_than_panicking() {
+        assert_eq!(believable(2352, 9999, 2352), 0);
+    }
+
+    #[test]
+    fn the_c2_read_asks_for_error_pointers_and_changes_nothing_else() {
+        let plain = read_cd_raw(1234, 7);
+        let with_c2 = read_cd_raw_with_c2(1234, 7);
+        assert_eq!(with_c2[9], 0xFA, "sync, headers, user data, ECC and C2");
+        assert_eq!(plain[..9], with_c2[..9], "the same sectors are being asked for");
+        assert_eq!(plain[10..], with_c2[10..], "no subchannel either way");
+    }
+
+    #[test]
+    fn a_c2_sector_is_the_sector_and_one_bit_for_each_of_its_bytes() {
+        assert_eq!(C2_BYTES, 2352 / 8);
+        assert_eq!(RAW_WITH_C2, 2352 + C2_BYTES);
+    }
 
     #[test]
     fn a_raw_read_asks_for_the_whole_sector_and_not_the_cooked_part() {

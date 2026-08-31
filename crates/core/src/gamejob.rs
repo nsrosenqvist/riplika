@@ -47,6 +47,14 @@ pub struct Dumped {
     pub mode: crate::cue::DataMode,
     /// Sectors the drive would not give up, which were filled with zeros.
     pub unreadable: u64,
+    /// Sectors the drive read but had to guess at, by its own C2 account.
+    ///
+    /// Different from unreadable: there are bytes here, and they may even be
+    /// the right ones. They are simply not known to be, and on audio - which
+    /// carries no error correction a host can check - there is no way to find
+    /// out except by reading the disc again and seeing whether it says the
+    /// same thing twice.
+    pub damaged: u64,
     pub sectors: u64,
     /// Samples of silence put where the read offset pointed past the disc.
     ///
@@ -77,7 +85,7 @@ impl Dumped {
     /// it will never match a datfile, and saying so beats letting somebody
     /// conclude their disc is simply unknown.
     pub fn is_complete(&self) -> bool {
-        self.unreadable == 0
+        self.unreadable == 0 && self.damaged == 0
     }
 }
 
@@ -131,6 +139,7 @@ pub fn dump(
     events(Event::Stage(Stage::Rip));
     let name = stem.file_name().unwrap_or_default().to_string_lossy().into_owned();
     let mut unreadable = 0;
+    let mut damaged = 0;
     let mut parts: Vec<(u8, PathBuf)> = Vec::new();
     // Audio tracks are hashed as they are checked, so they need no second pass.
     let mut checked: Vec<(u8, Digests)> = Vec::new();
@@ -158,10 +167,14 @@ pub fn dump(
             // tracks of twenty. cdparanoia overlaps its reads and matches the
             // overlap, which is the whole reason it exists.
             (Some(_), false) => {
-                let reading =
-                    Reading { device, fs, medium, sector, cancel, sectors: sectors.max(1) as f32 };
-                let (digests, bad) = read_span_twice(&reading, &part, span, events)?;
+                let reading = Reading { fs, sectors: sectors.max(1) as f32 };
+                let mut read = |into: &Path, progress: &mut dyn FnMut(f32)| {
+                    read_span(device, into, medium, sector, span, cancel, progress)
+                };
+                let (digests, bad, guessed) =
+                    read_span_twice(&reading, &part, span, &mut read, events)?;
                 unreadable += bad;
+                damaged += guessed;
                 checked.push((span.number, digests));
             }
             // Data sectors carry their own addresses, so they can be read
@@ -245,7 +258,7 @@ pub fn dump(
         })
         .transpose()?;
 
-    Ok(Dumped { tracks, cue, spans, mode, unreadable, sectors, padded })
+    Ok(Dumped { tracks, cue, spans, mode, unreadable, damaged, sectors, padded })
 }
 
 /// Bytes in one stereo sample: two channels of sixteen bits.
@@ -396,6 +409,10 @@ pub fn file_away(
 }
 
 /// Read one span of sectors into `dest`.
+///
+/// Answers with the sectors the drive could not read at all, and - on a CD,
+/// where the drive is asked for its C2 error pointers too - the sectors it
+/// handed back as a guess.
 fn read_span(
     device: &Path,
     dest: &Path,
@@ -404,10 +421,10 @@ fn read_span(
     span: &crate::cue::TrackSpan,
     cancel: &Cancel,
     progress: &mut dyn FnMut(f32),
-) -> Result<u64> {
+) -> Result<(u64, Vec<u64>)> {
     let mut source = Cancellable {
         inner: match medium {
-            Medium::Cd => Box::new(RawCd::open(device)?),
+            Medium::Cd => Box::new(RawCd::open(device)?.watching_c2()),
             _ => Box::new(PlainDisc::open(device)?),
         },
         cancel,
@@ -416,7 +433,7 @@ fn read_span(
     let mut rescue = Rescue::new(Map::new(u64::from(span.start), u64::from(span.end)))
         .filling_with(vec![0u8; sector]);
     rescue.run(&mut source, &mut sink, &mut |p| progress(p.fraction))?;
-    Ok(rescue.map.count(crate::rescue::map::State::Bad))
+    Ok((rescue.map.count(crate::rescue::map::State::Bad), source.damaged()))
 }
 
 /// How many times a track is re-read before it is given up on.
@@ -424,42 +441,52 @@ const ATTEMPTS: u32 = 3;
 
 /// What every span read needs to know, which does not change between them.
 struct Reading<'a> {
-    device: &'a Path,
     fs: &'a dyn Fs,
-    medium: Medium,
-    sector: usize,
-    cancel: &'a Cancel,
     /// Sectors on the whole disc, for reporting how far along this one is.
     sectors: f32,
 }
 
-/// Read a span, and again, until two readings agree.
+/// Reading one span into one file: how far it got, and what it had to guess at.
 ///
-/// Audio carries no address for the drive to sync on, so a sector read wrongly
-/// comes back looking like any other. Under sustained work this drive returns
-/// stale audio often enough that two dumps of one disc disagreed on nineteen
-/// tracks of twenty - while the same sectors read identically when it was not
-/// busy. So the way to know a track is right is to read it twice and see.
+/// A seam, because a drive is the one thing here that cannot be faked and the
+/// deciding of when a track is good enough is the part worth testing.
+type ReadSpan<'a> = &'a mut dyn FnMut(&Path, &mut dyn FnMut(f32)) -> Result<(u64, Vec<u64>)>;
+
+/// Read an audio span, and again if the drive says it had to guess.
 ///
-/// This detects rather than corrects: two readings that agree are almost
-/// certainly the disc, and two that never agree are reported rather than
-/// written out as though they were fine.
+/// Audio has no error correction a host can check, so a sector read wrongly
+/// comes back looking like any other, and two dumps of one disc disagreed on
+/// nineteen tracks of twenty. The reason turned out to be neither the drive
+/// nor the reading: asking for C2 error pointers showed the disc is damaged
+/// from a certain sector on, and the first sector the drive flagged was the
+/// very sector at which two passes first differed. Before it, 7568 sectors
+/// were byte-identical between passes; after it, half of them differed.
+///
+/// So C2 is the tripwire. A track the drive never flagged is read once and
+/// believed. A track it flagged is damaged, and no single reading of it can be
+/// trusted - so it is read again until two agree, and if none ever do it is
+/// reported rather than written out as though it were fine.
+///
+/// C2 is a tripwire and not a map: differing sectors the drive did not flag
+/// all sat within seven sectors of one it did. It says reliably that a disc is
+/// damaged, not exactly where.
+///
+/// Answers with the digests of what was kept, the sectors that would not read
+/// at all, and the sectors the drive admitted to guessing at. A damaged track
+/// is not an error - the best reading of it is kept, and counted, so that the
+/// rest of the disc still comes off and the report can say what is wrong with
+/// it. What is not allowed is a damaged track passing for a good one.
 fn read_span_twice(
     reading: &Reading,
     dest: &Path,
     span: &crate::cue::TrackSpan,
+    read: ReadSpan,
     events: &mut dyn FnMut(Event),
-) -> Result<(Digests, u64)> {
-    let (device, fs, medium, sector, cancel, whole) = (
-        reading.device,
-        reading.fs,
-        reading.medium,
-        reading.sector,
-        reading.cancel,
-        reading.sectors,
-    );
+) -> Result<(Digests, u64, u64)> {
+    let (fs, whole) = (reading.fs, reading.sectors);
     let against = dest.with_extension("check");
     let mut unreadable = 0;
+    let mut flagged = 0;
     let mut previous: Option<Digests> = None;
 
     for attempt in 0..ATTEMPTS {
@@ -474,12 +501,35 @@ fn read_span_twice(
                 }),
             });
         };
-        unreadable = read_span(device, into, medium, sector, span, cancel, &mut report)?;
+        let damaged;
+        (unreadable, damaged) = read(into, &mut report)?;
         let digests = hash::of_file(fs, into, &mut |_, _| {})?;
+        // Nothing flagged: the drive read every sector rather than filling any
+        // of them in, so there is nothing a second reading could disagree
+        // with. This is the ordinary case, and it saves reading the disc twice.
+        if damaged.is_empty() {
+            // Rename before removing: on a retry `into` *is* the check file,
+            // and clearing it first would delete the very reading being kept.
+            if attempt > 0 {
+                fs.rename(into, dest)?;
+            }
+            let _ = fs.remove_file(&against);
+            return Ok((digests, unreadable, 0));
+        }
+        flagged = damaged.len() as u64;
+        if attempt == 0 {
+            events(Event::Warning(crate::model::Warning::TrackDamaged {
+                track: span.number,
+                sectors: damaged.len(),
+            }));
+        }
         match previous {
+            // Two readings of a damaged track agreeing is the best evidence
+            // there is that the drive's guesses were the same guesses, which
+            // is not the same as their being right - so it is still counted.
             Some(before) if before == digests => {
                 let _ = fs.remove_file(&against);
-                return Ok((digests, unreadable));
+                return Ok((digests, unreadable, flagged));
             }
             // The second reading is the one kept, so the file on disk is
             // always the reading that was checked.
@@ -491,12 +541,14 @@ fn read_span_twice(
         }
     }
     let _ = fs.remove_file(&against);
-    let _ = unreadable;
-    Err(Error(format!(
-        "track {} read differently every time in {ATTEMPTS} attempts; the drive is not \
-         returning it reliably",
-        span.number
-    )))
+    // No two readings agreed, so the file on disk is the last of them - the
+    // best that can be had. It is kept rather than thrown away, and counted so
+    // that nothing downstream mistakes it for a faithful copy.
+    let digests = hash::of_file(fs, dest, &mut |_, _| {})?;
+    // At least one, always. A track that never agreed with itself reporting no
+    // damage would be counted as whole, which is the one outcome this is here
+    // to prevent.
+    Ok((digests, unreadable, flagged.max(1)))
 }
 
 /// Stops the passes when the user asks.
@@ -514,6 +566,10 @@ impl SectorSource for Cancellable<'_> {
             return Err(ReadError::Fatal("cancelled".into()));
         }
         self.inner.read(lba, count)
+    }
+
+    fn damaged(&self) -> Vec<u64> {
+        self.inner.damaged()
     }
 }
 
@@ -573,6 +629,13 @@ pub fn identify_all<'a>(
 pub fn shortfall(dumped: &Dumped) -> Option<String> {
     if dumped.is_complete() {
         return None;
+    }
+    if dumped.unreadable == 0 {
+        return Some(format!(
+            "{} of {} sectors came back as the drive's best guess rather than as read; \
+             the disc is damaged, and the image will not match any datfile",
+            dumped.damaged, dumped.sectors
+        ));
     }
     let bytes = dumped.unreadable * SECTOR as u64;
     Some(format!(
@@ -665,6 +728,7 @@ mod tests {
             spans: Vec::new(),
             mode: crate::cue::DataMode::Mode1,
             unreadable,
+            damaged: 0,
             sectors: 1_000_000,
         }
     }
@@ -691,6 +755,7 @@ mod tests {
                 .collect(),
             mode: crate::cue::DataMode::Mode2,
             unreadable: 0,
+            damaged: 0,
             sectors: 1_000,
         }
     }
@@ -958,5 +1023,123 @@ mod tests {
         let why = shortfall(&d).expect("it should complain");
         assert!(why.contains("32 of 1000000"), "{why}");
         assert!(why.contains("datfile"), "{why}");
+    }
+
+    /// What one reading of a span produced: sectors missed, sectors guessed at.
+    type Reading1 = Result<(u64, Vec<u64>)>;
+
+    /// A reader that hands back a scripted sequence of readings.
+    ///
+    /// Each entry is what one attempt produces: the bytes written, and the
+    /// sectors the drive says it guessed at.
+    fn scripted<'a>(
+        fs: &'a crate::host::FakeFs,
+        readings: Vec<(&'static str, Vec<u64>)>,
+        attempts: &'a std::cell::Cell<usize>,
+    ) -> impl FnMut(&Path, &mut dyn FnMut(f32)) -> Reading1 + 'a {
+        move |into: &Path, _: &mut dyn FnMut(f32)| {
+            let (bytes, damaged) = readings[attempts.get().min(readings.len() - 1)].clone();
+            attempts.set(attempts.get() + 1);
+            fs.write(into, bytes.as_bytes())?;
+            Ok((0, damaged))
+        }
+    }
+
+    fn span() -> crate::cue::TrackSpan {
+        crate::cue::TrackSpan { number: 2, is_data: false, start: 100, end: 200, pregap: 150 }
+    }
+
+    #[test]
+    fn a_track_the_drive_never_flagged_is_read_once_and_believed() {
+        // The point of asking for C2 at all: a healthy disc should not be read
+        // twice to prove it is healthy.
+        let fs = crate::host::FakeFs::new();
+        let at = std::cell::Cell::new(0);
+        let mut read = scripted(&fs, vec![("good", vec![])], &at);
+        let reading = Reading { fs: &fs, sectors: 1000.0 };
+        let (_, _, damaged) =
+            read_span_twice(&reading, Path::new("/x.bin"), &span(), &mut read, &mut |_| {})
+                .expect("a clean reading is not an error");
+        assert_eq!(at.get(), 1, "read once");
+        assert_eq!(damaged, 0);
+        assert_eq!(fs.read(Path::new("/x.bin")).unwrap(), b"good");
+    }
+
+    #[test]
+    fn a_retry_that_comes_back_clean_is_the_reading_that_is_kept() {
+        // The check file *is* the reading on a retry, so clearing it before
+        // moving it into place threw away the only good copy.
+        let fs = crate::host::FakeFs::new();
+        let at = std::cell::Cell::new(0);
+        let mut read = scripted(&fs, vec![("guessed", vec![7]), ("clean", vec![])], &at);
+        let reading = Reading { fs: &fs, sectors: 1000.0 };
+        let (digests, _, damaged) =
+            read_span_twice(&reading, Path::new("/x.bin"), &span(), &mut read, &mut |_| {})
+                .expect("the retry read it");
+        assert_eq!(at.get(), 2);
+        assert_eq!(damaged, 0);
+        assert_eq!(fs.read(Path::new("/x.bin")).unwrap(), b"clean");
+        assert_eq!(digests.bytes, 5, "the digests are of what was kept");
+    }
+
+    #[test]
+    fn a_flagged_track_that_reads_the_same_twice_is_kept_and_still_counted() {
+        let fs = crate::host::FakeFs::new();
+        let at = std::cell::Cell::new(0);
+        let mut read = scripted(&fs, vec![("same", vec![7, 8])], &at);
+        let reading = Reading { fs: &fs, sectors: 1000.0 };
+        let mut warnings = Vec::new();
+        let (_, _, damaged) =
+            read_span_twice(&reading, Path::new("/x.bin"), &span(), &mut read, &mut |e| {
+                if let Event::Warning(w) = e {
+                    warnings.push(w);
+                }
+            })
+            .expect("two agreeing readings are the best there is");
+        assert_eq!(at.get(), 2, "flagged, so it was read again");
+        assert_eq!(damaged, 2, "agreeing is not the same as being right");
+        assert_eq!(warnings.len(), 1, "said once, not once per attempt");
+    }
+
+    #[test]
+    fn a_track_that_never_agrees_is_kept_and_reported_rather_than_lost() {
+        // Erroring here used to lose the whole disc over one bad track. The
+        // rest of it still comes off; what must not happen is the bad track
+        // passing for a good one.
+        let fs = crate::host::FakeFs::new();
+        let at = std::cell::Cell::new(0);
+        let mut read =
+            scripted(&fs, vec![("one", vec![7]), ("two", vec![7]), ("three", vec![7])], &at);
+        let reading = Reading { fs: &fs, sectors: 1000.0 };
+        let (_, _, damaged) =
+            read_span_twice(&reading, Path::new("/x.bin"), &span(), &mut read, &mut |_| {})
+                .expect("a damaged track is a result, not an error");
+        assert_eq!(at.get(), ATTEMPTS as usize);
+        assert!(damaged > 0, "counted, so nothing downstream calls the dump whole");
+        assert_eq!(fs.read(Path::new("/x.bin")).unwrap(), b"three", "the last reading is kept");
+        assert!(fs.read(Path::new("/x.check")).is_err(), "no check file left behind");
+    }
+
+    #[test]
+    fn a_dump_the_drive_had_to_guess_at_is_not_a_whole_dump() {
+        // Audio has no error correction a host can check, so a guessed sector
+        // reads like any other. The drive's own C2 account is the only thing
+        // that knows, and letting it pass silently is how a disc that matches
+        // nothing gets mistaken for a disc nobody has catalogued.
+        let mut d = dumped(0);
+        d.damaged = 47;
+        assert!(!d.is_complete());
+        let why = shortfall(&d).expect("it should complain");
+        assert!(why.contains("47 of 1000000"), "{why}");
+        assert!(why.contains("guess"), "{why}");
+        assert!(!why.contains("could not be read"), "they were read, just not trustworthily");
+    }
+
+    #[test]
+    fn holes_are_spoken_of_ahead_of_guesses_when_a_dump_has_both() {
+        let mut d = dumped(32);
+        d.damaged = 47;
+        let why = shortfall(&d).expect("it should complain");
+        assert!(why.contains("could not be read"), "{why}");
     }
 }

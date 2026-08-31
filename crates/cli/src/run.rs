@@ -421,8 +421,8 @@ pub fn rip_game(
     // name is not known until the bytes are.
     let staging = root.join("Unidentified").join(gamejob::suggested_stem(None, &inspected));
     let mut last = String::new();
-    let mut say = |e: Event| {
-        if let Event::Progress { stage, fraction, message } = e {
+    let mut say = |e: Event| match e {
+        Event::Progress { stage, fraction, message } => {
             let what = match stage {
                 Stage::Verify => "hashing".to_string(),
                 _ => message.unwrap_or_else(|| "reading".into()),
@@ -434,6 +434,13 @@ pub fn rip_game(
                 last = line;
             }
         }
+        // On its own line: progress redraws over itself, and a warning that
+        // gets drawn over is a warning nobody saw.
+        Event::Warning(w) => {
+            println!("\r  {}   ", w.text());
+            last = String::new();
+        }
+        _ => {}
     };
     let read_offset = offset.unwrap_or(prefs.read_offset);
     let dumped = gamejob::dump(&device, &staging, &real.fs, read_offset, &real.cancel, &mut say)
