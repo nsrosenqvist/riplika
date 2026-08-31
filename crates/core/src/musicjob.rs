@@ -245,9 +245,11 @@ pub fn rip(
                 title: meta.title.clone(),
                 air_date: album.date.clone(),
                 duration: meta.duration.unwrap_or(0),
-                destination: Some(dest),
+                destination: Some(dest.clone()),
             },
-            destination: PathBuf::new(),
+            // The path, not an empty one: the results screen titles each row
+            // by this file's name, and an empty path leaves the row blank.
+            destination: dest,
             bytes,
             subtitles: Vec::new(),
         });
@@ -362,10 +364,11 @@ mod tests {
         let report = run(&fs, &runner).unwrap();
 
         assert_eq!(report.produced.len(), 2);
-        assert_eq!(
-            report.produced[0].item.destination,
-            Some(PathBuf::from("/music/Shawn McDonald/Roots (2008)/01 - Clarity.flac"))
-        );
+        let where_to = PathBuf::from("/music/Shawn McDonald/Roots (2008)/01 - Clarity.flac");
+        assert_eq!(report.produced[0].item.destination, Some(where_to.clone()));
+        // Both of them: the results screen titles each row by this one, and
+        // an empty path leaves every row on it blank.
+        assert_eq!(report.produced[0].destination, where_to);
         assert!(report.is_complete());
     }
 

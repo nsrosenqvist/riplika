@@ -334,9 +334,12 @@ pub fn run_game(
                         title: name,
                         air_date: None,
                         duration: 0,
-                        destination: Some(dest),
+                        destination: Some(dest.clone()),
                     },
-                    destination: PathBuf::new(),
+                    // The path, not an empty one: the results screen titles
+                    // each row by this file's name. For a disc of several
+                    // tracks that is the cue sheet, which is the disc.
+                    destination: dest,
                     bytes: filed.bytes(),
                     subtitles: Vec::new(),
                 });
