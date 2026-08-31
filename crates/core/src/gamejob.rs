@@ -90,7 +90,6 @@ pub fn dump(
     device: &Path,
     stem: &Path,
     fs: &dyn Fs,
-    runner: &dyn crate::host::Runner,
     read_offset: i32,
     cancel: &Cancel,
     events: &mut dyn FnMut(Event),
@@ -133,6 +132,8 @@ pub fn dump(
     let name = stem.file_name().unwrap_or_default().to_string_lossy().into_owned();
     let mut unreadable = 0;
     let mut parts: Vec<(u8, PathBuf)> = Vec::new();
+    // Audio tracks are hashed as they are checked, so they need no second pass.
+    let mut checked: Vec<(u8, Digests)> = Vec::new();
     for span in &spans {
         let dest = if several {
             stem.with_file_name(crate::cue::track_file_name(&name, span.number))
@@ -156,54 +157,12 @@ pub fn dump(
             // read of it drifts: two dumps of one disc disagreed on nineteen
             // tracks of twenty. cdparanoia overlaps its reads and matches the
             // overlap, which is the whole reason it exists.
-            (Some(toc), false) => {
-                // cdparanoia will not touch a span reaching into a data track,
-                // and the first audio track's pregap does exactly that: it
-                // sits before the audio begins, in the stretch the table of
-                // contents still counts as the data track. That part is read
-                // directly and the rest handed over.
-                let audio_begins =
-                    toc.tracks.iter().find(|t| !t.is_data).map_or(span.start, |t| t.start);
-                let handover = span.start.max(audio_begins).min(span.end);
-                if handover > span.start {
-                    let mut source = Cancellable { inner: Box::new(RawCd::open(device)?), cancel };
-                    let mut sink = FileSink::with_sector(&part, u64::from(span.start), sector)?;
-                    let mut rescue =
-                        Rescue::new(Map::new(u64::from(span.start), u64::from(handover)))
-                            .filling_with(vec![0u8; sector]);
-                    rescue.run(&mut source, &mut sink, &mut |_| {})?;
-                    unreadable += rescue.map.count(crate::rescue::map::State::Bad);
-                }
-
-                let argument = crate::rip::cd::span(toc, handover, span.end)
-                    .ok_or_else(|| Error(format!("track {} is not on this disc", span.number)))?;
-                let handed = part.with_extension("part.cdp");
-                let out =
-                    runner.run(&crate::rip::cd::rip_span_command(device, &argument, &handed))?;
-                if !out.ok() {
-                    return Err(Error(format!(
-                        "cdparanoia could not read track {}: {}",
-                        span.number,
-                        out.last_error()
-                    )));
-                }
-                if handover > span.start {
-                    append_file(fs, &handed, &part)?;
-                    fs.remove_file(&handed)?;
-                } else {
-                    fs.rename(&handed, &part)?;
-                }
-                // A span written wrongly reads the wrong sectors and says
-                // nothing about it, so the length is checked against what the
-                // table of contents says it must be.
-                let got = fs.size(&part)?;
-                if got != span.bytes() {
-                    return Err(Error(format!(
-                        "track {} came to {got} bytes where the disc says {}",
-                        span.number,
-                        span.bytes()
-                    )));
-                }
+            (Some(_), false) => {
+                let reading =
+                    Reading { device, fs, medium, sector, cancel, sectors: sectors.max(1) as f32 };
+                let (digests, bad) = read_span_twice(&reading, &part, span, events)?;
+                unreadable += bad;
+                checked.push((span.number, digests));
             }
             // Data sectors carry their own addresses, so they can be read
             // directly - and through the rescue passes, which know what to do
@@ -248,6 +207,12 @@ pub fn dump(
             digests: Digests { crc32: 0, sha1: [0; 20], bytes: span.bytes() },
         })
         .collect();
+    // What was checked while reading does not need hashing again.
+    for track in &mut tracks {
+        if let Some((_, digests)) = checked.iter().find(|(n, _)| *n == track.number) {
+            track.digests = *digests;
+        }
+    }
     let padded = correct_read_offset(fs, &mut tracks, read_offset)?;
 
     let total: u64 = tracks.len() as u64;
@@ -430,20 +395,107 @@ pub fn file_away(
     Ok(moved)
 }
 
-/// Add one file to the end of another, a chunk at a time.
-fn append_file(fs: &dyn Fs, from: &Path, to: &Path) -> Result<()> {
-    let size = fs.size(from)?;
-    let mut at = 0u64;
-    while at < size {
-        let want = (crate::hash::CHUNK as u64).min(size - at) as usize;
-        let chunk = fs.read_range(from, at, want)?;
-        if chunk.is_empty() {
-            break;
+/// Read one span of sectors into `dest`.
+fn read_span(
+    device: &Path,
+    dest: &Path,
+    medium: Medium,
+    sector: usize,
+    span: &crate::cue::TrackSpan,
+    cancel: &Cancel,
+    progress: &mut dyn FnMut(f32),
+) -> Result<u64> {
+    let mut source = Cancellable {
+        inner: match medium {
+            Medium::Cd => Box::new(RawCd::open(device)?),
+            _ => Box::new(PlainDisc::open(device)?),
+        },
+        cancel,
+    };
+    let mut sink = FileSink::with_sector(dest, u64::from(span.start), sector)?;
+    let mut rescue = Rescue::new(Map::new(u64::from(span.start), u64::from(span.end)))
+        .filling_with(vec![0u8; sector]);
+    rescue.run(&mut source, &mut sink, &mut |p| progress(p.fraction))?;
+    Ok(rescue.map.count(crate::rescue::map::State::Bad))
+}
+
+/// How many times a track is re-read before it is given up on.
+const ATTEMPTS: u32 = 3;
+
+/// What every span read needs to know, which does not change between them.
+struct Reading<'a> {
+    device: &'a Path,
+    fs: &'a dyn Fs,
+    medium: Medium,
+    sector: usize,
+    cancel: &'a Cancel,
+    /// Sectors on the whole disc, for reporting how far along this one is.
+    sectors: f32,
+}
+
+/// Read a span, and again, until two readings agree.
+///
+/// Audio carries no address for the drive to sync on, so a sector read wrongly
+/// comes back looking like any other. Under sustained work this drive returns
+/// stale audio often enough that two dumps of one disc disagreed on nineteen
+/// tracks of twenty - while the same sectors read identically when it was not
+/// busy. So the way to know a track is right is to read it twice and see.
+///
+/// This detects rather than corrects: two readings that agree are almost
+/// certainly the disc, and two that never agree are reported rather than
+/// written out as though they were fine.
+fn read_span_twice(
+    reading: &Reading,
+    dest: &Path,
+    span: &crate::cue::TrackSpan,
+    events: &mut dyn FnMut(Event),
+) -> Result<(Digests, u64)> {
+    let (device, fs, medium, sector, cancel, whole) = (
+        reading.device,
+        reading.fs,
+        reading.medium,
+        reading.sector,
+        reading.cancel,
+        reading.sectors,
+    );
+    let against = dest.with_extension("check");
+    let mut unreadable = 0;
+    let mut previous: Option<Digests> = None;
+
+    for attempt in 0..ATTEMPTS {
+        let into = if attempt == 0 { dest } else { &against };
+        unreadable = read_span(device, into, medium, sector, span, cancel, &mut |fraction| {
+            events(Event::Progress {
+                stage: Stage::Rip,
+                fraction: (u64::from(span.start) as f32 + fraction * span.sectors() as f32) / whole,
+                message: Some(match attempt {
+                    0 => format!("track {}", span.number),
+                    n => format!("track {} again ({n})", span.number),
+                }),
+            });
+        })?;
+        let digests = hash::of_file(fs, into, &mut |_, _| {})?;
+        match previous {
+            Some(before) if before == digests => {
+                let _ = fs.remove_file(&against);
+                return Ok((digests, unreadable));
+            }
+            // The second reading is the one kept, so the file on disk is
+            // always the reading that was checked.
+            Some(_) => {
+                fs.rename(&against, dest)?;
+                previous = Some(digests);
+            }
+            None => previous = Some(digests),
         }
-        at += chunk.len() as u64;
-        fs.append(to, &chunk)?;
     }
-    Ok(())
+    let _ = fs.remove_file(&against);
+    let _ = unreadable;
+    Err(Error(format!(
+        "track {} read differently every time in {ATTEMPTS} attempts; the drive is not \
+         returning it reliably",
+        span.number
+    )))
 }
 
 /// Stops the passes when the user asks.
