@@ -1,0 +1,62 @@
+# Building the flatpak, which two workflows need and neither should own.
+#
+# CI builds it to prove the manifest still describes a working application;
+# the release builds the same thing and exports it so it can be handed out as
+# a single file. Same modules, same runtime, same check - the only difference
+# is whether anything is kept afterwards.
+name: Flatpak build
+description: Build, install and check the Riplika flatpak
+inputs:
+  repo:
+    description: >
+      Export the built application to this ostree repository, for turning into
+      a bundle afterwards. Empty means build and install without keeping it.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Install flatpak
+      # elfutils is not implied by flatpak-builder but is needed by it:
+      # without eu-strip it builds every module and then fails stripping the
+      # first one.
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          flatpak flatpak-builder elfutils ca-certificates
+        flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+    - name: Cache the built modules
+      # ffmpeg and x264 are built from source and change far less often than
+      # this application does.
+      uses: actions/cache@v6
+      with:
+        path: .flatpak-builder
+        key: flatpak-${{ runner.os }}-${{ hashFiles('packaging/com.nsrosenqvist.Riplika.yml') }}
+        restore-keys: flatpak-${{ runner.os }}-
+
+    - name: Install the runtime it builds against
+      shell: bash
+      run: |
+        flatpak install --user --noninteractive flathub \
+          org.gnome.Platform//50 org.gnome.Sdk//50 \
+          org.freedesktop.Sdk.Extension.rust-stable//25.08
+
+    - name: Build
+      # The distribution's flatpak-builder rather than the org.flatpak.Builder
+      # flatpak used locally: run as a flatpak on the runner it cannot see the
+      # SDK that was just installed for it. The two agree on the result now
+      # that the manifest says where libraries go rather than letting meson
+      # guess from the host.
+      shell: bash
+      run: |
+        flatpak-builder --user --install --force-clean \
+          ${{ inputs.repo && format('--repo={0}', inputs.repo) || '' }} \
+          build packaging/com.nsrosenqvist.Riplika.yml
+
+    - name: Check what was built
+      # The manifest can lose a module and still produce an application that
+      # starts and then fails on the first disc. This looks for the pieces.
+      shell: bash
+      run: ./packaging/check-flatpak.sh

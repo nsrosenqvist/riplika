@@ -1,0 +1,164 @@
+# What happens when a version is tagged.
+#
+# The tag is the whole input: `v0.3.0` is a release, `v0.3.0-rc.1` is a
+# pre-release, and nothing else distinguishes them. Everything the tag implies
+# - the version written into the binaries, whether GitHub marks it as a draft
+# of the real thing - is read from it once and passed around, so there is no
+# second place that could disagree about which release this is.
+#
+# Two things are handed out. The flatpak is how somebody installs the window;
+# the tarball is the pair of binaries for anybody who wants the command line,
+# or Blu-ray, which the sandbox cannot do.
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  # create the release and upload to it
+  contents: write
+  # chronikl writes the notes through GitHub Models
+  models: read
+
+# Two pushes of one tag must not both be making the release. No
+# cancel-in-progress here, unlike CI: a half-made release is worse than a slow
+# one, and the answer to "was this released" should not depend on timing.
+concurrency:
+  group: release-${{ github.ref }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # What the tag says, worked out once.
+  version:
+    name: Version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      prerelease: ${{ steps.read.outputs.prerelease }}
+    steps:
+      - id: read
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # Anything after the patch number - -rc.1, -beta.2 - says this is not
+          # the finished thing, and GitHub is told so rather than left to guess
+          # from the name.
+          if [ "$VERSION" != "${VERSION%%-*}" ]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "$GITHUB_REF_NAME is a pre-release of $VERSION"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "$GITHUB_REF_NAME is release $VERSION"
+          fi
+
+  # A tag is not a push to a branch, so nothing has checked this code yet.
+  # The same jobs CI runs, run again against exactly what is being released -
+  # by calling CI rather than by keeping a second copy of it that could drift.
+  checks:
+    name: Checks
+    uses: ./.github/workflows/ci.yml
+
+  binaries:
+    name: Binaries
+    needs: [version, checks]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/version-from-tag
+      - uses: ./.github/actions/gui-build-deps
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --workspace
+
+      - name: Package
+        run: |
+          set -eu
+          DIR="riplika-${{ needs.version.outputs.version }}-x86_64-linux"
+          mkdir "$DIR"
+          # Both binaries: the window and the command line are one program in
+          # two front ends, and the command line is the half that can drive a
+          # Blu-ray, which the flatpak cannot.
+          install -m755 target/release/riplika target/release/riplika-gui "$DIR/"
+          strip "$DIR/riplika" "$DIR/riplika-gui"
+          cp README.md "$DIR/"
+          # i18n::init looks for a locale tree beside the binary before it
+          # looks at /app or /usr, so the tarball carries its own and works
+          # wherever it is unpacked.
+          ./po/install.sh "$DIR"
+          tar czf "$DIR.tar.gz" "$DIR"
+          echo "packaged $DIR.tar.gz"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: binaries
+          path: riplika-*.tar.gz
+
+  flatpak:
+    name: Flatpak
+    needs: [version, checks]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/version-from-tag
+      # The same build CI does, asked to keep the result this time.
+      - uses: ./.github/actions/flatpak-build
+        with:
+          repo: repo
+
+      - name: Bundle
+        run: |
+          set -eu
+          BUNDLE="riplika-${{ needs.version.outputs.version }}.flatpak"
+          flatpak build-bundle repo "$BUNDLE" com.nsrosenqvist.Riplika
+          echo "bundled $BUNDLE"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: flatpak
+          path: riplika-*.flatpak
+
+  release:
+    name: Publish
+    needs: [version, binaries, flatpak]
+    runs-on: ubuntu-24.04
+    steps:
+      # The whole history, because the notes are written from it.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          set -eu
+          cd artifacts
+          sha256sum *.tar.gz *.flatpak > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Generate release notes
+        uses: nsrosenqvist/chronikl@v1
+        with:
+          output: release_notes.md
+          voice: prose
+          rich_context: 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHRONIKL_PROVIDER: github-models
+          CHRONIKL_MODEL: openai/gpt-4o-mini
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release_notes.md
+          prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.flatpak
+            artifacts/SHA256SUMS
