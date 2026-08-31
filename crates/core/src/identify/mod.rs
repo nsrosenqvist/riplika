@@ -47,11 +47,35 @@ pub fn identify(scan: &DiscScan, cat: &dyn Catalogue) -> Result<Vec<Candidate>> 
     let range = EpisodeRange::default();
     let episode_durations: Vec<Millis> =
         scan.titles.iter().map(|t| t.duration).filter(|d| range.contains(*d)).collect();
+    // A disc holding one thing far longer than an episode, and no run of
+    // episode-length titles, is a film. Worth saying, because the evidence
+    // below only ever spoke for television: a series could earn its way from
+    // 0.6 to 1.0 on episode counts and runtimes while a film sat at 0.6 with
+    // nothing it could add, so any show with a similar name outranked the
+    // film that was actually in the drive.
+    let feature = scan.titles.iter().map(|t| t.duration).max().unwrap_or(0);
+    let looks_like_a_film = feature > range.max && episode_durations.len() < 3;
 
     let mut out = Vec::new();
     for hit in hits {
         let mut reasons = vec![format!("volume label {:?} reads as {:?}", scan.label, guess.title)];
         let mut confidence = hit.score * 0.6;
+
+        if looks_like_a_film {
+            let minutes = feature / 60_000;
+            match hit.media {
+                Media::Movie { .. } => {
+                    confidence += 0.3;
+                    reasons.push(format!("one {minutes}-minute title, which is a film"));
+                }
+                // Not merely unsupported - contradicted. A season of
+                // television is not one long title and a handful of extras.
+                Media::Series { .. } => {
+                    confidence -= 0.2;
+                    reasons.push(format!("one {minutes}-minute title, which is not a season"));
+                }
+            }
+        }
 
         if let (Media::Series { season, provider_id, .. }, Some(id)) =
             (&hit.media, hit.media.provider_id())
@@ -407,6 +431,73 @@ mod tests {
         assert!(c[0].confidence > 0.8, "{}", c[0].confidence);
         assert!(c[0].reasons.iter().any(|r| r.contains("volume label")));
         assert!(c[0].reasons.iter().any(|r| r.contains("runtimes agree")));
+    }
+
+    #[test]
+    fn a_film_disc_outranks_a_show_that_merely_shares_its_name() {
+        // Kung Fu Panda came up as a twenty-six episode series, because the
+        // evidence only ever spoke for television: a series could climb from
+        // 0.6 to 1.0 on episode counts and runtimes while a film sat at 0.6
+        // with nothing it could add. One long title is evidence too.
+        // A catalogue that answers with both, which is the situation: the
+        // film and a series of the same name both exist.
+        struct Both;
+        impl Catalogue for Both {
+            fn name(&self) -> &'static str {
+                "both"
+            }
+            fn prefix(&self) -> &'static str {
+                "both"
+            }
+            fn search(
+                &self,
+                title: &str,
+                kind: MediaKind,
+                season: Option<u32>,
+            ) -> Result<Vec<crate::identify::catalogue::CatalogueHit>> {
+                let media = match kind {
+                    MediaKind::Movie => {
+                        Media::Movie { title: title.into(), year: Some(2008), provider_id: None }
+                    }
+                    MediaKind::Series => Media::Series {
+                        title: title.into(),
+                        year: Some(2011),
+                        season: season.unwrap_or(1),
+                        provider_id: None,
+                    },
+                };
+                Ok(vec![crate::identify::catalogue::CatalogueHit {
+                    media,
+                    score: 0.9,
+                    detail: None,
+                }])
+            }
+            fn episodes(&self, _id: &str, _season: u32) -> Result<Vec<Episode>> {
+                Ok(Vec::new())
+            }
+        }
+
+        // One feature and a couple of extras, which is what a film disc is.
+        let s = scan("KUNG_FU_PANDA", &[5_400_000, 300_000, 200_000]);
+        let c = identify(&s, &Both).unwrap();
+        assert!(matches!(c[0].media, Media::Movie { .. }), "the film first: {c:#?}");
+        assert!(
+            c[0].reasons.iter().any(|r| r.contains("which is a film")),
+            "and says why: {:?}",
+            c[0].reasons
+        );
+    }
+
+    #[test]
+    fn a_disc_of_episodes_is_still_read_as_television() {
+        // The other half of the same rule: adding evidence for films must not
+        // take any away from a disc that really is a season.
+        let http = tvmaze();
+        let cat = TvMaze { http: &http };
+        let s = scan("PARKS_AND_RECREATION_S7D1", &[1_275_000; 4]);
+        let c = identify(&s, &cat).unwrap();
+        assert!(matches!(c[0].media, Media::Series { .. }), "{:#?}", c[0]);
+        assert!(c[0].confidence > 0.8, "{}", c[0].confidence);
     }
 
     #[test]

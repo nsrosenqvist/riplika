@@ -495,11 +495,12 @@ fn build_ui() -> Ui {
     let containers = gtk::StringList::new(&["MP4", "Matroska"]);
     let container = adw::ComboRow::builder()
         .title(tr("Container"))
-        // The one row on this page that said only its own name. What the
-        // choice costs is not guessable from "MP4" and "Matroska": MP4 holds
-        // a title and nothing else, so the show, season and episode a media
-        // server files by have to come from the filename instead.
-        .subtitle(tr("MP4 plays on anything; Matroska carries the show and episode tags too"))
+        // The one row on this page that said only its own name. Both carry
+        // the show and episode tags - MP4 gets them from ffmpeg directly,
+        // Matroska has them written in afterwards - so what actually differs
+        // is what else fits: MP4 has no room for the disc's own bitmap
+        // subtitles, and Matroska does.
+        .subtitle(tr("MP4 plays on anything; Matroska takes subtitle formats MP4 cannot"))
         .model(&containers)
         .selected(0)
         .build();
@@ -1256,10 +1257,24 @@ impl App {
         if !drives.is_empty() {
             self.ui.drive_combo.set_selected(pick as u32);
         }
+        let swapped = {
+            let state = self.state.borrow();
+            let before = state.drive.as_ref().map(|d| (d.device.clone(), d.disc_label.clone()));
+            let now = drives.get(pick).map(|d| (d.device.clone(), d.disc_label.clone()));
+            before.is_some() && before != now
+        };
         {
             let mut state = self.state.borrow_mut();
             state.drives = drives.to_vec();
             state.drive = drives.get(pick).cloned();
+        }
+        // A different disc - or none - means everything worked out about the
+        // last one is about a disc that is no longer there. Watching the tray
+        // put a new disc in front of the previous one's identification, so
+        // Kung Fu Panda came up as the show that was in the drive before it.
+        if swapped {
+            forget_the_disc(&mut self.state.borrow_mut());
+            self.show_choice();
         }
         self.refresh_drive_page();
     }
