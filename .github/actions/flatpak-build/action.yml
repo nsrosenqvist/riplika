@@ -17,14 +17,21 @@ runs:
   using: composite
   steps:
     - name: Install flatpak
-      # elfutils is not implied by flatpak-builder but is needed by it:
-      # without eu-strip it builds every module and then fails stripping the
-      # first one.
+      # Two packages flatpak-builder needs and does not depend on.
+      #
+      # elfutils: without eu-strip it builds every module and then fails
+      # stripping the first one.
+      #
+      # librsvg2-common: exporting validates the application icon through
+      # gdk-pixbuf, which has no SVG loader without it - so a perfectly good
+      # icon is rejected with "Format not recognized" after twelve minutes of
+      # building. It does not come up locally, where flatpak-builder is itself
+      # a flatpak and brings its own.
       shell: bash
       run: |
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
-          flatpak flatpak-builder elfutils ca-certificates
+          flatpak flatpak-builder elfutils ca-certificates librsvg2-common
         flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
     - name: Cache the built modules
