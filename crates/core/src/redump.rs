@@ -33,6 +33,15 @@ pub struct Game {
 }
 
 impl Game {
+    /// The entry's track files, in order, without the cue sheet.
+    ///
+    /// The sheet is a rom like any other in the file and is not a track, so
+    /// counting it would make every multi-track disc look one track longer
+    /// than it is.
+    pub fn tracks(&self) -> Vec<&Rom> {
+        self.roms.iter().filter(|r| !r.name.to_lowercase().ends_with(".cue")).collect()
+    }
+
     /// A disc whose data is spread over several files - tracks and a cue sheet.
     ///
     /// One flat image cannot match such a disc, because Redump never made one.
@@ -59,6 +68,22 @@ pub struct Dat {
 pub struct Found<'a> {
     pub game: &'a Game,
     pub rom: &'a Rom,
+}
+
+/// A datfile entry that accounts for some of a dump but not all of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Partial<'a> {
+    pub game: &'a Game,
+    /// Track numbers, counting from one, whose hashes match the entry.
+    pub matched: Vec<usize>,
+    /// Track numbers that do not. Never empty - a whole match is not partial.
+    pub differing: Vec<usize>,
+}
+
+impl Partial<'_> {
+    pub fn tracks(&self) -> usize {
+        self.matched.len() + self.differing.len()
+    }
 }
 
 impl Dat {
@@ -96,11 +121,45 @@ impl Dat {
     /// leaves track one perfect and everything after it shifted.
     pub fn find_all(&self, tracks: &[Digests]) -> Option<&Game> {
         self.games.iter().find(|game| {
-            let roms: Vec<&Rom> =
-                game.roms.iter().filter(|r| !r.name.to_lowercase().ends_with(".cue")).collect();
+            let roms = game.tracks();
             roms.len() == tracks.len()
                 && roms.iter().zip(tracks).all(|(rom, got)| matches(rom, got))
         })
+    }
+
+    /// The entry that accounts for most of a dump, when none accounts for all.
+    ///
+    /// "No datfile has this disc" is doing two jobs at once: nobody has
+    /// catalogued this pressing, and you have a disc everybody has catalogued
+    /// and three of its tracks are bad. Those call for opposite responses -
+    /// send one in, read the other again - and the reader cannot tell which
+    /// they have.
+    ///
+    /// Only entries with the same number of tracks are considered, because
+    /// otherwise "track 9" means different things on each side and the answer
+    /// is noise. A whole track matching by size *and* SHA-1 is not something
+    /// that happens by accident, so one is enough to name the disc; the count
+    /// is reported so the reader can weigh it themselves.
+    pub fn closest(&self, tracks: &[Digests]) -> Option<Partial<'_>> {
+        self.games
+            .iter()
+            .filter_map(|game| {
+                let roms = game.tracks();
+                if roms.len() != tracks.len() {
+                    return None;
+                }
+                let mut matched = Vec::new();
+                let mut differing = Vec::new();
+                for (i, (rom, got)) in roms.iter().zip(tracks).enumerate() {
+                    if matches(rom, got) {
+                        matched.push(i + 1);
+                    } else {
+                        differing.push(i + 1);
+                    }
+                }
+                (!matched.is_empty()).then_some(Partial { game, matched, differing })
+            })
+            .max_by_key(|p| p.matched.len())
     }
 
     pub fn len(&self) -> usize {
@@ -387,6 +446,67 @@ mod tests {
             *b = u8::from_str_radix(&sha1[i * 2..i * 2 + 2], 16).unwrap();
         }
         Digests { crc32, sha1: raw, bytes }
+    }
+
+    /// The two tracks of the multi-track entry, as a good dump of it.
+    fn hatsukoi() -> Vec<Digests> {
+        vec![
+            digests(10_633_392, "a129332bf4d4a44a5098a74ba86f1150eded4bc7", 0x9d36_26e2),
+            digests(301_157_136, "75bcec88e76e4a6fc6ec2b60de03fb37afda7ace", 0x0fed_f856),
+        ]
+    }
+
+    #[test]
+    fn a_dump_with_one_bad_track_names_the_disc_and_the_track() {
+        // "No datfile has this disc" is true and useless here: it is that
+        // disc, and track two is bad. The two call for opposite responses.
+        let d = dat();
+        let mut tracks = hatsukoi();
+        tracks[1] = digests(301_157_136, "0000000000000000000000000000000000000000", 1);
+        assert!(d.find_all(&tracks).is_none(), "not a whole match, which is the premise");
+
+        let close = d.closest(&tracks).expect("one track still matches");
+        assert_eq!(close.game.name, "Hatsukoi Monogatari (Japan) (Rev 1)");
+        assert_eq!(close.matched, vec![1]);
+        assert_eq!(close.differing, vec![2]);
+        assert_eq!(close.tracks(), 2);
+    }
+
+    #[test]
+    fn the_cue_sheet_is_not_counted_as_a_track() {
+        // The entry lists three roms and the disc has two tracks. Counting the
+        // sheet would make every multi-track disc look one track longer than
+        // it is, and no dump would ever line up.
+        assert_eq!(dat().games[0].roms.len(), 3);
+        assert_eq!(dat().games[0].tracks().len(), 2);
+    }
+
+    #[test]
+    fn a_dump_nothing_matches_is_left_unnamed_rather_than_guessed_at() {
+        let d = dat();
+        let nothing = vec![digests(10_633_392, "1111111111111111111111111111111111111111", 1); 2];
+        assert!(d.closest(&nothing).is_none(), "naming it would be a guess");
+    }
+
+    #[test]
+    fn an_entry_of_a_different_length_is_not_compared_at_all() {
+        // Track 9 of one and track 9 of the other are not the same thing when
+        // the discs have different numbers of tracks, so the comparison would
+        // report noise.
+        let d = dat();
+        let mut three = hatsukoi();
+        three.push(digests(1, "2222222222222222222222222222222222222222", 2));
+        assert!(d.closest(&three).is_none());
+    }
+
+    #[test]
+    fn a_whole_match_is_still_reported_by_the_partial_matcher() {
+        // Not its job to decide - find_all does that - but it must not
+        // disagree with it about which disc this is.
+        let d = dat();
+        let close = d.closest(&hatsukoi()).expect("everything matches");
+        assert_eq!(close.matched, vec![1, 2]);
+        assert!(close.differing.is_empty());
     }
 
     #[test]

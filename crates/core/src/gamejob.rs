@@ -650,6 +650,43 @@ pub fn identify_all<'a>(
     dats.iter().find_map(|(_, dat)| dat.find_all(&tracks).map(|game| (dat, game)))
 }
 
+/// The datfile entry that accounts for most of a dump, when none has all of it.
+///
+/// Answers only when there is something worth saying: an entry of the same
+/// length with at least one track matching. Nothing found means nothing found,
+/// and is left to say so.
+pub fn nearly<'a>(
+    dats: &'a [(PathBuf, Dat)],
+    dumped: &Dumped,
+) -> Option<(&'a Dat, redump::Partial<'a>)> {
+    let tracks = dumped.digests();
+    dats.iter()
+        .filter_map(|(_, dat)| dat.closest(&tracks).map(|p| (dat, p)))
+        .max_by_key(|(_, p)| p.matched.len())
+}
+
+/// What a near miss amounts to, as a sentence.
+///
+/// Says the disc's name and which tracks disagree with it, and stops there.
+/// Whether a differing track is a bad read or a pressing nobody has catalogued
+/// is not something hashes can answer - C2 and the sectors' own error
+/// detection answer it, and they are reported alongside. Saying "read these
+/// again" here would be wrong about exactly the tracks that matter: on the
+/// disc this was written for, track one differs because it is a different
+/// pressing, and every sector of it passes its own check.
+pub fn near_miss(partial: &redump::Partial<'_>) -> String {
+    let list = |ns: &[usize]| ns.iter().map(usize::to_string).collect::<Vec<_>>().join(", ");
+    format!(
+        "{} of {} tracks match {}.\nTrack{} {} do not, so this is that disc rather than one \
+         nobody has catalogued.",
+        partial.matched.len(),
+        partial.tracks(),
+        partial.game.name,
+        if partial.differing.len() == 1 { "" } else { "s" },
+        list(&partial.differing),
+    )
+}
+
 /// How much of the disc is worth telling somebody about.
 pub fn shortfall(dumped: &Dumped) -> Option<String> {
     if dumped.is_complete() {
@@ -1167,6 +1204,36 @@ mod tests {
         assert!(why.contains("47 of 1000000"), "{why}");
         assert!(why.contains("guess"), "{why}");
         assert!(!why.contains("could not be read"), "they were read, just not trustworthily");
+    }
+
+    #[test]
+    fn a_near_miss_names_the_disc_and_the_tracks_that_let_it_down() {
+        let g = Game {
+            name: "Cool Boarders 2 (Europe)".into(),
+            roms: vec![Rom { name: "x.bin".into(), size: 1, crc32: None, sha1: None }],
+        };
+        let partial = redump::Partial {
+            game: &g,
+            matched: vec![1, 3, 4, 5, 6, 7, 8],
+            differing: vec![2, 9, 10],
+        };
+        let said = near_miss(&partial);
+        assert!(said.contains("7 of 10 tracks"), "{said}");
+        assert!(said.contains("Cool Boarders 2 (Europe)"), "{said}");
+        assert!(said.contains("Tracks 2, 9, 10 do not"), "{said}");
+        // Deliberately does not say why they differ. A hash cannot tell a bad
+        // read from a different pressing; C2 and the sectors' own error
+        // detection can, and say so separately.
+        assert!(!said.contains("again"), "{said}");
+    }
+
+    #[test]
+    fn one_bad_track_is_spoken_of_in_the_singular() {
+        let g = Game { name: "A Disc".into(), roms: Vec::new() };
+        let partial = redump::Partial { game: &g, matched: vec![1], differing: vec![2] };
+        let said = near_miss(&partial);
+        assert!(said.contains("Track 2 do not"), "{said}");
+        assert!(!said.contains("Tracks 2"), "{said}");
     }
 
     #[test]

@@ -129,6 +129,9 @@ struct Ui {
     drive_group: adw::PreferencesGroup,
     drive_next: gtk::Button,
     chosen_row: adw::ActionRow,
+    /// The chevron on that row. Hidden when there is nothing to open, because
+    /// an arrow that does nothing is a worse answer than no arrow.
+    chosen_next: gtk::Image,
     /// The open picker, so search results can be put where the user is looking.
     picker: RefCell<Option<show_picker::Picker>>,
     identify_next: gtk::Button,
@@ -387,7 +390,8 @@ fn build_ui() -> Ui {
         .subtitle(tr("Choose the show"))
         .activatable(true)
         .build();
-    chosen_row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+    let chosen_next = gtk::Image::from_icon_name("go-next-symbolic");
+    chosen_row.add_suffix(&chosen_next);
     id_group.add(&chosen_row);
 
     // Applies to whichever show is chosen above; changing it needs no search.
@@ -618,6 +622,7 @@ fn build_ui() -> Ui {
         drive_group,
         drive_next,
         chosen_row,
+        chosen_next,
         picker: RefCell::new(None),
         identify_next,
         season_entry,
@@ -800,6 +805,20 @@ fn warning_text(w: &Warning) -> String {
             &[&track.to_string(), &tr_n("%d sector", "%d sectors", *sectors as u32)],
         ),
     }
+}
+
+/// Is there another answer the reader could pick, for a disc of this kind?
+///
+/// Only for video. A music disc is settled exactly by its disc id, and a game
+/// is settled by what its dump hashes to - which has not happened yet at the
+/// point this is asked, and is not something to choose from a list afterwards
+/// either: picking a name by hand is how a dump comes to claim it is a game it
+/// is not.
+///
+/// Video is the one kind where the catalogues offer several plausible answers
+/// and the reader knows which is right.
+fn identity_is_choosable(kind: Option<&DiscKind>) -> bool {
+    !matches!(kind, Some(DiscKind::Audio(_) | DiscKind::Data(_)))
 }
 
 /// A stage's name, in the reader's language.
@@ -1203,6 +1222,12 @@ impl App {
         self.show_choice();
     }
 
+    /// Say whether tapping what the page settled on leads anywhere.
+    fn set_chosen_actionable(&self, actionable: bool) {
+        self.ui.chosen_row.set_activatable(actionable);
+        self.ui.chosen_next.set_visible(actionable);
+    }
+
     /// Restate what the page has settled on.
     /// Is the disc in the drive a game, or anything else with a filesystem
     /// that is not video?
@@ -1220,6 +1245,7 @@ impl App {
     /// and can be matched by what it hashes to - so the page says that rather
     /// than dressing up a guess.
     fn show_game(&self) {
+        self.set_chosen_actionable(false);
         let disc = self.state.borrow().game.clone();
         match disc {
             Some(d) => {
@@ -1255,6 +1281,7 @@ impl App {
     /// There is nothing to choose here in the ordinary case: a disc id names
     /// one pressing, so the page reports rather than asks.
     fn show_album(&self) {
+        self.set_chosen_actionable(false);
         let album = self.state.borrow().album.clone();
         match album {
             Some(a) => {
@@ -1290,6 +1317,8 @@ impl App {
     }
 
     fn show_choice(&self) {
+        // Video is the one path where there is something to disagree with.
+        self.set_chosen_actionable(true);
         if self.is_music() {
             return self.show_album();
         }
@@ -1713,9 +1742,12 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
         let window = window.clone();
         let row = app.ui.chosen_row.clone();
         row.connect_activated(move |_| {
-            // The show picker searches catalogues by title. A music disc was
-            // settled exactly by its id, so there is nothing here to correct.
-            if app.is_music() {
+            // The row is not activatable on the paths this excludes, so this
+            // is the second lock on the same door - and the one that was
+            // missing when a game disc opened the show picker.
+            if !identity_is_choosable(
+                app.state.borrow().drive.as_ref().and_then(|d| d.kind.as_ref()),
+            ) {
                 return;
             }
             let query = {
@@ -2197,6 +2229,48 @@ mod drive_page_tests {
         // the rule the page applies to the dropdown's visibility
         assert!(![drive("/dev/sr0", Some("A"))].len() > 1);
         assert!([drive("/dev/sr0", Some("A")), drive("/dev/sr1", None)].len() > 1);
+    }
+}
+
+#[cfg(test)]
+mod choosable_tests {
+    use super::*;
+    use riplika_core::disc::Toc;
+
+    fn toc() -> Toc {
+        Toc { tracks: Vec::new(), leadout: 0 }
+    }
+
+    #[test]
+    fn a_game_offers_nothing_to_choose() {
+        // It offered the show picker, which searches television and film by
+        // title: putting a PlayStation disc in asked "Which show is this?" and
+        // found nothing for Cool Boarders 2 - the right answer to a question
+        // nobody meant to ask. A game is named by what its dump hashes to.
+        assert!(!identity_is_choosable(Some(&DiscKind::Data(Some(toc())))));
+        assert!(!identity_is_choosable(Some(&DiscKind::Data(None))));
+    }
+
+    #[test]
+    fn a_music_disc_offers_nothing_to_choose_either() {
+        // Settled exactly by its disc id. The tap was already ignored here;
+        // what was missing was saying so before it is made.
+        assert!(!identity_is_choosable(Some(&DiscKind::Audio(toc()))));
+    }
+
+    #[test]
+    fn video_is_the_one_kind_worth_asking_about() {
+        assert!(identity_is_choosable(Some(&DiscKind::DvdVideo)));
+        assert!(identity_is_choosable(Some(&DiscKind::BluRay)));
+    }
+
+    #[test]
+    fn an_unknown_drive_still_leads_somewhere() {
+        // Nothing read yet is not the same as nothing to choose, and locking
+        // the row on a disc that has not been looked at would strand anybody
+        // whose disc failed to scan.
+        assert!(identity_is_choosable(None));
+        assert!(identity_is_choosable(Some(&DiscKind::Empty)));
     }
 }
 

@@ -308,6 +308,16 @@ pub fn run_game(
                 // are: one track matching proves nothing about a boundary cut
                 // in the wrong place.
                 let matched = gamejob::identify_all(&dats, &dumped);
+                // A near miss is not an unknown disc: it names the disc and
+                // the tracks that let it down, which is a read to do again
+                // rather than a pressing nobody has catalogued.
+                if matched.is_none()
+                    && let Some((_, partial)) = gamejob::nearly(&dats, &dumped)
+                {
+                    events(Event::Warning(Warning::DumpIncomplete {
+                        why: gamejob::near_miss(&partial),
+                    }));
+                }
                 let name = matched
                     .as_ref()
                     .map(|(_, game)| game.name.clone())

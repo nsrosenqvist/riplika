@@ -476,9 +476,14 @@ pub fn rip_game(
     let matched = gamejob::identify_all(&dats, &dumped);
     match &matched {
         Some((dat, game)) => println!("\n{}\n  {}", game.name, dat.name),
-        None if dumped.tracks.len() > 1 => {
-            println!("\nNo datfile has this disc.");
-        }
+        // Not the same thing as an unknown disc, and until this was checked
+        // both came out as "no datfile has this".
+        None if dumped.tracks.len() > 1 => match gamejob::nearly(&dats, &dumped) {
+            Some((dat, partial)) => {
+                println!("\n{}\n  {}", gamejob::near_miss(&partial), dat.name);
+            }
+            None => println!("\nNo datfile has this disc."),
+        },
         None => println!("\nNo datfile has this image."),
     }
     // Only a match can say what the disc really is, so it is read into a
