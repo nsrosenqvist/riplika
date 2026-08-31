@@ -553,9 +553,53 @@ pub fn check_dump(image: &Path, dat: Option<&Path>) -> Result<(), String> {
         }
     }
     println!("\nNo datfile has this image.");
-    println!("That means the dump is not a known-good one - either the disc is not covered,");
-    println!("or the read did not come out byte-for-byte right.");
+    match integrity(&real, image) {
+        // The image's own error detection settles which of the two it is,
+        // and they call for opposite responses: send one in, re-read the other.
+        Some(checked) if checked.is_sound() => {
+            println!(
+                "Every one of its {} data sectors agrees with the error detection written\n\
+                 into it, so the read is right and no datfile covers this disc.",
+                checked.sound
+            );
+            if checked.unchecked > 0 {
+                println!(
+                    "  ({} sector(s) carry no error detection and were not checked)",
+                    checked.unchecked
+                );
+            }
+        }
+        Some(checked) => {
+            println!(
+                "{} of its {} sectors disagree with the error detection written into them,\n\
+                 so this is a bad read rather than an unknown disc.",
+                checked.corrupt + checked.misplaced,
+                checked.sectors
+            );
+        }
+        None => {
+            println!("That means the dump is not a known-good one - either the disc is not");
+            println!("covered, or the read did not come out byte-for-byte right.");
+        }
+    }
     Ok(())
+}
+
+/// Check an image against the error detection inside its own sectors.
+///
+/// Answers nothing for anything that is not a track of raw data sectors - an
+/// audio track has no such detection, and calling it corrupt would be a lie.
+fn integrity(real: &Real, image: &Path) -> Option<riplika_core::edc::Checked> {
+    use riplika_core::edc;
+    let first = real.fs.read_range(image, 0, edc::SECTOR).ok()?;
+    if !edc::looks_like_data(&first) {
+        return None;
+    }
+    print!("checking every sector against its own error detection ... ");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    let out = edc::of_file(&real.fs, image, 0, &mut |_, _| {}).ok();
+    println!("done");
+    out
 }
 
 pub fn scan(drive: Option<&str>, which: &str) -> Result<(), String> {

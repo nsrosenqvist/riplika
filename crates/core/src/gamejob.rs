@@ -47,6 +47,12 @@ pub struct Dumped {
     pub mode: crate::cue::DataMode,
     /// Sectors the drive would not give up, which were filled with zeros.
     pub unreadable: u64,
+    /// Sectors that disagree with the error detection written into them.
+    ///
+    /// Only a data sector carries such a thing, and it is the one verdict here
+    /// that needs neither a second reading nor a database: these bytes are not
+    /// the ones that were written.
+    pub corrupt: u64,
     /// Sectors the drive read but had to guess at, by its own C2 account.
     ///
     /// Different from unreadable: there are bytes here, and they may even be
@@ -85,7 +91,7 @@ impl Dumped {
     /// it will never match a datfile, and saying so beats letting somebody
     /// conclude their disc is simply unknown.
     pub fn is_complete(&self) -> bool {
-        self.unreadable == 0 && self.damaged == 0
+        self.unreadable == 0 && self.damaged == 0 && self.corrupt == 0
     }
 }
 
@@ -140,6 +146,7 @@ pub fn dump(
     let name = stem.file_name().unwrap_or_default().to_string_lossy().into_owned();
     let mut unreadable = 0;
     let mut damaged = 0;
+    let mut corrupt = 0;
     let mut parts: Vec<(u8, PathBuf)> = Vec::new();
     // Audio tracks are hashed as they are checked, so they need no second pass.
     let mut checked: Vec<(u8, Digests)> = Vec::new();
@@ -204,6 +211,22 @@ pub fn dump(
                     });
                 })?;
                 unreadable += rescue.map.count(crate::rescue::map::State::Bad);
+                // A data sector carries a check over itself, so a bad one can
+                // be caught here rather than at the datfile - where a bad read
+                // and a disc nobody has catalogued look exactly the same, and
+                // call for opposite responses.
+                if medium == Medium::Cd {
+                    let checked =
+                        crate::edc::of_file(fs, &part, u64::from(span.start), &mut |_, _| {})?;
+                    let wrong = checked.corrupt + checked.misplaced;
+                    if wrong > 0 {
+                        events(Event::Warning(crate::model::Warning::TrackCorrupt {
+                            track: span.number,
+                            sectors: wrong,
+                        }));
+                    }
+                    corrupt += wrong;
+                }
             }
         }
         fs.rename(&part, &dest)?;
@@ -260,7 +283,7 @@ pub fn dump(
         })
         .transpose()?;
 
-    Ok(Dumped { tracks, cue, spans, mode, unreadable, damaged, sectors, padded })
+    Ok(Dumped { tracks, cue, spans, mode, unreadable, damaged, corrupt, sectors, padded })
 }
 
 /// Bytes in one stereo sample: two channels of sixteen bits.
@@ -632,6 +655,13 @@ pub fn shortfall(dumped: &Dumped) -> Option<String> {
     if dumped.is_complete() {
         return None;
     }
+    if dumped.corrupt > 0 {
+        return Some(format!(
+            "{} of {} sectors disagree with the error detection written into them; \
+             this is a bad read, not an unknown disc",
+            dumped.corrupt, dumped.sectors
+        ));
+    }
     if dumped.unreadable == 0 {
         return Some(format!(
             "{} of {} sectors came back as the drive's best guess rather than as read; \
@@ -731,6 +761,7 @@ mod tests {
             mode: crate::cue::DataMode::Mode1,
             unreadable,
             damaged: 0,
+            corrupt: 0,
             sectors: 1_000_000,
         }
     }
@@ -758,6 +789,7 @@ mod tests {
             mode: crate::cue::DataMode::Mode2,
             unreadable: 0,
             damaged: 0,
+            corrupt: 0,
             sectors: 1_000,
         }
     }
@@ -1135,6 +1167,19 @@ mod tests {
         assert!(why.contains("47 of 1000000"), "{why}");
         assert!(why.contains("guess"), "{why}");
         assert!(!why.contains("could not be read"), "they were read, just not trustworthily");
+    }
+
+    #[test]
+    fn a_dump_whose_sectors_fail_their_own_check_is_called_a_bad_read() {
+        // The distinction that matters: an uncatalogued disc should be sent
+        // in, a bad read should be done again, and until this was checked both
+        // came out as "no datfile has this".
+        let mut d = dumped(0);
+        d.corrupt = 3;
+        assert!(!d.is_complete());
+        let why = shortfall(&d).expect("it should complain");
+        assert!(why.contains("error detection"), "{why}");
+        assert!(why.contains("not an unknown disc"), "{why}");
     }
 
     #[test]

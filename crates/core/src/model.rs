@@ -531,6 +531,11 @@ pub enum Warning {
     FreeReaderFailed { why: String },
     /// A dump came off, but not whole. The reason is a sentence already.
     DumpIncomplete { why: String },
+    /// A data track disagrees with the error detection written into it.
+    ///
+    /// Definite, where C2 is advisory: these bytes are not the ones that were
+    /// written, and no amount of agreement between readings would make them so.
+    TrackCorrupt { track: u8, sectors: u64 },
     /// The drive's C2 error pointers say part of an audio track is damaged.
     ///
     /// Not fatal on its own - the track is read again, and if two readings
@@ -582,6 +587,11 @@ impl Warning {
                 format!("the free reader failed ({why}); using MakeMKV")
             }
             Warning::DumpIncomplete { why } => why.clone(),
+            Warning::TrackCorrupt { track, sectors } => format!(
+                "track {track} is corrupt: {} disagree with the error detection written \
+                 into them",
+                plural(*sectors as usize, "sector")
+            ),
             Warning::TrackDamaged { track, sectors } => format!(
                 "track {track} is damaged: the drive had to guess at {}",
                 plural(*sectors, "sector")

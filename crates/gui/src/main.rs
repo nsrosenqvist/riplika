@@ -791,6 +791,10 @@ fn warning_text(w: &Warning) -> String {
         // A count of sectors and a sentence composed in core, with nothing of
         // ours around it. There is nothing here for a translator to do.
         Warning::DumpIncomplete { .. } => w.text(),
+        Warning::TrackCorrupt { track, sectors } => tr_args(
+            "track %1$s is corrupt: %2$s disagree with the error detection written into them",
+            &[&track.to_string(), &tr_n("%d sector", "%d sectors", *sectors as u32)],
+        ),
         Warning::TrackDamaged { track, sectors } => tr_args(
             "track %1$s is damaged: the drive had to guess at %2$s",
             &[&track.to_string(), &tr_n("%d sector", "%d sectors", *sectors as u32)],
