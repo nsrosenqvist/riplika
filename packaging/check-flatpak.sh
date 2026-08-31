@@ -23,6 +23,11 @@ check "libdvdcss is present"           bash -c \
 # and an encrypted disc is still unreadable.
 check "libdvdread links libdvdcss"     bash -c \
   "flatpak run --command=sh $APP -c 'ldd /app/lib/libdvdread.so.* | grep -q libdvdcss'"
+# A music rip shells out to this. Without it every track fails with "no such
+# file or directory" at the point the disc is already spinning, which is how
+# it shipped.
+check "cdparanoia is present"          bash -c \
+  "flatpak run --command=cdparanoia $APP -V 2>&1 | grep -q 'cdparanoia III'"
 check "mkvextract is NOT needed"       bash -c \
   "! flatpak run --command=sh $APP -c 'command -v mkvextract' >/dev/null 2>&1"
 echo "--- the application ---"

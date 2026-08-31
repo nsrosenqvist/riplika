@@ -189,7 +189,15 @@ struct Ui {
     /// the loop going round again. It did that several thousand times a second
     /// until the disk filled. What went in is remembered instead.
     result_rows: RefCell<Vec<adw::ActionRow>>,
-    results_status: adw::StatusPage,
+    /// The heading over the file list, and the line under it.
+    ///
+    /// Labels rather than an AdwStatusPage. That widget is meant to *be* a
+    /// page and to fill one; put in a box beside a list and two buttons it
+    /// takes what height is left, which was not enough for its own title -
+    /// "Finished with problems" came out with the top and bottom of every
+    /// letter cut off. A label asks for the height it needs and wraps.
+    results_title: gtk::Label,
+    results_summary: gtk::Label,
 }
 
 struct App {
@@ -621,7 +629,19 @@ fn build_ui() -> Ui {
 
     // --- and what came out ------------------------------------------------
     let res_body = body();
-    let results_status = adw::StatusPage::builder().title(tr("Done")).build();
+    let results_title = gtk::Label::builder()
+        .label(tr("Done"))
+        .wrap(true)
+        .justify(gtk::Justification::Center)
+        .margin_top(12)
+        .build();
+    results_title.add_css_class("title-1");
+    let results_summary = gtk::Label::builder()
+        .wrap(true)
+        .justify(gtk::Justification::Center)
+        .margin_bottom(6)
+        .build();
+    results_summary.add_css_class("dim-label");
     let results = adw::PreferencesGroup::builder().title(tr("Files")).build();
     // The disc is finished with, and the next one is the point.
     let results_actions = gtk::Box::builder()
@@ -637,7 +657,8 @@ fn build_ui() -> Ui {
     another.add_css_class("suggested-action");
     results_actions.append(&eject_done);
     results_actions.append(&another);
-    res_body.append(&results_status);
+    res_body.append(&results_title);
+    res_body.append(&results_summary);
     res_body.append(&results);
     res_body.append(&results_actions);
     nav.add(&page(Step::Results.tag(), "Results", &res_body));
@@ -678,7 +699,8 @@ fn build_ui() -> Ui {
         cancel_button,
         results,
         result_rows: RefCell::new(Vec::new()),
-        results_status,
+        results_title,
+        results_summary,
     }
 }
 
@@ -1574,12 +1596,14 @@ impl App {
             self.ui.results.add(&row);
             self.ui.result_rows.borrow_mut().push(row);
         }
-        self.ui.results_status.set_title(if r.is_complete() {
-            "Done"
+        // Each literal at its own call site: xgettext reads the source, not
+        // the program, and cannot follow a string through a conditional.
+        self.ui.results_title.set_label(&if r.is_complete() {
+            tr("Done")
         } else {
-            "Finished with problems"
+            tr("Finished with problems")
         });
-        self.ui.results_status.set_description(Some(&format!(
+        self.ui.results_summary.set_label(&format!(
             "{} files, {}{}",
             r.produced.len(),
             mib(r.total_bytes()),
@@ -1588,7 +1612,7 @@ impl App {
             } else {
                 format!(", {} failed", r.skipped.len())
             }
-        )));
+        ));
     }
 
     /// Empty the log, so a second disc does not begin with the first one's.

@@ -36,7 +36,13 @@ finish-args:
   - --device=all
   # catalogue lookups against TVmaze and TMDB
   - --share=network
-  # somewhere to write the library, and somewhere to put the working rip.
+  # somewhere to write the library.
+  #
+  # xdg-download is not for the working rip, whatever the comment used to say:
+  # that defaults to the application's own cache directory, which needs no
+  # permission. It is here because a library or a scratch directory configured
+  # under Downloads is a thing people do, and without it that configuration
+  # fails at the end of a rip rather than when it is set.
   #
   # One per kind, because they are three different libraries and a disc goes to
   # the one that matches it. Without the music line a CD rip fails outright:
@@ -124,6 +130,29 @@ modules:
       - type: archive
         url: https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz
         sha256: de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
+
+  # cdparanoia, for reading audio off a CD.
+  #
+  # Not optional and not interchangeable with ffmpeg, which can read a CD
+  # through libcdio and does none of what makes a rip trustworthy: re-reads,
+  # C2 error pointers, jitter correction against a drive that does not report
+  # its position honestly. Without it every track of a music rip fails with
+  # "cdparanoia: No such file or directory", which is exactly what it did.
+  - name: cdparanoia
+    buildsystem: simple
+    build-commands:
+      # Its own config.guess and config.sub are from 2008 and do not recognise
+      # the triplet this is built for; the SDK carries current ones.
+      - cp /usr/share/automake-*/config.sub /usr/share/automake-*/config.guess .
+      - ./configure --prefix=/app
+      # -fPIC because the shared library does not build without it here, and
+      # -j1 because its Makefile is not safe to run in parallel.
+      - make -j1 OPT="$CFLAGS -fPIC"
+      - make install
+    sources:
+      - type: archive
+        url: https://downloads.xiph.org/releases/cdparanoia/cdparanoia-III-10.2.src.tgz
+        sha256: 005db45ef4ee017f5c32ec124f913a0546e77014266c6a1c50df902a55fe64df
 
   # No mkvtoolnix: the VobSub track is read out of Matroska directly, because
   # MKVToolNix wants Qt for every one of its tools and bundling Qt to obtain
