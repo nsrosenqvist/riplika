@@ -152,6 +152,11 @@ struct Ui {
     /// The chevron on that row. Hidden when there is nothing to open, because
     /// an arrow that does nothing is a worse answer than no arrow.
     chosen_next: gtk::Image,
+    /// Watches for discs coming and going.
+    ///
+    /// Held because the signals stop the moment it is dropped, and a monitor
+    /// nobody keeps is a monitor that fires once and never again.
+    volumes: RefCell<Option<gtk::gio::VolumeMonitor>>,
     /// The open picker, so search results can be put where the user is looking.
     picker: RefCell<Option<show_picker::Picker>>,
     identify_next: gtk::Button,
@@ -672,6 +677,7 @@ fn build_ui() -> Ui {
         drive_next,
         chosen_row,
         chosen_next,
+        volumes: RefCell::new(None),
         picker: RefCell::new(None),
         identify_next,
         season_entry,
@@ -1941,6 +1947,48 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
     app.refresh_paths();
     app.apply_prefs_to_controls();
     worker::list_drives(app.prefs.prefs.borrow().use_makemkv(), tx.clone());
+
+    // Notice a disc going in or coming out, so the page follows the tray
+    // rather than waiting to be asked. "Look again" stays, for the drive that
+    // says nothing when its media changes - some do.
+    {
+        use gtk::gio::prelude::*;
+        let monitor = gtk::gio::VolumeMonitor::get();
+        let watching = Rc::clone(app);
+        let tx = tx.clone();
+        // One insertion is several signals - the drive changes, then a volume
+        // appears once the desktop has mounted it - and each would otherwise
+        // start its own scan of every drive. They are collapsed into one.
+        let pending: Rc<std::cell::Cell<bool>> = Rc::new(std::cell::Cell::new(false));
+        let look = move || {
+            if pending.replace(true) {
+                return;
+            }
+            let (app, tx, pending) = (Rc::clone(&watching), tx.clone(), Rc::clone(&pending));
+            glib::timeout_add_local_once(Duration::from_millis(700), move || {
+                pending.set(false);
+                // Not while something is running: a scan or a rip has the
+                // drive, and asking it what it holds mid-read is how it comes
+                // back with nothing.
+                if !app.is_busy() {
+                    worker::list_drives(app.prefs.prefs.borrow().use_makemkv(), tx.clone());
+                }
+            });
+        };
+        // A drive whose media changed, a volume appearing once the desktop
+        // mounts it, and the drive itself coming and going: any of them means
+        // what is in the tray is no longer what the page says.
+        let l = look.clone();
+        monitor.connect_drive_changed(move |_, _| l());
+        let l = look.clone();
+        monitor.connect_volume_added(move |_, _| l());
+        let l = look.clone();
+        monitor.connect_volume_removed(move |_, _| l());
+        let l = look.clone();
+        monitor.connect_drive_connected(move |_, _| l());
+        monitor.connect_drive_disconnected(move |_, _| look());
+        *app.ui.volumes.borrow_mut() = Some(monitor);
+    }
 
     // Drain the worker channel on the main loop. Polling rather than an async
     // channel because the pipeline is plain blocking code on plain threads,

@@ -50,6 +50,14 @@ finish-args:
   # --filesystem=host wearing a different hat - udisks decides for itself
   # whether the caller may unmount, and asks the session if it is unsure.
   - --system-talk-name=org.freedesktop.UDisks2
+  # Noticing a disc going in or coming out, so the window follows the tray
+  # rather than waiting to be asked to look again.
+  #
+  # GVolumeMonitor is how a GTK application is told; inside a sandbox it
+  # reaches the desktop's copy through gvfs, and without this it sees no
+  # drives at all and never fires. Read-only in effect: it is told what
+  # happened and asks for nothing.
+  - --talk-name=org.gtk.vfs.*
   # somewhere to write the library.
   #
   # xdg-download is not for the working rip, whatever the comment used to say:
