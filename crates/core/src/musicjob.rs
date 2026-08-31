@@ -166,6 +166,11 @@ pub fn rip(
         return Err(Error("nothing on this disc matches the release listing".into()));
     }
 
+    // Said outright, not only carried inside each progress event: the window
+    // takes its heading from Stage and left "Identifying" up for the whole rip
+    // because nothing ever told it otherwise.
+    events(Event::Stage(Stage::Rip));
+
     let mut report = Report::default();
     let total = wanted.len();
     for (index, (number, meta)) in wanted.iter().enumerate() {

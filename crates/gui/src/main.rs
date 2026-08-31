@@ -1763,7 +1763,16 @@ impl App {
                 // from the last one would be wrong in a way that looks precise.
                 self.state.borrow_mut().eta = riplika_core::job::Eta::new();
             }
-            Event::Progress { fraction, message, .. } => {
+            Event::Progress { stage, fraction, message } => {
+                // Every progress event says which stage it belongs to, so the
+                // heading follows it rather than waiting to be told separately.
+                // A job that forgets to announce a stage is then wrong for one
+                // event instead of for the whole of it - which is what left
+                // "Identifying" up for an entire CD rip.
+                let label = stage_label(stage);
+                if self.ui.stage_label.label() != label {
+                    self.ui.stage_label.set_label(&label);
+                }
                 self.ui.progress.set_fraction(fraction as f64);
                 // What is happening, how far along, and how much longer - the
                 // last of which is the only one that answers "should I wait?".
