@@ -1700,6 +1700,12 @@ impl App {
                     return;
                 };
                 let tx = self.sender();
+                // A game disc will want datfiles to be named against, and a
+                // dump takes minutes where fetching them takes seconds. Asked
+                // for now so they are there by the time they are needed.
+                if matches!(*kind, DiscKind::Data(_)) {
+                    worker::ensure_datfiles(self.sender());
+                }
                 match *kind {
                     // A music disc needs none of the video machinery: no title
                     // probing, no structure matching, no catalogue guessing
@@ -1776,6 +1782,9 @@ impl App {
                 *self.ui.picker.borrow_mut() = None;
                 self.state.borrow_mut().offering = Offering::Nothing;
                 self.show_choice();
+            }
+            Msg::DatfilesReady(n) => {
+                self.log_line(&tr_args("%1$s datfile(s) downloaded", &[&n.to_string()]));
             }
             Msg::Candidates(c) => {
                 self.set_busy(None);
@@ -2127,11 +2136,20 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
                 };
                 let (root, dat_dir, read_offset) = {
                     let p = app.prefs.prefs.borrow();
-                    (p.output_for(riplika_core::prefs::Library::Games), p.dat_dir(), p.read_offset)
+                    // The folder, whether or not anything is in it yet: the
+                    // datfiles are being fetched while the dump runs, and
+                    // dat_dir() answers None for a folder that does not exist.
+                    (
+                        p.output_for(riplika_core::prefs::Library::Games),
+                        Some(
+                            p.dat_dir
+                                .clone()
+                                .unwrap_or_else(riplika_core::prefs::Preferences::default_dat_dir),
+                        ),
+                        p.read_offset,
+                    )
                 };
-                if dat_dir.is_none() {
-                    app.toast(&tr("No datfiles: the dump will be filed under the disc's label"));
-                }
+
                 let cancel = app
                     .start_working(&stage_label(riplika_core::job::Stage::Rip), "Dumping disc...");
                 worker::run_game(device, disc, root, dat_dir, read_offset, cancel, tx.clone());

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Riplika 0.2.0\n"
 "Report-Msgid-Bugs-To: https://github.com/nsrosenqvist/riplika/issues\n"
-"POT-Creation-Date: 2026-08-31 23:11+0200\n"
+"POT-Creation-Date: 2026-08-31 23:17+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -320,7 +320,7 @@ msgstr ""
 msgid "no glyph table, so subtitles stay as bitmaps"
 msgstr ""
 
-#: crates/gui/src/main.rs:835 crates/gui/src/main.rs:1892
+#: crates/gui/src/main.rs:835 crates/gui/src/main.rs:1901
 msgid "%d unrecognised glyph"
 msgid_plural "%d unrecognised glyphs"
 msgstr[0] ""
@@ -481,97 +481,97 @@ msgstr ""
 msgid "Finished with problems"
 msgstr ""
 
-#: crates/gui/src/main.rs:1723
+#: crates/gui/src/main.rs:1729
 msgid "Drive open"
 msgstr ""
 
-#: crates/gui/src/main.rs:1813
+#: crates/gui/src/main.rs:1787
+msgid "%1$s datfile(s) downloaded"
+msgstr ""
+
+#: crates/gui/src/main.rs:1822
 msgid "Cancelled. Nothing further was written."
 msgstr ""
 
-#: crates/gui/src/main.rs:1814
+#: crates/gui/src/main.rs:1823
 msgid "Cancelled"
 msgstr ""
 
-#: crates/gui/src/main.rs:1815 crates/gui/src/main.rs:1827
-#: crates/gui/src/main.rs:2265
+#: crates/gui/src/main.rs:1824 crates/gui/src/main.rs:1836
+#: crates/gui/src/main.rs:2283
 msgid "Close"
 msgstr ""
 
-#: crates/gui/src/main.rs:1826
+#: crates/gui/src/main.rs:1835
 msgid "failed: %1$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:1868
+#: crates/gui/src/main.rs:1877
 msgid "%1$s of %2$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:1877
+#: crates/gui/src/main.rs:1886
 msgid "wrote %1$s (%2$s)"
 msgstr ""
 
-#: crates/gui/src/main.rs:1890
+#: crates/gui/src/main.rs:1899
 msgid "%d cue"
 msgid_plural "%d cues"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/gui/src/main.rs:1887
+#: crates/gui/src/main.rs:1896
 msgid "subtitles %1$s: %2$s, %3$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:1899
+#: crates/gui/src/main.rs:1908
 msgid "subtitles %1$s: not recognised, bitmap kept"
 msgstr ""
 
-#: crates/gui/src/main.rs:1910
+#: crates/gui/src/main.rs:1919
 msgid "warning: %1$s"
 msgstr ""
 
-#: crates/gui/src/main.rs:1977 crates/gui/src/main.rs:2121
-#: crates/gui/src/main.rs:2150 crates/gui/src/main.rs:2172
+#: crates/gui/src/main.rs:1986 crates/gui/src/main.rs:2130
+#: crates/gui/src/main.rs:2168 crates/gui/src/main.rs:2190
 msgid "Already working - wait for it, or cancel it first"
 msgstr ""
 
-#: crates/gui/src/main.rs:2000
+#: crates/gui/src/main.rs:2009
 msgid "This disc could not be identified"
 msgstr ""
 
-#: crates/gui/src/main.rs:2021
+#: crates/gui/src/main.rs:2030
 msgid "Choose what this disc is first"
 msgstr ""
 
 #. Films as well as television: search() asks the
 #. catalogues for both, and always has.
-#: crates/gui/src/main.rs:2062
+#: crates/gui/src/main.rs:2071
 msgid "Which film or show is this?"
 msgstr ""
 
-#: crates/gui/src/main.rs:2063
+#: crates/gui/src/main.rs:2072
 msgid "Episodes are numbered but not named"
 msgstr ""
 
-#: crates/gui/src/main.rs:2133
-msgid "No datfiles: the dump will be filed under the disc's label"
-msgstr ""
-
-#: crates/gui/src/main.rs:2146 crates/gui/src/main.rs:2168
+#: crates/gui/src/main.rs:2164 crates/gui/src/main.rs:2186
 msgid "Nothing to rip yet"
 msgstr ""
 
-#: crates/gui/src/main.rs:2225
+#: crates/gui/src/main.rs:2243
 msgid "Not while the drive is being read"
 msgstr ""
 
-#: crates/gui/src/main.rs:2231
+#: crates/gui/src/main.rs:2249
 msgid "Opening the drive"
 msgstr ""
 
-#: crates/gui/src/main.rs:2234
+#: crates/gui/src/main.rs:2252
 msgid "No drive to open"
 msgstr ""
 
-#: crates/gui/src/main.rs:2264
+#: crates/gui/src/main.rs:2282
 msgid "Stopping after the current step"
 msgstr ""
 

@@ -35,6 +35,8 @@ pub enum Msg {
     Game(Box<riplika_core::game::GameDisc>),
     /// What the disc in the drive turned out to be, asked just now.
     Kind(Box<riplika_core::disc::DiscKind>),
+    /// Datfiles were fetched because there were none, and how many.
+    DatfilesReady(usize),
     Candidates(Vec<Candidate>),
     /// Releases a search by name turned up, to choose between.
     Releases(Vec<riplika_core::identify::music::Match>),
@@ -214,8 +216,17 @@ pub fn eject(device: String, tx: Sender<Msg>) {
                 }
             }
             Ok(out) => {
-                let _ =
-                    tx.send(Msg::Failed(format!("could not open the drive: {}", out.last_error())));
+                // Nearly always the same cause, and the message the drive
+                // gives - "busy" - does not say what to do about it: the
+                // desktop mounted the disc when it went in, and the kernel
+                // will not open a tray under a mounted filesystem. From
+                // inside a sandbox that mount cannot even be seen, let alone
+                // undone, so the remedy has to be somebody else's.
+                let _ = tx.send(Msg::Failed(format!(
+                    "could not open the drive ({}). The disc is probably still \
+                     mounted - eject it from Files, or unmount it first.",
+                    out.last_error()
+                )));
             }
             Err(e) => {
                 let _ = tx.send(Msg::Failed(format!("could not open the drive: {e}")));
@@ -341,6 +352,50 @@ pub fn run_music(
 }
 
 /// Look at a data disc. Quick: a volume label and, on a PlayStation, a serial.
+/// Make sure there are datfiles, fetching them if there are not.
+///
+/// Nobody should have to know that a dump is named by hashing it against a
+/// database, let alone go and find the database first. The application knows
+/// it needs them, knows where they come from and has the network to get them,
+/// so it gets them.
+///
+/// Started when a game disc is recognised rather than when the dump finishes,
+/// because the dump takes minutes and this takes seconds: by the time there is
+/// something to identify, there is something to identify it against.
+pub fn ensure_datfiles(tx: Sender<Msg>) {
+    use riplika_core::job::Event;
+    use riplika_core::model::Warning;
+
+    std::thread::spawn(move || {
+        let prefs = riplika_core::prefs::Preferences::load();
+        let dir =
+            prefs.dat_dir.clone().unwrap_or_else(riplika_core::prefs::Preferences::default_dat_dir);
+        let fs = RealFs;
+        // Already have some: leave them alone. They go out of date, but
+        // re-downloading on every disc would be rude to redump.org and slow
+        // for no gain - the Download button is there for refreshing them.
+        if !riplika_core::redump::load_all(&fs, &dir).is_empty() {
+            return;
+        }
+        let runner = RealRunner::new(Cancel::new());
+        let http = riplika_core::identify::catalogue::UreqHttp;
+        let mut got = 0;
+        for (slug, name) in riplika_core::redump::SYSTEMS {
+            match riplika_core::redump::fetch(&fs, &runner, &http, slug, &dir) {
+                Ok(_) => got += 1,
+                Err(e) => {
+                    let _ = tx.send(Msg::Event(Event::Warning(Warning::CouldNotIdentify {
+                        why: format!("could not fetch the {name} datfile: {e}"),
+                    })));
+                }
+            }
+        }
+        if got > 0 {
+            let _ = tx.send(Msg::DatfilesReady(got));
+        }
+    });
+}
+
 pub fn analyse_game(device: String, tx: Sender<Msg>) {
     std::thread::spawn(move || {
         let disc = riplika_core::rescue::PlainDisc::open(Path::new(&device))
@@ -378,9 +433,6 @@ pub fn run_game(
         report(
             &tx,
             (|| {
-                let dats = dat_dir
-                    .map(|d| riplika_core::redump::load_all(&real.fs, &d))
-                    .unwrap_or_default();
                 let staging = root.join("Unidentified").join(gamejob::suggested_stem(None, &disc));
                 let dumped = gamejob::dump(
                     Path::new(&device),
@@ -390,6 +442,14 @@ pub fn run_game(
                     &cancel,
                     &mut events,
                 )?;
+                // Loaded here rather than before the dump: a dump takes
+                // minutes, the datfiles are fetched in the background while it
+                // runs, and reading them at the start would use the empty
+                // folder that was there when the disc went in.
+                let dats = dat_dir
+                    .map(|d| riplika_core::redump::load_all(&real.fs, &d))
+                    .unwrap_or_default();
+
                 // Not FreeReaderIncomplete: that one says "using MakeMKV",
                 // which has nothing to do with a game disc and told anybody
                 // reading it something that was not happening.
