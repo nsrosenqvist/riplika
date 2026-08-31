@@ -200,7 +200,12 @@ fn wait_for_the_tray(device: &str) -> bool {
 pub fn eject(device: String, tx: Sender<Msg>) {
     std::thread::spawn(move || {
         let real = Real::new(Cancel::new());
-        let cmd = riplika_core::rip::eject_command(std::path::Path::new(&device));
+        // Unmount first, and do not care whether it worked: nothing may have
+        // been mounted, and if something was and this failed, the eject below
+        // reports the real problem rather than this one.
+        let path = std::path::Path::new(&device);
+        let _ = real.runner.run(&riplika_core::rip::unmount_command(path));
+        let cmd = riplika_core::rip::eject_command(path);
         match real.runner.run(&cmd) {
             Ok(out) if out.ok() => {
                 if wait_for_the_tray(&device) {

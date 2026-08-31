@@ -36,6 +36,20 @@ finish-args:
   - --device=all
   # catalogue lookups against TVmaze and TMDB
   - --share=network
+  # Unmounting the disc before opening the tray.
+  #
+  # The kernel will not open a tray under a mounted filesystem, and the
+  # desktop mounts a disc the moment it goes in. Unsandboxed, `eject` unmounts
+  # first and none of this arises; in here the mount belongs to the host's
+  # udisks, is not visible at all, and can only be undone by asking udisks to
+  # undo it. Without this, ejecting a disc that has been looked at reports
+  # "busy" and there is nothing the application can do about it.
+  #
+  # Narrow on purpose: one service, and the only thing asked of it is to
+  # unmount the drive this application was pointed at. It is not
+  # --filesystem=host wearing a different hat - udisks decides for itself
+  # whether the caller may unmount, and asks the session if it is unsure.
+  - --system-talk-name=org.freedesktop.UDisks2
   # somewhere to write the library.
   #
   # xdg-download is not for the working rip, whatever the comment used to say:

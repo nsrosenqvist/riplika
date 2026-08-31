@@ -97,6 +97,36 @@ pub fn eject_command(device: &Path) -> Command {
     Command::new("eject").path(device)
 }
 
+/// Ask the desktop's disk service to unmount whatever is on this device.
+///
+/// The tray will not open under a mounted filesystem - the kernel refuses, and
+/// the drive reports "busy", which says nothing about what to do. Unsandboxed,
+/// `eject` unmounts first and this never comes up. Inside a flatpak it cannot:
+/// the disc is mounted by the host's udisks, that mount is not even visible
+/// from in here, and the only way to undo it is to ask the service that made
+/// it.
+///
+/// Over `gdbus` rather than a D-Bus library for the same reason ffmpeg and
+/// cdparanoia are commands: it is one call, the runtime has the tool, and a
+/// command can be checked in a test without a bus.
+///
+/// udisks names its block objects after the device, so `/dev/sr1` is
+/// `block_devices/sr1`. Failing is normal and means nothing was mounted.
+pub fn unmount_command(device: &Path) -> Command {
+    let name = device.file_name().unwrap_or_default().to_string_lossy();
+    Command::new("gdbus").args([
+        "call",
+        "--system",
+        "--dest",
+        "org.freedesktop.UDisks2",
+        "--object-path",
+        &format!("/org/freedesktop/UDisks2/block_devices/{name}"),
+        "--method",
+        "org.freedesktop.UDisks2.Filesystem.Unmount",
+        "{}",
+    ])
+}
+
 /// How long to wait for a tray before giving up on it.
 ///
 /// A drive still finishing a read will not answer at all - the request queues
@@ -606,6 +636,21 @@ mod eject_tests {
         let c = eject_command(Path::new("/dev/sr0"));
         assert_eq!(c.program, "eject");
         assert_eq!(c.args, vec!["/dev/sr0"]);
+    }
+
+    #[test]
+    fn unmounting_asks_udisks_about_the_right_block_device() {
+        // udisks names its block objects after the device, and asking about
+        // the wrong one succeeds at unmounting nothing.
+        let c = unmount_command(Path::new("/dev/sr1"));
+        assert_eq!(c.program, "gdbus");
+        assert!(
+            c.args.contains(&"/org/freedesktop/UDisks2/block_devices/sr1".to_string()),
+            "{:?}",
+            c.args
+        );
+        assert!(c.args.contains(&"org.freedesktop.UDisks2.Filesystem.Unmount".to_string()));
+        assert!(c.args.contains(&"--system".to_string()), "udisks is on the system bus");
     }
 
     #[test]
