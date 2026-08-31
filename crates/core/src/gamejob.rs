@@ -464,7 +464,7 @@ fn read_span_twice(
 
     for attempt in 0..ATTEMPTS {
         let into = if attempt == 0 { dest } else { &against };
-        unreadable = read_span(device, into, medium, sector, span, cancel, &mut |fraction| {
+        let mut report = |fraction: f32| {
             events(Event::Progress {
                 stage: Stage::Rip,
                 fraction: (u64::from(span.start) as f32 + fraction * span.sectors() as f32) / whole,
@@ -473,7 +473,8 @@ fn read_span_twice(
                     n => format!("track {} again ({n})", span.number),
                 }),
             });
-        })?;
+        };
+        unreadable = read_span(device, into, medium, sector, span, cancel, &mut report)?;
         let digests = hash::of_file(fs, into, &mut |_, _| {})?;
         match previous {
             Some(before) if before == digests => {
