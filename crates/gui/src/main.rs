@@ -965,6 +965,11 @@ impl App {
     }
 
     fn toast(&self, text: &str) {
+        // An empty one is a bar that slides in, says nothing, and covers the
+        // page while it does it.
+        if text.trim().is_empty() {
+            return;
+        }
         self.ui.toasts.add_toast(adw::Toast::new(text));
     }
 
@@ -1671,11 +1676,9 @@ impl App {
             Msg::Releases(found) => {
                 self.set_busy(None);
                 self.state.borrow_mut().searching = false;
-                self.toast(&match found.len() {
-                    0 => "Nothing found".to_string(),
-                    1 => "1 release".to_string(),
-                    n => format!("{n} releases"),
-                });
+                // No toast: this dialog is over the window that would show it.
+                // The list says what was found by showing it, and says that
+                // nothing was found by saying so.
                 self.show_releases(Offering::Searched(found));
             }
             Msg::Release(album) => {
@@ -1721,7 +1724,14 @@ impl App {
             }
             Msg::Failed(e) => {
                 self.set_busy(None);
-                self.toast(&e);
+                // A search that failed left the picker spinning for an answer
+                // that was never coming.
+                self.state.borrow_mut().searching = false;
+                if let Some(picker) = self.ui.picker.borrow().as_ref() {
+                    picker.show_problem(&e);
+                } else {
+                    self.toast(&e);
+                }
                 self.log_line(&tr_args("failed: %1$s", &[&e]));
                 set_button_label(&self.ui.cancel_button, &tr("Close"));
             }

@@ -159,6 +159,21 @@ impl Picker {
         self.list.append(&row);
     }
 
+    /// Say why there is nothing to show, in the list rather than in a toast.
+    ///
+    /// A toast belongs to the window and this dialog is over the top of it, so
+    /// a search that failed while this was open said so behind it. The list is
+    /// where the answer was going to appear and where somebody who just
+    /// searched is looking.
+    pub fn show_problem(&self, why: &str) {
+        self.clear();
+        let row =
+            adw::ActionRow::builder().title(tr("That search did not work")).subtitle(why).build();
+        row.set_sensitive(false);
+        self.list.append(&row);
+        self.offer_the_typed_name();
+    }
+
     fn clear(&self) {
         while let Some(r) = self.list.row_at_index(0) {
             self.list.remove(&r);
@@ -227,6 +242,10 @@ pub fn present(
         use_typed: prompt.use_typed,
     };
     {
+        // Long enough that typing a name is one request rather than one per
+        // word. MusicBrainz allows one a second and refuses the rest, and a
+        // refusal reads to somebody typing like the record not existing.
+        search.set_search_delay(700);
         let run = std::rc::Rc::new(on_search);
         let r = std::rc::Rc::clone(&run);
         search.connect_search_changed(move |e| {

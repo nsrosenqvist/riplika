@@ -225,10 +225,18 @@ impl<'a> MusicBrainz<'a> {
 
     /// Releases matching a name. Carries no track listings; see [`release_url`].
     ///
+    /// `dismax` is what makes a search box behave like one. Without it the
+    /// query is Lucene, and its default field is the release title - so
+    /// "Shawn McDonald Roots" looks for a *title* containing all three words,
+    /// finds no such release, and answers with the nearest titles it can:
+    /// "Double Take", and then several McDonald's restaurants. With it the
+    /// terms are weighed across the artist and the title both, and the first
+    /// answer is the record that was asked for.
+    ///
     /// [`release_url`]: MusicBrainz::release_url
     pub fn search_url(query: &str, limit: u32) -> String {
         format!(
-            "https://musicbrainz.org/ws/2/release/?query={}&fmt=json&limit={limit}",
+            "https://musicbrainz.org/ws/2/release/?query={}&fmt=json&limit={limit}&dismax=true",
             encoded(query)
         )
     }
@@ -758,7 +766,15 @@ mod tests {
         // parameter and the search quietly runs on half the name.
         let url = MusicBrainz::search_url("Florence & the Machine", 25);
         assert!(url.contains("Florence%20%26%20the%20Machine"), "{url}");
-        assert!(url.ends_with("&fmt=json&limit=25"), "{url}");
+        assert!(url.contains("&limit=25"), "{url}");
+    }
+
+    #[test]
+    fn a_search_weighs_the_artist_as_well_as_the_title() {
+        // Without this the query is Lucene over release titles alone, and
+        // "Shawn McDonald Roots" answers with McDonald's restaurants rather
+        // than with the album called Roots by Shawn McDonald.
+        assert!(MusicBrainz::search_url("anything", 25).contains("dismax=true"));
     }
 
     #[test]
