@@ -500,7 +500,14 @@ fn build_ui() -> Ui {
         // Matroska has them written in afterwards - so what actually differs
         // is what else fits: MP4 has no room for the disc's own bitmap
         // subtitles, and Matroska does.
-        .subtitle(tr("MP4 plays on anything; Matroska takes subtitle formats MP4 cannot"))
+        // What somebody choosing for the first time needs is which one plays
+        // where, not which subtitle codecs each admits. MP4 is written with
+        // the index at the front - HandBrake calls the same thing "web
+        // optimized" - so a server can start sending it before the whole file
+        // has arrived.
+        .subtitle(tr(
+            "MP4 plays and streams almost anywhere; Matroska holds more, on fewer players",
+        ))
         .model(&containers)
         .selected(0)
         .build();
@@ -1301,7 +1308,32 @@ impl App {
         // otherwise ask questions about a disc that cannot answer them.
         self.ui.language_group.set_visible(!music && !game);
         self.ui.contents_group.set_visible(!music && !game);
-        self.ui.detail_group.set_visible(!music && !game);
+        self.ui.detail_group.set_visible(!music && !game && !self.is_film());
+
+        // The rest of this page was written for a box set. A film has no
+        // episodes to count, no broadcast version to be an extended cut of,
+        // and is one file rather than seven - so the words change with it.
+        let film = self.is_film();
+        self.ui.video.set_subtitle(&if film {
+            tr("Medium is the sweet spot for DVD: about 700 MB a film")
+        } else {
+            tr("Medium is the sweet spot for DVD: about 170 MB an episode")
+        });
+        self.ui.contents_group.set_description(Some(&if film {
+            tr("The film is always taken. Anything unticked is not read at all.")
+        } else {
+            tr("Episodes are always taken. Anything unticked is not read at all.")
+        }));
+        self.ui.include_extended.set_title(&if film {
+            tr("Extended cut")
+        } else {
+            tr("Extended episodes")
+        });
+        self.ui.include_extended.set_subtitle(&if film {
+            tr("A longer cut some discs carry alongside the theatrical version")
+        } else {
+            tr("Longer cuts some discs carry alongside the broadcast versions")
+        });
 
         let (title, description, ready) = Self::drive_status(&drives, selected.as_ref());
         self.ui.drive_page.set_title(&title);
@@ -1358,6 +1390,19 @@ impl App {
     }
 
     /// Restate what the page has settled on.
+    /// Is what the page settled on a film rather than a season of something?
+    ///
+    /// Asked of what was chosen, not of the disc: a disc holding one long
+    /// title could be either until a catalogue says which, and the pages that
+    /// ask about seasons and episodes should follow the answer.
+    fn is_film(&self) -> bool {
+        let state = self.state.borrow();
+        match state.chosen.as_ref().or(state.selected.as_ref().map(|c| &c.media)) {
+            Some(m) => matches!(m, Media::Movie { .. }),
+            None => false,
+        }
+    }
+
     /// Is the disc in the drive a game, or anything else with a filesystem
     /// that is not video?
     fn is_game(&self) -> bool {
@@ -1553,6 +1598,10 @@ impl App {
     fn show_choice(&self) {
         // Video is the one path where there is something to disagree with.
         self.set_chosen_actionable(true);
+        // A film is one thing, not part four of a season. Asking which season
+        // it is and where its episode numbering starts are questions about a
+        // disc that cannot answer them.
+        self.ui.detail_group.set_visible(!self.is_film());
         if self.is_music() {
             return self.show_album();
         }

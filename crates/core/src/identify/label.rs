@@ -14,6 +14,13 @@ pub struct LabelGuess {
     pub title: String,
     pub season: Option<u32>,
     pub disc: Option<u32>,
+    /// A year the label appears to carry, as a hint and nothing more.
+    ///
+    /// The title keeps it. Stripping would turn "Blade Runner 2049" into a
+    /// search for the 1982 film, and a label is not reliable enough to be
+    /// worth that: this is only ever used to prefer a candidate whose year
+    /// agrees, never to argue against one whose year does not.
+    pub year: Option<u32>,
 }
 
 /// Trailing tokens that describe the disc rather than the work.
@@ -64,7 +71,12 @@ fn parse_combined(token: &str) -> (Option<u32>, Option<u32>) {
 /// Interpret a volume label.
 pub fn parse(label: &str) -> LabelGuess {
     let tokens = split_tokens(label);
-    let mut guess = LabelGuess::default();
+    // Anything that could be a year of a film somebody owns on disc. Taken
+    // from the last such token, since a title carrying a number tends to lead
+    // with it and a year tends to trail.
+    let year =
+        tokens.iter().filter_map(|t| t.parse::<u32>().ok()).rfind(|y| (1900..=2099).contains(y));
+    let mut guess = LabelGuess { year, ..LabelGuess::default() };
     let mut title_tokens: Vec<String> = Vec::new();
     let mut i = 0;
 
@@ -181,5 +193,31 @@ mod tests {
     #[test]
     fn an_empty_label_is_not_a_crash() {
         assert_eq!(parse(""), LabelGuess::default());
+    }
+
+    #[test]
+    fn a_year_on_the_label_is_noticed() {
+        assert_eq!(parse("KUNG_FU_PANDA_2008").year, Some(2008));
+        assert_eq!(parse("THE_ITALIAN_JOB_1969").year, Some(1969));
+    }
+
+    #[test]
+    fn a_year_is_a_hint_and_the_title_keeps_it() {
+        // Stripping it would search for "Blade Runner" and find the 1982
+        // film, which is not the disc in the drive.
+        let g = parse("BLADE_RUNNER_2049");
+        assert!(g.title.contains("2049"), "{}", g.title);
+    }
+
+    #[test]
+    fn a_label_with_no_year_says_so() {
+        assert_eq!(parse("PARKS_AND_RECREATION_S7D1").year, None);
+        assert_eq!(parse("KUNG_FU_PANDA").year, None);
+    }
+
+    #[test]
+    fn a_number_that_could_not_be_a_year_is_not_one() {
+        assert_eq!(parse("DISC_9").year, None);
+        assert_eq!(parse("APOLLO_13").year, None);
     }
 }

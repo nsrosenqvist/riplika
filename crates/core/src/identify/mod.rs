@@ -61,6 +61,18 @@ pub fn identify(scan: &DiscScan, cat: &dyn Catalogue) -> Result<Vec<Candidate>> 
         let mut reasons = vec![format!("volume label {:?} reads as {:?}", scan.label, guess.title)];
         let mut confidence = hit.score * 0.6;
 
+        // A year on the label, agreeing with the catalogue, separates a
+        // remake from what it remade. Only ever a point in favour: labels are
+        // not reliable enough to argue *against* a candidate with, and a title
+        // that simply contains a number - "2012", "Blade Runner 2049" - would
+        // otherwise be read as a year and contradict every real answer.
+        if let (Some(want), Some(has)) = (guess.year, hit.media.year())
+            && want == has
+        {
+            confidence += 0.2;
+            reasons.push(format!("the label says {want}, and so does the catalogue"));
+        }
+
         if looks_like_a_film {
             let minutes = feature / 60_000;
             match hit.media {
