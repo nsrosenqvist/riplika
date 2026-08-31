@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Riplika 0.2.0\n"
 "Report-Msgid-Bugs-To: https://github.com/nsrosenqvist/riplika/issues\n"
-"POT-Creation-Date: 2026-08-31 23:06+0200\n"
+"POT-Creation-Date: 2026-08-31 23:11+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -675,6 +675,30 @@ msgstr ""
 
 #: crates/gui/src/prefs_dialog.rs:247
 msgid "Game datfiles"
+msgstr ""
+
+#: crates/gui/src/prefs_dialog.rs:269
+msgid "System"
+msgstr ""
+
+#: crates/gui/src/prefs_dialog.rs:270
+msgid "Downloaded from redump.org into the folder above"
+msgstr ""
+
+#: crates/gui/src/prefs_dialog.rs:275 crates/gui/src/prefs_dialog.rs:308
+msgid "Download"
+msgstr ""
+
+#: crates/gui/src/prefs_dialog.rs:302
+msgid "Downloading..."
+msgstr ""
+
+#: crates/gui/src/prefs_dialog.rs:311
+msgid "%1$s is ready"
+msgstr ""
+
+#: crates/gui/src/prefs_dialog.rs:314
+msgid "Downloaded, but nothing here could open it"
 msgstr ""
 
 #: data/com.nsrosenqvist.Riplika.desktop:4

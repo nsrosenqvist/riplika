@@ -304,8 +304,6 @@ pub fn rip_cd(
 
 /// List the datfiles there are, or fetch one.
 pub fn dats(fetch: Option<&str>, out: Option<PathBuf>) -> Result<(), String> {
-    use riplika_core::host::{Command, Runner};
-    use riplika_core::identify::catalogue::Http;
     use riplika_core::redump;
 
     let real = Real::new();
@@ -326,37 +324,11 @@ pub fn dats(fetch: Option<&str>, out: Option<PathBuf>) -> Result<(), String> {
         return Ok(());
     };
 
-    // An unlisted slug is passed through rather than refused: redump.org
-    // covers more systems than a disc drive can read, and somebody who knows
-    // the name should not be argued with.
-    let known = redump::system_name(system).unwrap_or(system);
-    let url = redump::datfile_url(system);
-    println!("fetching {known} from {url}");
-    let zipped = real.http.get_bytes(&url).map_err(|e| e.to_string())?;
-    if zipped.len() < 1024 {
-        return Err(format!("{url} gave back {} bytes; is {system:?} a system?", zipped.len()));
-    }
-
-    real.fs.create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let archive = dir.join(format!("{system}.zip"));
-    real.fs.write(&archive, &zipped).map_err(|e| e.to_string())?;
-
-    // Redump serves a zip. Rather than carry an unzipper for one file, use
-    // whichever the machine has - and if it has neither, say where the archive
-    // is instead of failing silently.
-    let extracted = ["unzip", "bsdtar"].iter().find_map(|tool| {
-        let cmd = match *tool {
-            "unzip" => Command::new("unzip").args(["-o", "-q"]).path(&archive).arg("-d").path(&dir),
-            _ => Command::new("bsdtar").args(["-x", "-f"]).path(&archive).arg("-C").path(&dir),
-        };
-        real.runner.run(&cmd).ok().filter(|o| o.ok()).map(|_| *tool)
-    });
-    match extracted {
-        Some(tool) => {
-            let _ = real.fs.remove_file(&archive);
-            println!("extracted with {tool}");
-        }
-        None => {
+    let fetched = redump::fetch(&real.fs, &real.runner, &real.http, system, &dir)
+        .map_err(|e| e.to_string())?;
+    match &fetched.archive {
+        None => println!("fetched {}", fetched.system),
+        Some(archive) => {
             println!("\nNo unzip or bsdtar here. The archive is at:\n  {}", archive.display());
             println!("Extract it into that folder and riplika will find it.");
             return Ok(());

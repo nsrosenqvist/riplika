@@ -6,7 +6,7 @@
 //! stays on the rip page is what can differ between one disc and the next:
 //! quality, the output folder, and which of *this* disc's languages to take.
 
-use crate::i18n::tr;
+use crate::i18n::{tr, tr_args};
 use adw::prelude::*;
 use riplika_core::host;
 use riplika_core::lang;
@@ -256,7 +256,67 @@ where
         &describe(&store.prefs.borrow().dat_dir(), "None - dumps will not be named"),
     );
     games.add(&dats);
+
+    // Somewhere to get them. Inside a flatpak this is the only way there is:
+    // the sandbox has a data directory of its own, so datfiles fetched on the
+    // host are not visible and the folder starts empty - "no datfiles found",
+    // with nothing the reader can do about it.
+    let systems = gtk::StringList::new(&[]);
+    for (_, name) in riplika_core::redump::SYSTEMS {
+        systems.append(name);
+    }
+    let system_row = adw::ComboRow::builder()
+        .title(tr("System"))
+        .subtitle(tr("Downloaded from redump.org into the folder above"))
+        .model(&systems)
+        .selected(0)
+        .build();
+    let fetch = gtk::Button::builder()
+        .label(tr("Download"))
+        .valign(gtk::Align::Center)
+        .css_classes(vec!["suggested-action".to_string()])
+        .build();
+    system_row.add_suffix(&fetch);
+    games.add(&system_row);
     page.add(&games);
+
+    {
+        let store = Rc::clone(&store);
+        let system_row = system_row.clone();
+        let fetch = fetch.clone();
+        fetch.connect_clicked(move |button| {
+            let Some((slug, _)) = riplika_core::redump::SYSTEMS.get(system_row.selected() as usize)
+            else {
+                return;
+            };
+            let dir = store
+                .prefs
+                .borrow()
+                .dat_dir
+                .clone()
+                .unwrap_or_else(riplika_core::prefs::Preferences::default_dat_dir);
+            // On this thread on purpose: it is one request and a small file,
+            // and the dialog has nowhere to put a background task's answer.
+            // The button says what is happening while it happens.
+            button.set_sensitive(false);
+            button.set_label(&tr("Downloading..."));
+            let fs = riplika_core::host::RealFs;
+            let runner = riplika_core::host::RealRunner::new(riplika_core::host::Cancel::new());
+            let http = riplika_core::identify::catalogue::UreqHttp;
+            let done = riplika_core::redump::fetch(&fs, &runner, &http, slug, &dir);
+            button.set_sensitive(true);
+            button.set_label(&tr("Download"));
+            match done {
+                Ok(f) if f.archive.is_none() => {
+                    system_row.set_subtitle(&tr_args("%1$s is ready", &[&f.system]));
+                }
+                Ok(_) => {
+                    system_row.set_subtitle(&tr("Downloaded, but nothing here could open it"));
+                }
+                Err(e) => system_row.set_subtitle(&e.to_string()),
+            }
+        });
+    }
 
     dialog.add(&page);
 

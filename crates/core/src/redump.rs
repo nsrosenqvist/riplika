@@ -17,6 +17,7 @@
 
 use crate::hash::Digests;
 use crate::{Error, Result};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rom {
@@ -194,6 +195,64 @@ pub const SYSTEMS: &[(&str, &str)] = &[
 /// Where a system's datfile is downloaded from.
 pub fn datfile_url(system: &str) -> String {
     format!("http://redump.org/datfile/{system}/")
+}
+
+/// What a fetch came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fetched {
+    /// The system's English name, as it will be filed under.
+    pub system: String,
+    /// Where the archive was put, when nothing here could open it.
+    pub archive: Option<PathBuf>,
+}
+
+/// Download one system's datfile into `dir`.
+///
+/// In core rather than in the command line, which is where it lived: the
+/// window needs it too, and inside a flatpak it needs it badly - the sandbox
+/// has a data directory of its own, so datfiles fetched on the host are not
+/// there and a game dump can never be named. Two copies of "where redump keeps
+/// its datfiles and how to unpack one" is one more than the subject deserves.
+pub fn fetch(
+    fs: &dyn crate::host::Fs,
+    runner: &dyn crate::host::Runner,
+    http: &dyn crate::identify::catalogue::Http,
+    system: &str,
+    dir: &Path,
+) -> Result<Fetched> {
+    use crate::host::Command;
+
+    // An unlisted slug is passed through rather than refused: redump.org
+    // covers more systems than a disc drive can read, and somebody who knows
+    // the name should not be argued with.
+    let known = system_name(system).unwrap_or(system).to_string();
+    let url = datfile_url(system);
+    let zipped = http.get_bytes(&url)?;
+    if zipped.len() < 1024 {
+        return Err(Error(format!(
+            "{url} gave back {} bytes; is {system:?} a system?",
+            zipped.len()
+        )));
+    }
+
+    fs.create_dir_all(dir)?;
+    let archive = dir.join(format!("{system}.zip"));
+    fs.write(&archive, &zipped)?;
+
+    // Redump serves a zip. Rather than carry an unzipper for one file, use
+    // whichever the machine has - and if it has neither, leave the archive
+    // where it is and say so, rather than failing silently.
+    let opened = ["unzip", "bsdtar"].iter().any(|tool| {
+        let cmd = match *tool {
+            "unzip" => Command::new("unzip").args(["-o", "-q"]).path(&archive).arg("-d").path(dir),
+            _ => Command::new("bsdtar").args(["-x", "-f"]).path(&archive).arg("-C").path(dir),
+        };
+        runner.run(&cmd).is_ok_and(|o| o.ok())
+    });
+    if opened {
+        let _ = fs.remove_file(&archive);
+    }
+    Ok(Fetched { system: known, archive: (!opened).then_some(archive) })
 }
 
 /// The English name for a system slug, if it is one we list.
