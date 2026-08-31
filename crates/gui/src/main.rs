@@ -16,6 +16,23 @@ use gtk::glib;
 use riplika_core::disc::DiscKind;
 use riplika_core::job::{Event, Report};
 use riplika_core::lang::{self, LanguageSet};
+use show_picker::{Choice, Prompt};
+
+/// What the release picker currently has in it.
+///
+/// Two sources answer the same question and are chosen from the same list, but
+/// they are not interchangeable: a release the disc id named is already known
+/// in full, down to which disc of a box set is in the tray, while a release
+/// found by name is a title and an id and has to be fetched. Keeping them
+/// apart is what stops a box set being fetched back as its first disc.
+#[derive(Clone)]
+enum Offering {
+    Nothing,
+    /// Releases this exact disc belongs to.
+    ThisDisc(Vec<riplika_core::identify::music::Album>),
+    /// Releases whose name matched what was typed.
+    Searched(Vec<riplika_core::identify::music::Match>),
+}
 use riplika_core::model::*;
 use riplika_core::prefs::{AudioFormat, Preferences};
 use std::cell::RefCell;
@@ -73,6 +90,8 @@ struct State {
     music: Option<riplika_core::musicjob::Found>,
     /// Which of the releases matching that disc was settled on.
     album: Option<riplika_core::identify::music::Album>,
+    /// What the release picker is offering, while it is open.
+    offering: Offering,
     /// The data disc in the drive, and the little it says about itself.
     game: Option<riplika_core::game::GameDisc>,
     candidates: Vec<Candidate>,
@@ -105,6 +124,7 @@ impl Default for State {
             scan: None,
             music: None,
             album: None,
+            offering: Offering::Nothing,
             game: None,
             candidates: Vec::new(),
             selected: None,
@@ -809,16 +829,17 @@ fn warning_text(w: &Warning) -> String {
 
 /// Is there another answer the reader could pick, for a disc of this kind?
 ///
-/// Only for video. A music disc is settled exactly by its disc id, and a game
-/// is settled by what its dump hashes to - which has not happened yet at the
-/// point this is asked, and is not something to choose from a list afterwards
-/// either: picking a name by hand is how a dump comes to claim it is a game it
-/// is not.
+/// Everything but a game. A film or a show is chosen from what the catalogues
+/// offer; a music disc usually needs no choosing, since a disc id names one
+/// pressing exactly - but the same pressing can have been issued twice, and a
+/// disc MusicBrainz has never seen can still be searched for by name.
 ///
-/// Video is the one kind where the catalogues offer several plausible answers
-/// and the reader knows which is right.
+/// A game is the exception. It is settled by what its dump hashes to, which
+/// has not happened yet at the point this is asked, and is not something to
+/// choose from a list afterwards either: picking a name by hand is how a dump
+/// comes to claim it is a game it is not.
 fn identity_is_choosable(kind: Option<&DiscKind>) -> bool {
-    !matches!(kind, Some(DiscKind::Audio(_) | DiscKind::Data(_)))
+    !matches!(kind, Some(DiscKind::Data(_)))
 }
 
 /// A stage's name, in the reader's language.
@@ -1193,7 +1214,8 @@ impl App {
 
         if let Some(picker) = self.ui.picker.borrow().as_ref() {
             let app = self.weak();
-            picker.show(cands, move |i| {
+            let choices: Vec<Choice> = cands.iter().map(Choice::of_candidate).collect();
+            picker.show(&choices, move |i| {
                 if let Some(app) = app.upgrade() {
                     app.choose(i);
                 }
@@ -1276,12 +1298,117 @@ impl App {
         )
     }
 
+    /// Open the dialog for choosing which release a music disc is.
+    ///
+    /// It starts on what the disc id already said, when that was more than one
+    /// pressing, so the ordinary case needs no request at all. Typing searches
+    /// MusicBrainz by name, which is the way out for a disc it has never seen.
+    fn open_release_picker(
+        &self,
+        window: &impl IsA<gtk::Widget>,
+        tx: &std::sync::mpsc::Sender<Msg>,
+    ) {
+        let query = {
+            let state = self.state.borrow();
+            state
+                .album
+                .as_ref()
+                .map(|a| format!("{} {}", a.artist, a.title))
+                .or_else(|| state.scan.as_ref().map(|s| s.label.clone()))
+                .unwrap_or_default()
+        };
+        let app_for_search = self.weak();
+        let tx = tx.clone();
+        let picker = show_picker::present(
+            window,
+            Prompt {
+                title: tr("Which release is this?"),
+                // No use offering it. A show named by hand still rips into
+                // numbered episodes; an album named by hand has no track
+                // listing, so there would be nothing to write the files from.
+                use_typed: None,
+            },
+            &query,
+            move |q| {
+                if let Some(app) = app_for_search.upgrade() {
+                    app.state.borrow_mut().searching = true;
+                    if let Some(p) = app.ui.picker.borrow().as_ref() {
+                        p.show_searching();
+                    }
+                    worker::search_music(q, tx.clone());
+                }
+            },
+            |_| {},
+        );
+        *self.ui.picker.borrow_mut() = Some(picker);
+
+        // Whatever the disc id already answered, so the dialog opens on
+        // something rather than on an empty box.
+        let albums =
+            self.state.borrow().music.as_ref().map(|m| m.albums.clone()).unwrap_or_default();
+        self.show_releases(Offering::ThisDisc(albums));
+    }
+
+    /// Put releases into the open picker, whichever asked for them.
+    fn show_releases(&self, offering: Offering) {
+        self.state.borrow_mut().offering = offering.clone();
+        let choices: Vec<Choice> = match &offering {
+            Offering::Nothing => Vec::new(),
+            Offering::ThisDisc(albums) => albums.iter().map(Choice::of_album).collect(),
+            Offering::Searched(found) => found.iter().map(Choice::of_release).collect(),
+        };
+        let app = self.weak();
+        if let Some(picker) = self.ui.picker.borrow().as_ref() {
+            picker.show(&choices, move |i| {
+                if let Some(app) = app.upgrade() {
+                    app.choose_release(i);
+                }
+            });
+        }
+    }
+
+    /// Take the release at this position, however it got into the list.
+    ///
+    /// A release the disc id named is already known in full - including which
+    /// disc of a box set is in the tray - so it is taken as it stands. One
+    /// found by name is an id, and its tracks are a second request away.
+    fn choose_release(&self, index: usize) {
+        let offering = self.state.borrow().offering.clone();
+        match offering {
+            Offering::ThisDisc(albums) => {
+                let Some(album) = albums.get(index).cloned() else {
+                    return;
+                };
+                self.state.borrow_mut().album = Some(album);
+                if let Some(p) = self.ui.picker.borrow().as_ref() {
+                    p.close();
+                }
+                *self.ui.picker.borrow_mut() = None;
+                self.show_choice();
+            }
+            Offering::Searched(found) => {
+                let Some(m) = found.get(index) else {
+                    return;
+                };
+                if let Some(p) = self.ui.picker.borrow().as_ref() {
+                    p.show_searching();
+                }
+                self.state.borrow_mut().searching = true;
+                worker::fetch_release(m.release_id.clone(), self.sender());
+            }
+            Offering::Nothing => {}
+        }
+    }
+
     /// What the identify page says about a music disc.
     ///
     /// There is nothing to choose here in the ordinary case: a disc id names
-    /// one pressing, so the page reports rather than asks.
+    /// one pressing, so the page reports rather than asks. The row still opens
+    /// the picker, because the ordinary case is not the only one - a pressing
+    /// can have been issued twice, and a disc the catalogue has never seen can
+    /// be searched for by name.
     fn show_album(&self) {
-        self.set_chosen_actionable(false);
+        self.set_chosen_actionable(true);
         let album = self.state.borrow().album.clone();
         match album {
             Some(a) => {
@@ -1493,12 +1620,36 @@ impl App {
             Msg::Music(found) => {
                 self.set_busy(None);
                 // One release is the ordinary case; more than one means the
-                // same pressing was issued twice and the first is as good a
-                // starting point as any until picking is offered.
+                // same pressing was issued twice, and the page settles on the
+                // first while the row offers the rest.
                 self.state.borrow_mut().album = found.albums.first().cloned();
                 self.state.borrow_mut().music = Some(*found);
                 self.show_choice();
                 self.go(Step::Identify);
+            }
+            Msg::Releases(found) => {
+                self.set_busy(None);
+                self.state.borrow_mut().searching = false;
+                self.toast(&match found.len() {
+                    0 => "Nothing found".to_string(),
+                    1 => "1 release".to_string(),
+                    n => format!("{n} releases"),
+                });
+                self.show_releases(Offering::Searched(found));
+            }
+            Msg::Release(album) => {
+                self.set_busy(None);
+                self.state.borrow_mut().searching = false;
+                // Chosen by hand rather than proven by the disc id, so what it
+                // came from is no longer the disc's own answer. Saying that is
+                // what keeps "named by the disc" honest on the page.
+                self.state.borrow_mut().album = Some(*album);
+                if let Some(p) = self.ui.picker.borrow().as_ref() {
+                    p.close();
+                }
+                *self.ui.picker.borrow_mut() = None;
+                self.state.borrow_mut().offering = Offering::Nothing;
+                self.show_choice();
             }
             Msg::Candidates(c) => {
                 self.set_busy(None);
@@ -1750,6 +1901,13 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             ) {
                 return;
             }
+            // A different question, a different catalogue, and a different
+            // dialog. Asking the film catalogues about an album would find
+            // nothing, which is how a game disc came to ask about shows.
+            if app.is_music() {
+                app.open_release_picker(&window, &tx);
+                return;
+            }
             let query = {
                 let state = app.state.borrow();
                 opening_query(
@@ -1762,6 +1920,12 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             let tx = tx.clone();
             let picker = show_picker::present(
                 &window,
+                Prompt {
+                    // Films as well as television: search() asks the
+                    // catalogues for both, and always has.
+                    title: tr("Which film or show is this?"),
+                    use_typed: Some(tr("Episodes are numbered but not named")),
+                },
                 &query,
                 move |q| {
                     app_for_search.state.borrow_mut().query = q.clone();
@@ -1783,7 +1947,8 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             // Open on what is already known rather than an empty list.
             let candidates = app.state.borrow().candidates.clone();
             let chooser = app.weak();
-            picker.show(&candidates, move |i| {
+            let choices: Vec<Choice> = candidates.iter().map(Choice::of_candidate).collect();
+            picker.show(&choices, move |i| {
                 if let Some(app) = chooser.upgrade() {
                     app.choose(i);
                 }
@@ -2252,14 +2417,15 @@ mod choosable_tests {
     }
 
     #[test]
-    fn a_music_disc_offers_nothing_to_choose_either() {
-        // Settled exactly by its disc id. The tap was already ignored here;
-        // what was missing was saying so before it is made.
-        assert!(!identity_is_choosable(Some(&DiscKind::Audio(toc()))));
+    fn a_music_disc_can_be_chosen_for_too() {
+        // A disc id names one pressing exactly, so usually there is nothing to
+        // choose - but the same pressing can have been issued twice, and a
+        // disc MusicBrainz has never seen can still be searched for by name.
+        assert!(identity_is_choosable(Some(&DiscKind::Audio(toc()))));
     }
 
     #[test]
-    fn video_is_the_one_kind_worth_asking_about() {
+    fn video_is_asked_about_as_well() {
         assert!(identity_is_choosable(Some(&DiscKind::DvdVideo)));
         assert!(identity_is_choosable(Some(&DiscKind::BluRay)));
     }

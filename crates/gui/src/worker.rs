@@ -34,6 +34,10 @@ pub enum Msg {
     /// A data disc, and the little it says about itself.
     Game(Box<riplika_core::game::GameDisc>),
     Candidates(Vec<Candidate>),
+    /// Releases a search by name turned up, to choose between.
+    Releases(Vec<riplika_core::identify::music::Match>),
+    /// One release fetched in full, once it has been chosen.
+    Release(Box<riplika_core::identify::music::Album>),
     Organised(Vec<Item>),
     Event(Event),
     Finished(Box<Report>),
@@ -181,6 +185,48 @@ pub fn search(query: String, season: Option<u32>, tx: Sender<Msg>) {
         match riplika_core::identify::search(&cat, &query, season) {
             Ok(c) => {
                 let _ = tx.send(Msg::Candidates(c));
+            }
+            Err(e) => {
+                let _ = tx.send(Msg::Failed(e.to_string()));
+            }
+        }
+    });
+}
+
+/// Ask MusicBrainz what releases go by a name.
+///
+/// Two requests make a search: this is the first, and [`fetch_release`] is the
+/// second. Split because the search endpoint carries no track listings, and
+/// fetching every result's would be twenty-five requests to a service that
+/// allows one a second.
+pub fn search_music(query: String, tx: Sender<Msg>) {
+    std::thread::spawn(move || {
+        let real = Real::new(Cancel::new());
+        let mb = riplika_core::identify::music::MusicBrainz::new(&real.http);
+        use riplika_core::identify::music::MusicCatalogue;
+        match mb.search(&query) {
+            Ok(found) => {
+                let _ = tx.send(Msg::Releases(found));
+            }
+            Err(e) => {
+                let _ = tx.send(Msg::Failed(e.to_string()));
+            }
+        }
+    });
+}
+
+/// Fetch one release in full, once the reader has said which.
+pub fn fetch_release(id: String, tx: Sender<Msg>) {
+    std::thread::spawn(move || {
+        let real = Real::new(Cancel::new());
+        let mb = riplika_core::identify::music::MusicBrainz::new(&real.http);
+        use riplika_core::identify::music::MusicCatalogue;
+        match mb.by_release_id(&id) {
+            Ok(Some(album)) => {
+                let _ = tx.send(Msg::Release(Box::new(album)));
+            }
+            Ok(None) => {
+                let _ = tx.send(Msg::Failed("MusicBrainz has no such release".into()));
             }
             Err(e) => {
                 let _ = tx.send(Msg::Failed(e.to_string()));

@@ -1,14 +1,81 @@
-//! Choosing which show a disc is.
+//! Choosing which work a disc is.
 //!
 //! The alternatives are only interesting while you are choosing between them.
 //! Left on the page they are a list of things you have already rejected, and
 //! they push everything that actually needs answering - the season, the disc
 //! number - further down. So the page states what it settled on, and the
 //! alternatives live in a dialog you open when that is wrong.
+//!
+//! Films, television and music all come through here. What differs between
+//! them is what a row says and what the question at the top is, so those are
+//! given to it rather than assumed: this knows how to let somebody choose from
+//! a list, and nothing about what is in the list.
 
 use crate::i18n::tr;
 use adw::prelude::*;
+use riplika_core::identify::music::Match;
 use riplika_core::model::Candidate;
+
+/// One row: what it is, and what distinguishes it from the row above.
+pub struct Choice {
+    pub title: String,
+    pub subtitle: String,
+    /// How sure the catalogue is, where it said. Nothing for a music search,
+    /// which scores the *name* and would read as confidence about the disc.
+    pub confidence: Option<f32>,
+}
+
+impl Choice {
+    /// A film or a television series, as the catalogues answered.
+    pub fn of_candidate(c: &Candidate) -> Choice {
+        Choice {
+            title: c.media.describe_work(),
+            // What the work is, not that a search happened: the reasons are
+            // evidence about *this disc*, which a search result has none of.
+            subtitle: c.detail.clone().unwrap_or_else(|| c.reasons.join("\n")),
+            confidence: Some(c.confidence),
+        }
+    }
+
+    /// A release this exact disc belongs to, from the disc id.
+    ///
+    /// Certain in a way a searched release is not - the disc said so - so it
+    /// says what pressing it is rather than how many tracks it claims.
+    pub fn of_album(a: &riplika_core::identify::music::Album) -> Choice {
+        Choice {
+            title: format!("{} - {}", a.artist, a.title),
+            subtitle: a.detail(),
+            confidence: None,
+        }
+    }
+
+    /// A release, as MusicBrainz answered a search by name.
+    ///
+    /// No confidence shown. The catalogue scores how well the *name* matched,
+    /// and putting that on a row invites reading it as how sure it is that
+    /// this is the disc in the drive - which a name search cannot know at all.
+    /// What can tell them apart is the year, the country, the format and the
+    /// track count, so those are the subtitle.
+    pub fn of_release(m: &Match) -> Choice {
+        Choice {
+            title: format!("{} - {}", m.artist, m.title),
+            subtitle: m.detail(),
+            confidence: None,
+        }
+    }
+}
+
+/// What the dialog asks, and how it offers a way out when nothing matches.
+pub struct Prompt {
+    /// The question at the top.
+    pub title: String,
+    /// Offered when nothing fits: use what was typed, explained by this.
+    ///
+    /// Nothing where a bare name is no use. A show named by hand still rips
+    /// into numbered episodes; an album named by hand has no track listing, so
+    /// there would be nothing to write the files from.
+    pub use_typed: Option<String>,
+}
 
 /// The parts of an open picker the window needs to reach, so results arriving
 /// from a search can be put into the list that is currently on screen.
@@ -18,13 +85,16 @@ pub struct Picker {
     /// What was typed, so a name with no match can still be used.
     search: gtk::SearchEntry,
     on_use: std::rc::Rc<dyn Fn(String)>,
+    /// How this dialog explains using the typed name, or nothing if it does
+    /// not offer that at all.
+    use_typed: Option<String>,
 }
 
 impl Picker {
     /// Replace the contents of the list.
-    pub fn show(&self, candidates: &[Candidate], on_choose: impl Fn(usize) + 'static) {
+    pub fn show(&self, choices: &[Choice], on_choose: impl Fn(usize) + 'static) {
         self.clear();
-        if candidates.is_empty() {
+        if choices.is_empty() {
             let row = adw::ActionRow::builder()
                 .title(tr("Nothing found"))
                 .subtitle(tr("Try a different spelling, or part of the title"))
@@ -35,18 +105,17 @@ impl Picker {
             return;
         }
         let chooser = std::rc::Rc::new(on_choose);
-        for (i, c) in candidates.iter().enumerate() {
-            // What the work is, not that a search happened: the reasons are
-            // evidence about *this disc*, which a search result has none of.
-            let subtitle = c.detail.clone().unwrap_or_else(|| c.reasons.join("\n"));
+        for (i, c) in choices.iter().enumerate() {
             let row = adw::ActionRow::builder()
-                .title(c.media.describe_work())
-                .subtitle(&subtitle)
+                .title(&c.title)
+                .subtitle(&c.subtitle)
                 .activatable(true)
                 .build();
-            let pct = gtk::Label::new(Some(&format!("{:.0}%", c.confidence * 100.0)));
-            pct.add_css_class("dim-label");
-            row.add_suffix(&pct);
+            if let Some(confidence) = c.confidence {
+                let pct = gtk::Label::new(Some(&format!("{:.0}%", confidence * 100.0)));
+                pct.add_css_class("dim-label");
+                row.add_suffix(&pct);
+            }
             row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
             let chooser = std::rc::Rc::clone(&chooser);
             row.connect_activated(move |_| chooser(i));
@@ -64,12 +133,15 @@ impl Picker {
     /// which can be corrected, where an unread disc cannot.
     fn offer_the_typed_name(&self) {
         let typed = self.search.text().trim().to_string();
+        let Some(explanation) = self.use_typed.clone() else {
+            return;
+        };
         if typed.is_empty() {
             return;
         }
         let row = adw::ActionRow::builder()
             .title(tr("Use this name anyway"))
-            .subtitle(tr("Episodes are numbered but not named"))
+            .subtitle(&explanation)
             .activatable(true)
             .build();
         row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
@@ -104,15 +176,13 @@ impl Picker {
 /// through the window, which calls [`Picker::show`] on the returned handle.
 pub fn present(
     parent: &impl IsA<gtk::Widget>,
+    prompt: Prompt,
     query: &str,
     on_search: impl Fn(String) + 'static,
     on_use: impl Fn(String) + 'static,
 ) -> Picker {
-    let dialog = adw::Dialog::builder()
-        .title(tr("Which show is this?"))
-        .content_width(520)
-        .content_height(620)
-        .build();
+    let dialog =
+        adw::Dialog::builder().title(&prompt.title).content_width(520).content_height(620).build();
 
     let view = adw::ToolbarView::new();
     view.add_top_bar(&adw::HeaderBar::new());
@@ -149,7 +219,13 @@ pub fn present(
     view.set_content(Some(&body));
     dialog.set_child(Some(&view));
 
-    let picker = Picker { dialog, list, search: search.clone(), on_use: std::rc::Rc::new(on_use) };
+    let picker = Picker {
+        dialog,
+        list,
+        search: search.clone(),
+        on_use: std::rc::Rc::new(on_use),
+        use_typed: prompt.use_typed,
+    };
     {
         let run = std::rc::Rc::new(on_search);
         let r = std::rc::Rc::clone(&run);
