@@ -162,10 +162,10 @@ pub fn dump(
         });
 
         match (&toc, span.is_data) {
-            // Audio has no address in it for a drive to sync on, so a long
-            // read of it drifts: two dumps of one disc disagreed on nineteen
-            // tracks of twenty. cdparanoia overlaps its reads and matches the
-            // overlap, which is the whole reason it exists.
+            // Audio carries no error correction a host can check, so a
+            // sector read wrongly comes back looking like a good one. The
+            // drive's own C2 account is the only thing that knows, and it is
+            // asked for every sector.
             (Some(_), false) => {
                 let reading = Reading { fs, sectors: sectors.max(1) as f32 };
                 let mut read = |into: &Path, progress: &mut dyn FnMut(f32)| {
@@ -177,9 +177,11 @@ pub fn dump(
                 damaged += guessed;
                 checked.push((span.number, digests));
             }
-            // Data sectors carry their own addresses, so they can be read
-            // directly - and through the rescue passes, which know what to do
-            // about the ones a disc will not give up.
+            // Data sectors carry their own error correction, which the drive
+            // checks: a bad one is refused rather than guessed at, so there is
+            // nothing for C2 to add here. They go straight through the rescue
+            // passes, which know what to do about the ones a disc will not
+            // give up.
             _ => {
                 let mut source = Cancellable {
                     inner: match medium {
