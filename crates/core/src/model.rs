@@ -529,6 +529,8 @@ pub enum Warning {
     FreeReaderIncomplete { why: String },
     /// The free reader could not read the disc at all.
     FreeReaderFailed { why: String },
+    /// A dump came off, but not whole. The reason is a sentence already.
+    DumpIncomplete { why: String },
     /// The drive's C2 error pointers say part of an audio track is damaged.
     ///
     /// Not fatal on its own - the track is read again, and if two readings
@@ -579,6 +581,7 @@ impl Warning {
             Warning::FreeReaderFailed { why } => {
                 format!("the free reader failed ({why}); using MakeMKV")
             }
+            Warning::DumpIncomplete { why } => why.clone(),
             Warning::TrackDamaged { track, sectors } => format!(
                 "track {track} is damaged: the drive had to guess at {}",
                 plural(*sectors, "sector")

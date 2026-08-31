@@ -297,8 +297,11 @@ pub fn run_game(
                     &cancel,
                     &mut events,
                 )?;
+                // Not FreeReaderIncomplete: that one says "using MakeMKV",
+                // which has nothing to do with a game disc and told anybody
+                // reading it something that was not happening.
                 if let Some(why) = gamejob::shortfall(&dumped) {
-                    events(Event::Warning(Warning::FreeReaderIncomplete { why }));
+                    events(Event::Warning(Warning::DumpIncomplete { why }));
                 }
 
                 // A disc of several tracks is only right when all of them
