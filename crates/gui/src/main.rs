@@ -513,7 +513,11 @@ fn build_ui() -> Ui {
         .build();
     let accurate_chapters = adw::SwitchRow::builder()
         .title(tr("Exact chapter marks"))
-        .subtitle(tr("Reads the disc twice. Without it chapter marks drift a second or two"))
+        // The drift is a tenth of a per cent, so it is proportional: the
+        // first mark is nearly exact and the last is the worst. Under two
+        // seconds by the end of an episode, around five by the end of a film,
+        // which is why the row says which of those is in the drive.
+        .subtitle(tr("Reads the disc twice, so it takes about twice as long"))
         .build();
     quality.add(&video);
     quality.add(&audio);
@@ -1333,6 +1337,13 @@ impl App {
             tr("A longer cut some discs carry alongside the theatrical version")
         } else {
             tr("Longer cuts some discs carry alongside the broadcast versions")
+        });
+        // The drift grows through the title rather than sitting at a fixed
+        // offset, so how much it comes to depends on how long the title is.
+        self.ui.accurate_chapters.set_subtitle(&if film {
+            tr("Reads the disc twice. Without it, chapter marks drift a few seconds by the end")
+        } else {
+            tr("Reads the disc twice. Without it, chapter marks drift a second or two")
         });
 
         let (title, description, ready) = Self::drive_status(&drives, selected.as_ref());
