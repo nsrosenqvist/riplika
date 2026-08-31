@@ -137,6 +137,53 @@ impl Album {
     }
 }
 
+/// A release the catalogue offered, before its tracks have been fetched.
+///
+/// Searching by name and looking a release up are two requests, because the
+/// search endpoint does not carry track listings. This is what comes back from
+/// the first: enough to choose by, and the id to ask with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Match {
+    pub release_id: String,
+    pub title: String,
+    pub artist: String,
+    pub date: Option<String>,
+    pub country: Option<String>,
+    /// How many tracks the release says this disc has.
+    ///
+    /// Worth showing next to what the drive reports: a name can match a
+    /// release that is not the pressing in the tray, and a different track
+    /// count is the cheapest sign of it.
+    pub tracks: usize,
+    /// "CD", "Mixed Mode CD", and so on. Absent when the catalogue does not say.
+    pub format: Option<String>,
+    /// How well the catalogue thinks the name matched, out of a hundred.
+    pub score: u32,
+}
+
+impl Match {
+    /// The year, without the rest of the date.
+    pub fn year(&self) -> Option<&str> {
+        self.date.as_deref().and_then(|d| d.get(..4))
+    }
+
+    /// What distinguishes this release from the others with the same name.
+    pub fn detail(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(year) = self.year() {
+            parts.push(year.to_string());
+        }
+        if let Some(country) = &self.country {
+            parts.push(country.clone());
+        }
+        if let Some(format) = &self.format {
+            parts.push(format.clone());
+        }
+        parts.push(format!("{} tracks", self.tracks));
+        parts.join(" - ")
+    }
+}
+
 /// A source of album details, looked up by what the disc says it is.
 pub trait MusicCatalogue: Send + Sync {
     fn name(&self) -> &'static str;
@@ -146,6 +193,16 @@ pub trait MusicCatalogue: Send + Sync {
     /// Usually one. More than one means the same pressing was issued more than
     /// once and the user has to say which, exactly as for a film.
     fn by_disc_id(&self, disc_id: &str) -> Result<Vec<Album>>;
+
+    /// Releases whose name matches what was typed.
+    ///
+    /// For the disc the catalogue has never seen, or has seen and got wrong.
+    /// A search cannot prove which pressing is in the drive the way a disc id
+    /// can, so what comes back is offered to be chosen from rather than used.
+    fn search(&self, query: &str) -> Result<Vec<Match>>;
+
+    /// One release in full, once the reader has said which.
+    fn by_release_id(&self, id: &str) -> Result<Option<Album>>;
 }
 
 pub struct MusicBrainz<'a> {
@@ -165,6 +222,21 @@ impl<'a> MusicBrainz<'a> {
             "https://musicbrainz.org/ws/2/discid/{disc_id}?fmt=json&inc=artists+recordings+labels"
         )
     }
+
+    /// Releases matching a name. Carries no track listings; see [`release_url`].
+    ///
+    /// [`release_url`]: MusicBrainz::release_url
+    pub fn search_url(query: &str, limit: u32) -> String {
+        format!(
+            "https://musicbrainz.org/ws/2/release/?query={}&fmt=json&limit={limit}",
+            encoded(query)
+        )
+    }
+
+    /// One release in full, by id. The second of the two requests a search needs.
+    pub fn release_url(id: &str) -> String {
+        format!("https://musicbrainz.org/ws/2/release/{id}?fmt=json&inc=artists+recordings+labels")
+    }
 }
 
 impl MusicCatalogue for MusicBrainz<'_> {
@@ -176,6 +248,91 @@ impl MusicCatalogue for MusicBrainz<'_> {
         let body = self.http.get(&Self::lookup_url(disc_id))?;
         parse_disc_lookup(&body, disc_id)
     }
+
+    fn search(&self, query: &str) -> Result<Vec<Match>> {
+        let body = self.http.get(&Self::search_url(query, SEARCH_LIMIT))?;
+        parse_search(&body)
+    }
+
+    fn by_release_id(&self, id: &str) -> Result<Option<Album>> {
+        let body = self.http.get(&Self::release_url(id))?;
+        parse_release(&body)
+    }
+}
+
+/// How many search results to ask for.
+///
+/// Enough that an album issued in several countries still shows the one you
+/// have, few enough to read without scrolling past the answer.
+const SEARCH_LIMIT: u32 = 25;
+
+/// Percent-encode a query for a URL.
+///
+/// Everything but the unreserved set, because a search is whatever somebody
+/// typed: an ampersand in a band's name would otherwise end the query and
+/// silently search for half of it.
+fn encoded(query: &str) -> String {
+    let mut out = String::with_capacity(query.len());
+    for byte in query.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*byte as char);
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// Everything a searched release needs, which is less than a disc lookup needs.
+pub fn parse_search(json: &str) -> Result<Vec<Match>> {
+    let v: Value = serde_json::from_str(json)
+        .map_err(|e| Error(format!("MusicBrainz sent something unreadable: {e}")))?;
+    if let Some(why) = v.get("error").and_then(Value::as_str) {
+        return Err(Error(format!("MusicBrainz: {why}")));
+    }
+    let text =
+        |v: Option<&Value>| v.and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string);
+    Ok(v.get("releases")
+        .and_then(Value::as_array)
+        .map(|rs| {
+            rs.iter()
+                .filter_map(|r| {
+                    let medium = r.get("media").and_then(Value::as_array).and_then(|m| m.first());
+                    Some(Match {
+                        release_id: text(r.get("id"))?,
+                        title: text(r.get("title"))?,
+                        artist: credit(r).unwrap_or_default(),
+                        date: text(r.get("date")),
+                        country: text(r.get("country")),
+                        // The release-level count covers every disc of a box
+                        // set; the medium's is the one to weigh against a TOC.
+                        tracks: medium
+                            .and_then(|m| m.get("track-count"))
+                            .or_else(|| r.get("track-count"))
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0) as usize,
+                        format: text(medium.and_then(|m| m.get("format"))),
+                        score: r.get("score").and_then(Value::as_u64).unwrap_or(0) as u32,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// One release, looked up by its id rather than found by a disc.
+///
+/// No disc id to match a medium against, so a box set falls back to its first
+/// disc - which is why what comes out of here is offered to be checked rather
+/// than trusted the way a disc lookup is.
+pub fn parse_release(json: &str) -> Result<Option<Album>> {
+    let v: Value = serde_json::from_str(json)
+        .map_err(|e| Error(format!("MusicBrainz sent something unreadable: {e}")))?;
+    if let Some(why) = v.get("error").and_then(Value::as_str) {
+        return Err(Error(format!("MusicBrainz: {why}")));
+    }
+    Ok(album_of(&v, ""))
 }
 
 /// Where the front cover lives, for a release id.
@@ -545,6 +702,107 @@ mod tests {
         assert_eq!(
             cover_art_url("43b353ce-f15a-4b01-9dcb-3bbc280c97f1"),
             "https://coverartarchive.org/release/43b353ce-f15a-4b01-9dcb-3bbc280c97f1/front"
+        );
+    }
+
+    /// Trimmed from a real answer to `release/?query=cool boarders`, keeping
+    /// the fields this reads and the two results that make the point: a name
+    /// can match a cassette that is not the disc in the drive.
+    const SEARCH: &str = r#"{"count": 2, "releases": [
+      {"id": "f700bd4c-6ece-4c4c-929b-38f998d07ecb", "score": 100,
+       "title": "Liquid Cool Boarders", "date": "2011-09", "country": "DK",
+       "track-count": 2, "artist-credit": [{"name": "Jonas Frederiksen"}],
+       "media": [{"format": "Cassette", "track-count": 2}]},
+      {"id": "f3485f7b-34a3-49a4-b05a-db85d17cdeee", "score": 100,
+       "title": "Cool Boarders 2", "date": "1997", "country": "US",
+       "track-count": 21, "artist-credit": [{"name": "Namba Atsunori"}],
+       "media": [{"format": "Mixed Mode CD", "track-count": 21}]}]}"#;
+
+    #[test]
+    fn a_search_reads_what_there_is_to_choose_between() {
+        let found = parse_search(SEARCH).expect("it parses");
+        assert_eq!(found.len(), 2);
+        let cb = &found[1];
+        assert_eq!(cb.title, "Cool Boarders 2");
+        assert_eq!(cb.artist, "Namba Atsunori");
+        assert_eq!(cb.release_id, "f3485f7b-34a3-49a4-b05a-db85d17cdeee");
+        assert_eq!(cb.tracks, 21);
+        assert_eq!(cb.format.as_deref(), Some("Mixed Mode CD"));
+        assert_eq!(cb.year(), Some("1997"));
+    }
+
+    #[test]
+    fn a_result_says_enough_to_tell_the_wrong_pressing_from_the_right_one() {
+        // Both scored a hundred on the name. What separates them is that one
+        // is a cassette with two tracks, which is not the disc in the drive.
+        let found = parse_search(SEARCH).expect("it parses");
+        assert!(found[0].detail().contains("Cassette"), "{}", found[0].detail());
+        assert!(found[0].detail().contains("2 tracks"), "{}", found[0].detail());
+        assert!(found[1].detail().contains("21 tracks"), "{}", found[1].detail());
+    }
+
+    #[test]
+    fn a_search_that_found_nothing_is_empty_rather_than_an_error() {
+        assert_eq!(parse_search(r#"{"count": 0, "releases": []}"#).unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn a_refusal_is_reported_rather_than_read_as_no_results() {
+        let err = parse_search(r#"{"error": "Rate limit exceeded"}"#).unwrap_err();
+        assert!(err.to_string().contains("Rate limit"), "{err}");
+    }
+
+    #[test]
+    fn a_query_is_encoded_so_a_band_with_an_ampersand_still_searches_for_itself() {
+        // Unencoded, everything after the ampersand becomes another URL
+        // parameter and the search quietly runs on half the name.
+        let url = MusicBrainz::search_url("Florence & the Machine", 25);
+        assert!(url.contains("Florence%20%26%20the%20Machine"), "{url}");
+        assert!(url.ends_with("&fmt=json&limit=25"), "{url}");
+    }
+
+    #[test]
+    fn a_query_of_non_english_letters_survives_the_url() {
+        let url = MusicBrainz::search_url("Sigur Rós", 5);
+        assert!(url.contains("Sigur%20R%C3%B3s"), "{url}");
+    }
+
+    #[test]
+    fn a_release_looked_up_by_id_reads_the_same_as_one_found_by_disc() {
+        // The two endpoints answer with the same release object; only the
+        // wrapping differs. Reusing the disc fixture's release proves the
+        // parser is reading the release and not the envelope around it.
+        let whole: serde_json::Value = serde_json::from_str(&roots()).unwrap();
+        let one = whole.get("releases").unwrap().as_array().unwrap()[0].to_string();
+
+        let album = parse_release(&one).expect("it parses").expect("there is a release");
+        assert_eq!(album.title, "Roots");
+        assert_eq!(album.artist, "Shawn McDonald");
+        assert_eq!(album.tracks.len(), 2);
+        assert_eq!(album.label.as_deref(), Some("Sparrow Records"));
+    }
+
+    #[test]
+    fn a_box_set_looked_up_by_id_falls_back_to_its_first_disc() {
+        // With no disc id there is nothing to say which disc of a set is in
+        // the drive. Taking the first is the only thing to do and is why a
+        // searched release is offered to be checked rather than trusted.
+        let whole: serde_json::Value = serde_json::from_str(&roots()).unwrap();
+        let one = whole.get("releases").unwrap().as_array().unwrap()[0].to_string();
+        let album = parse_release(&one).unwrap().unwrap();
+        assert_eq!(album.disc, 1);
+    }
+
+    #[test]
+    fn a_release_that_is_not_there_is_nothing_rather_than_an_error() {
+        assert_eq!(parse_release("{}").expect("valid json"), None);
+    }
+
+    #[test]
+    fn a_release_is_looked_up_by_its_own_id() {
+        assert_eq!(
+            MusicBrainz::release_url("f3485f7b"),
+            "https://musicbrainz.org/ws/2/release/f3485f7b?fmt=json&inc=artists+recordings+labels"
         );
     }
 }
