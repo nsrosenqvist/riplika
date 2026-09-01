@@ -10,9 +10,9 @@
 
 ![Riplika, having identified a disc](data/hero.png)
 
-Doing this by hand means ripping the disc and transcoding it, then dealing with the subtitles, which arrive as pictures and have to become text before a media server will stop re-encoding the film on every play. Little of it changes from disc to disc.
+Riplika takes the tedious and technical parts out of backing up a media library. You should not need an opinion about codecs or subtitle formats to get a disc onto your own server.
 
-Riplika asks the drive what it is holding and runs the pipeline that suits it.
+It asks the drive what it is holding and runs the pipeline that suits it.
 
 | | Produces | Named from |
 |---|---|---|
