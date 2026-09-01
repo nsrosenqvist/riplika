@@ -120,6 +120,7 @@ pub fn identify(scan: &DiscScan, cat: &dyn Catalogue) -> Result<Vec<Candidate>> 
             confidence: confidence.clamp(0.0, 1.0),
             reasons,
             detail: hit.detail,
+            poster: hit.poster,
         });
     }
     out.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
@@ -186,6 +187,7 @@ pub fn search(cat: &dyn Catalogue, query: &str, season: Option<u32>) -> Result<V
         .map(|h| Candidate {
             confidence: h.score,
             media: h.media,
+            poster: h.poster,
             // "searched for X" is the same on every row and restates the box
             // the user just typed in. What distinguishes these results is what
             // the works are, not that a search happened.
@@ -482,6 +484,7 @@ mod tests {
                     media,
                     score: 0.9,
                     detail: None,
+                    poster: None,
                 }])
             }
             fn episodes(&self, _id: &str, _season: u32) -> Result<Vec<Episode>> {

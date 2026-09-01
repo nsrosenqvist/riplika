@@ -1659,6 +1659,8 @@ impl App {
             confidence: 0.0,
             reasons: vec![tr("Entered by hand; not found in the catalogues")],
             detail: None,
+            // No catalogue behind it, so no picture either.
+            poster: None,
         };
         self.state.borrow_mut().selected = Some(chosen);
         if let Some(p) = self.ui.picker.borrow().as_ref() {
@@ -2844,6 +2846,7 @@ mod picker_tests {
             confidence,
             reasons: vec!["volume label".into()],
             detail: Some("NBC \u{b7} Scripted \u{b7} 2009-2015".into()),
+            poster: None,
         }
     }
 

@@ -43,7 +43,19 @@ pub struct CatalogueHit {
     /// This is what tells nine similarly-named shows apart. A search for "Bear
     /// Grylls" returns a dozen titles that differ mainly by broadcaster.
     pub detail: Option<String>,
+    /// Where a picture of the work can be fetched, when the catalogue has one.
+    ///
+    /// A whole URL, because the two catalogues disagree about what they hand
+    /// back: TVmaze gives one outright and TMDB gives a path that has to be
+    /// hung off an image host. Sorting that out here means nothing downstream
+    /// has to know which catalogue answered.
+    pub poster: Option<String>,
 }
+
+/// Where TMDB's images live. The width is a choice: 342 is the smallest that
+/// does not look soft at the size this is shown, and the largest worth
+/// fetching for a thumbnail.
+pub const TMDB_IMAGE_BASE: &str = "https://image.tmdb.org/t/p/w342";
 
 /// A source of titles and episode lists.
 pub trait Catalogue: Send + Sync {
@@ -157,6 +169,11 @@ pub fn parse_tvmaze_search(json: &str, season: Option<u32>) -> Result<Vec<Catalo
                 provider_id: show.get("id").map(|i| format!("tvmaze:{i}")),
             },
             score: hit.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0).clamp(0.0, 1.0) as f32,
+            poster: show
+                .get("image")
+                .and_then(|i| i.get("medium").or_else(|| i.get("original")))
+                .and_then(|u| u.as_str())
+                .map(str::to_string),
             detail: describe_show(
                 network,
                 text("type"),
@@ -284,7 +301,9 @@ pub fn parse_tmdb_search(
             None,
             None,
         );
-        out.push(CatalogueHit { media, score, detail });
+        let poster =
+            r.get("poster_path").and_then(|p| p.as_str()).map(|p| format!("{TMDB_IMAGE_BASE}{p}"));
+        out.push(CatalogueHit { media, score, detail, poster });
     }
     Ok(out)
 }
@@ -610,6 +629,7 @@ mod tests {
             }
             fn search(&self, _: &str, _: MediaKind, _: Option<u32>) -> Result<Vec<CatalogueHit>> {
                 Ok(vec![CatalogueHit {
+                    poster: None,
                     media: Media::Movie { title: self.0.into(), year: None, provider_id: None },
                     score: self.1,
                     detail: None,
@@ -912,6 +932,10 @@ pub fn parse_wikidata_entities(
             // Ranked by the search's own ordering, which is label similarity.
             // It is not a confidence in the disc; the runtime check is.
             score: 1.0 - (rank as f32 / order.len().max(1) as f32) * 0.5,
+            // Wikidata has images, behind another query per result. Not worth
+            // a request each to decorate a list somebody is about to choose
+            // from, so films found this way show the kind icon instead.
+            poster: None,
             detail,
         });
     }

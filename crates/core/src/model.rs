@@ -292,6 +292,11 @@ pub struct Candidate {
     /// different questions and only one of them is useful when picking between
     /// nine shows with the same person's name in the title.
     pub detail: Option<String>,
+    /// Where a picture of the work can be fetched, if the catalogue had one.
+    ///
+    /// Decoration, and treated as such everywhere: nothing waits for it and
+    /// nothing fails without it.
+    pub poster: Option<String>,
 }
 
 /// How hard to work on the picture and the sound.
