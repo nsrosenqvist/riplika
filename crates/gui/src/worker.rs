@@ -37,6 +37,8 @@ pub enum Msg {
     Kind(Box<riplika_core::disc::DiscKind>),
     /// Datfiles were fetched because there were none, and how many.
     DatfilesReady(usize),
+    /// A picture arrived, for whatever the page has settled on.
+    Poster(std::path::PathBuf),
     Candidates(Vec<Candidate>),
     /// Releases a search by name turned up, to choose between.
     Releases(Vec<riplika_core::identify::music::Match>),
@@ -367,6 +369,24 @@ pub fn run_music(
 /// Started when a game disc is recognised rather than when the dump finishes,
 /// because the dump takes minutes and this takes seconds: by the time there is
 /// something to identify, there is something to identify it against.
+/// Fetch a picture of what was identified, if there is one to fetch.
+///
+/// Decoration: nothing waits for it and nothing goes wrong without it, so it
+/// says nothing at all when it cannot help and the page keeps the kind icon.
+pub fn poster(url: String, tx: Sender<Msg>) {
+    std::thread::spawn(move || {
+        let dir = riplika_core::prefs::Preferences::cache_dir().join("art");
+        if let Some(path) = riplika_core::art::cached(
+            &RealFs,
+            &riplika_core::identify::catalogue::UreqHttp,
+            &dir,
+            &url,
+        ) {
+            let _ = tx.send(Msg::Poster(path));
+        }
+    });
+}
+
 pub fn ensure_datfiles(tx: Sender<Msg>) {
     use riplika_core::job::Event;
     use riplika_core::model::Warning;

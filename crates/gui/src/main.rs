@@ -149,9 +149,13 @@ struct Ui {
     drive_group: adw::PreferencesGroup,
     drive_next: gtk::Button,
     chosen_row: adw::ActionRow,
-    /// The chevron on that row. Hidden when there is nothing to open, because
-    /// an arrow that does nothing is a worse answer than no arrow.
-    chosen_next: gtk::Image,
+    /// The cover of what was identified, or the kind of disc when there is
+    /// none - which is most of the time, since only two of the three
+    /// catalogues have pictures and games have none at all.
+    chosen_art: gtk::Image,
+    /// Opens the picker. Hidden where there is nothing to choose, rather than
+    /// left to be pressed for no effect.
+    search_button: gtk::Button,
     /// Watches for discs coming and going.
     ///
     /// Held because the signals stop the moment it is dropped, and a monitor
@@ -429,10 +433,28 @@ fn build_ui() -> Ui {
     let chosen_row = adw::ActionRow::builder()
         .title(tr("Not identified"))
         .subtitle(tr("Choose the show"))
-        .activatable(true)
         .build();
-    let chosen_next = gtk::Image::from_icon_name("go-next-symbolic");
-    chosen_row.add_suffix(&chosen_next);
+    // The cover, once there is one, and the kind of disc until then. A poster
+    // is decoration and may never arrive, so what is here at the start has to
+    // be something worth looking at on its own.
+    let chosen_art = gtk::Image::builder()
+        .icon_name("media-optical-symbolic")
+        .pixel_size(64)
+        .margin_top(6)
+        .margin_bottom(6)
+        .margin_end(6)
+        .build();
+    chosen_row.add_prefix(&chosen_art);
+    // Searching is an action, so it is a button. It used to be the row
+    // itself, which is how a game disc came to open the television picker and
+    // why the arrow then had to be hidden on the paths where tapping did
+    // nothing - a row that looks like it opens something and does not.
+    let search_button = gtk::Button::builder()
+        .label(tr("Search"))
+        .valign(gtk::Align::Center)
+        .css_classes(vec!["flat".to_string()])
+        .build();
+    id_group.set_header_suffix(Some(&search_button));
     id_group.add(&chosen_row);
 
     // Applies to whichever show is chosen above; changing it needs no search.
@@ -696,7 +718,8 @@ fn build_ui() -> Ui {
         drive_group,
         drive_next,
         chosen_row,
-        chosen_next,
+        chosen_art,
+        search_button,
         volumes: RefCell::new(None),
         picker: RefCell::new(None),
         identify_next,
@@ -1394,10 +1417,33 @@ impl App {
         self.show_choice();
     }
 
+    /// Show the kind of disc, which is what stands in for a cover.
+    ///
+    /// Set whenever the page changes what it is about, so a picture fetched
+    /// for the last disc cannot linger beside this one's name.
+    fn show_kind_icon(&self) {
+        let kind = self.state.borrow().drive.as_ref().and_then(|d| d.kind.clone());
+        self.ui.chosen_art.set_icon_name(Some(
+            match riplika_core::prefs::Library::of(kind.as_ref()) {
+                riplika_core::prefs::Library::Music => "audio-x-generic-symbolic",
+                riplika_core::prefs::Library::Games => "applications-games-symbolic",
+                riplika_core::prefs::Library::Video => "video-x-generic-symbolic",
+            },
+        ));
+        self.ui.chosen_art.set_pixel_size(64);
+    }
+
+    /// Ask for a picture of this, if the catalogue offered one.
+    fn want_poster(&self, url: Option<&String>) {
+        self.show_kind_icon();
+        if let Some(url) = url {
+            worker::poster(url.clone(), self.sender());
+        }
+    }
+
     /// Say whether tapping what the page settled on leads anywhere.
     fn set_chosen_actionable(&self, actionable: bool) {
-        self.ui.chosen_row.set_activatable(actionable);
-        self.ui.chosen_next.set_visible(actionable);
+        self.ui.search_button.set_visible(actionable);
     }
 
     /// Restate what the page has settled on.
@@ -1431,6 +1477,8 @@ impl App {
     /// than dressing up a guess.
     fn show_game(&self) {
         self.set_chosen_actionable(false);
+        // Redump carries hashes and names, and no artwork at all.
+        self.want_poster(None);
         let disc = self.state.borrow().game.clone();
         match disc {
             Some(d) => {
@@ -1573,6 +1621,15 @@ impl App {
     fn show_album(&self) {
         self.set_chosen_actionable(true);
         let album = self.state.borrow().album.clone();
+        // The same picture the rip embeds, shown before the rip rather than
+        // only afterwards. Asked for only when the release says it has one.
+        self.want_poster(
+            album
+                .as_ref()
+                .filter(|a| a.has_cover_art && !a.release_id.is_empty())
+                .map(|a| riplika_core::identify::music::cover_art_url(&a.release_id))
+                .as_ref(),
+        );
         match album {
             Some(a) => {
                 self.ui.chosen_row.set_title(&format!("{} - {}", a.artist, a.title));
@@ -1620,6 +1677,7 @@ impl App {
             return self.show_game();
         }
         let selected = self.state.borrow().selected.clone();
+        self.want_poster(selected.as_ref().and_then(|c| c.poster.as_ref()));
         match selected {
             Some(c) => {
                 self.ui.chosen_row.set_title(&c.media.describe_work());
@@ -1873,6 +1931,15 @@ impl App {
                 *self.ui.picker.borrow_mut() = None;
                 self.state.borrow_mut().offering = Offering::Nothing;
                 self.show_choice();
+            }
+            Msg::Poster(path) => {
+                // Only if the page is still about the disc it was fetched
+                // for: a picture arriving after the tray has been swapped
+                // would put the last disc's cover beside the new one's name.
+                if self.state.borrow().selected.is_some() || self.state.borrow().album.is_some() {
+                    self.ui.chosen_art.set_pixel_size(64);
+                    self.ui.chosen_art.set_from_file(Some(&path));
+                }
             }
             Msg::DatfilesReady(n) => {
                 self.log_line(&tr_args("%1$s datfile(s) downloaded", &[&n.to_string()]));
@@ -2165,15 +2232,15 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
         });
     }
     {
-        // Tapping what it settled on is how you disagree with it.
+        // Pressing Search is how you disagree with what it settled on.
         let app = Rc::clone(app);
         let tx = tx.clone();
         let window = window.clone();
-        let row = app.ui.chosen_row.clone();
-        row.connect_activated(move |_| {
-            // The row is not activatable on the paths this excludes, so this
-            // is the second lock on the same door - and the one that was
-            // missing when a game disc opened the show picker.
+        let button = app.ui.search_button.clone();
+        button.connect_clicked(move |_| {
+            // The button is hidden on the paths this excludes, so this is the
+            // second lock on the same door - and the one that was missing
+            // when a game disc opened the show picker.
             if !identity_is_choosable(
                 app.state.borrow().drive.as_ref().and_then(|d| d.kind.as_ref()),
             ) {
