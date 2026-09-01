@@ -30,18 +30,17 @@
       accordingly, and writes files that are already named and tagged.
     </p>
     <p>
-      A DVD becomes encoded video whose subtitles have been turned from
-      pictures into text, named from a catalogue that is checked against the
-      structure of the disc itself. A music CD becomes FLAC or MP3, tagged and
-      with its cover art, identified by the disc id its table of contents
-      produces. A game disc is copied whole at the full sector size a
-      preservation database expects, then checked against Redump datfiles.
+      Put a disc in and the files come out ready to use. Films and television
+      are named after what they hold, with artwork and the details a media
+      player needs to shelve them properly, and music arrives tagged and with
+      its cover. None of it needs renaming or looking up afterwards.
     </p>
     <p>
-      A damaged disc is reported as damaged, and no file is left looking
-      finished when it is not. Audio is checked against the drive's own error
-      pointers, and data sectors against the error detection written inside
-      them.
+      Subtitles come out as text, so they can be switched on without a player
+      re-encoding the picture every time you watch. A scratched disc is
+      reported as scratched instead of handing back a file that plays and is
+      wrong somewhere in the middle, and a game disc is checked against a
+      preservation database so you know the copy came off exactly.
     </p>
   </description>
 
