@@ -69,18 +69,28 @@
   </keywords>
 
   <!--
-    Screenshots are the one thing still missing before this can be submitted.
-    Flathub requires at least one for a graphical application, as a direct
-    link to an image on the web; if they live in this repository the URL has
-    to name a tag or a commit rather than a branch, since a branch moves.
-
-    <screenshots>
-      <screenshot type="default">
-        <caption>What the disc turned out to be</caption>
-        <image>https://raw.githubusercontent.com/nsrosenqvist/riplika/v0.3.0/data/screenshots/identify.png</image>
-      </screenshot>
-    </screenshots>
+    The URL has to be a direct link, and from a tag rather than a branch,
+    since a branch moves and Flathub keeps what it fetched. ./release.sh
+    rewrites these to the tag it is making, so they cannot fall behind it.
   -->
+  <screenshots>
+    <screenshot type="default">
+      <caption>A disc in the drive, waiting to be read</caption>
+      <image>https://raw.githubusercontent.com/nsrosenqvist/riplika/v0.2.0/data/screenshots/drive.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>What the disc turned out to be, and the reasons for thinking so</caption>
+      <image>https://raw.githubusercontent.com/nsrosenqvist/riplika/v0.2.0/data/screenshots/identify.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Quality, languages, and what to take from the disc</caption>
+      <image>https://raw.githubusercontent.com/nsrosenqvist/riplika/v0.2.0/data/screenshots/settings.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Ripping, with the episodes it worked out listed underneath</caption>
+      <image>https://raw.githubusercontent.com/nsrosenqvist/riplika/v0.2.0/data/screenshots/ripping.png</image>
+    </screenshot>
+  </screenshots>
 
   <content_rating type="oars-1.1"/>
 

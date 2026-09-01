@@ -48,10 +48,24 @@ sed -i "0,/^version = .*/s//version = \"$VERSION\"/" Cargo.toml
 # Cargo.lock names the workspace crates too, and the flatpak builds offline.
 cargo update --workspace --offline
 
+# The screenshots a software centre shows are fetched from this repository by
+# URL, and the URL has to name a tag: a branch moves, and what Flathub keeps
+# is whatever it fetched at the time. Pointing them at the tag being made here
+# is the only way they cannot fall behind it.
+META=data/com.nsrosenqvist.Riplika.metainfo.xml
+sed -i "s|/riplika/v[0-9][^/]*/data/screenshots/|/riplika/$TAG/data/screenshots/|g" "$META"
+
+# A releases tag is required to pass validation, and a release nobody wrote
+# down is a release the software centre says nothing about.
+if ! grep -q "version=\"$VERSION\"" "$META"; then
+  sed -i "s|  <releases>|  <releases>\n    <release version=\"$VERSION\" date=\"$(date -I)\"/>|" "$META"
+fi
+appstreamcli validate --no-net "$META" >/dev/null
+
 echo "== checking before tagging, not after"
 ./check.sh
 
-git add Cargo.toml Cargo.lock
+git add Cargo.toml Cargo.lock "$META"
 git commit -m "Riplika $VERSION"
 git tag -a "$TAG" -m "Riplika $VERSION"
 
