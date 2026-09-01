@@ -1,5 +1,7 @@
 # Working out what a disc is
 
+This is about video. A music CD is named from the disc id its table of contents hashes to, and a game disc from what its dump hashes to against a Redump datfile, both of which are exact where this is inference. Video is the only one of the three that has to be argued for.
+
 ## Where the metadata comes from
 
 Three catalogues, asked in order until one answers - not merged, because two that both know a show would offer it twice.
@@ -33,9 +35,13 @@ Unticked means *not read*, not read-then-discarded. The one subtlety: an extende
 
 ## Identification
 
-A DVD carries no usable identifier, and there is no database keyed by disc. Redump and the DVD-Video hash registries cover games and preservation, not retail television, and neither can answer "which episodes are on this disc". So two independent kinds of evidence are combined, and both are shown:
+A DVD carries no usable identifier, and there is no database keyed by disc. Redump and the DVD-Video hash registries cover games and preservation, not retail television, and neither can answer "which episodes are on this disc". So independent kinds of evidence are combined, and all of them are shown:
 
 - **The volume label.** `PARKS_AND_RECREATION_S7D1` is the single most informative thing on a disc and it costs nothing to read. It is also capped at 32 characters, so it truncates, and every authoring house has its own conventions - it is a hypothesis to search with rather than an answer.
 - **The disc's own structure.** How many episode-length titles there are, how long they run, and how they group under the "play all" title. A play-all replays the episodes back to back, so its chapter list is theirs concatenated - decomposing it recovers both which titles are episodes and what order they belong in, with no network and no guessing.
 
-A candidate is only trusted when the two agree, and the reasons are carried along so a wrong guess is visible rather than mysterious. Which disc of a season you are holding cannot be told from one disc alone - a season split 5/5/4 and one split 4/4/6 look identical from disc two - so episode numbering prefers what is already in the output folder, then falls back to a guess it tells you about.
+Structure speaks for a film as well as for a season. One title far longer than an episode, with no run of episode-length titles beside it, is a film and is not a season, and both halves of that are scored. Before they were, every piece of evidence past the name spoke only for television: a series could climb from a name match towards certainty on episode counts and runtimes agreeing, while a film had nothing it could add, so any show sharing a name outranked the film in the drive. Kung Fu Panda came back as a twenty-six episode series.
+
+A year on the label is used where there is one, and only to prefer a candidate whose year agrees. It never argues against one, and the title keeps the number, since stripping it would search for "Blade Runner" and find the 1982 film, while "2012" and "Apollo 13" would otherwise contradict every correct answer.
+
+A candidate is only trusted when the evidence agrees, and the reasons are carried along so a wrong guess is visible rather than mysterious. Which disc of a season you are holding cannot be told from one disc alone - a season split 5/5/4 and one split 4/4/6 look identical from disc two - so episode numbering prefers what is already in the output folder, then falls back to a guess it tells you about.

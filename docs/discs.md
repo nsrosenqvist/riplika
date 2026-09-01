@@ -9,7 +9,9 @@ MakeMKV is proprietary, so it is worth knowing exactly what it is needed for.
 | free software | **yes**, and it is the default | **no** |
 | what does it | libdvdread + libdvdnav + libdvdcss, through ffmpeg's `dvdvideo` demuxer | MakeMKV |
 
-`--reader dvd` needs nothing beyond an ffmpeg built `--enable-libdvdnav --enable-libdvdread`, which is the usual packaging. `--reader makemkv` is still there and is still the only option for Blu-ray. `auto`, the default, looks for a `VIDEO_TS` directory and picks the free path when it finds one.
+`--reader dvd` needs nothing beyond an ffmpeg built `--enable-libdvdnav --enable-libdvdread`, which is the usual packaging. `--reader makemkv` is still there. `auto`, the default, looks for a `VIDEO_TS` directory and picks the free path when it finds one.
+
+**Blu-ray has never been tested here.** What follows about it is why it is hard, not a claim that Riplika handles it. Nobody has put one in the drive, so treat the Blu-ray column as an explanation of the landscape.
 
 Verified on a Parks and Recreation season 7 disc: the free reader finds the same titles MakeMKV does - seven 21-minute episodes, the 43-minute and 107-minute play-alls, the 27-minute extended cut and the extras.
 
