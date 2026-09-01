@@ -170,6 +170,35 @@ pub fn decompose(titles: &[TitleShape], range: EpisodeRange) -> Structure {
     Structure { play_alls, episodes, loose, extras }
 }
 
+/// What a film disc holds: the feature, and bonus material.
+///
+/// None of the episode analysis applies to a film. There is no play-all to
+/// decompose, no house length to cluster around and no disc order to read an
+/// episode sequence from - there is one long title and a pile of short ones,
+/// and the feature is simply the longest.
+///
+/// The Lion King is what this is for. Its 1:24:45 feature fell outside the
+/// fifteen-to-forty-five-minute episode window while a 19:41 making-of fell
+/// inside it, so the making-of was named as the film, the film was filed as an
+/// extra - and, extras being unticked, the film was never read off the disc at
+/// all. Twelve titles on the disc, one ripped, and the wrong one.
+pub fn feature(titles: &[TitleShape]) -> Structure {
+    // Longest wins; the earliest on the disc breaks a tie, so two titles of
+    // the same length do not come out in whatever order they were probed in.
+    let feature = titles.iter().max_by_key(|t| (t.duration, std::cmp::Reverse(t.order)));
+    let Some(feature) = feature else {
+        return Structure::default();
+    };
+    Structure {
+        play_alls: Vec::new(),
+        episodes: vec![feature.key.clone()],
+        // Nothing is a candidate extended cut: telling one from an extra means
+        // comparing pictures against an episode, and a film has none.
+        loose: Vec::new(),
+        extras: titles.iter().filter(|t| t.key != feature.key).map(|t| t.key.clone()).collect(),
+    }
+}
+
 /// When a disc has no play-all, fall back to duration clustering.
 ///
 /// Episodes on a disc run to a house length, so the titles within a couple of
@@ -488,6 +517,34 @@ mod tests {
     fn empty_input_is_zero_similarity_not_a_panic() {
         assert_eq!(similarity(&[], &[1, 2], 8), 0.0);
         assert_eq!(similarity(&[1, 2], &[], 8), 0.0);
+    }
+
+    #[test]
+    fn the_feature_is_the_longest_title_even_when_an_extra_is_episode_shaped() {
+        // The Lion King: an 84-minute feature outside the episode window and a
+        // 19:41 making-of inside it. The episode analysis named the making-of.
+        let titles = [
+            t("title_t02.mkv", 0, 5_085_000, &[]),
+            t("title_t12.mkv", 1, 1_181_000, &[]),
+            t("title_t15.mkv", 2, 254_000, &[]),
+        ];
+        let st = feature(&titles);
+        assert_eq!(st.episodes, vec!["title_t02.mkv".to_string()]);
+        assert_eq!(st.extras, vec!["title_t12.mkv".to_string(), "title_t15.mkv".to_string()]);
+        assert!(st.loose.is_empty() && st.play_alls.is_empty());
+    }
+
+    #[test]
+    fn two_titles_of_the_same_length_are_broken_by_disc_order() {
+        // Otherwise which one is the film depends on the order they were probed
+        // in, and the same disc gives a different answer on different days.
+        let titles = [t("b.mkv", 1, 5_085_000, &[]), t("a.mkv", 0, 5_085_000, &[])];
+        assert_eq!(feature(&titles).episodes, vec!["a.mkv".to_string()]);
+    }
+
+    #[test]
+    fn a_disc_with_no_titles_at_all_has_no_feature() {
+        assert_eq!(feature(&[]), Structure::default());
     }
 }
 

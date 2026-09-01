@@ -190,11 +190,17 @@ impl<'a> Pipeline<'a> {
         // An extended cut cannot be told from an ordinary extra before the file
         // exists, so an episode-length title is read if *either* is wanted.
         let range = structure::EpisodeRange::default();
+        // A film has no episodes, so nothing on its disc can be a longer cut of
+        // one. Extended cuts are found by comparing an unclaimed episode-length
+        // title against the episodes, and there are none to compare against, so
+        // reading The Lion King's twenty-minute making-of on the chance is
+        // twenty minutes of the disc spent on a comparison that never runs.
+        let a_film = plan.iter().any(|i| matches!(i.role, Role::Feature));
         let redundant: Vec<String> = plan
             .iter()
             .filter(|i| {
                 let could_be_a_longer_cut =
-                    matches!(i.role, Role::Extra) && range.contains(i.duration);
+                    !a_film && matches!(i.role, Role::Extra) && range.contains(i.duration);
                 let wanted = i.role.wanted(&self.settings)
                     || (could_be_a_longer_cut && self.settings.include_extended_cuts);
                 !wanted
@@ -365,30 +371,39 @@ impl<'a> Pipeline<'a> {
                     })
                     .collect()
             });
-        let mut st = structure::decompose(
-            from_disc.as_deref().unwrap_or(&plain),
-            structure::EpisodeRange::default(),
-        );
+        // A film is worked out from what was ripped, not from the disc. There
+        // is nothing to decompose - the feature is the longest title - and the
+        // disc's copy would only have to be narrowed to the ripped files again.
+        let st = if matches!(media, Media::Movie { .. }) {
+            structure::feature(&plain)
+        } else {
+            let mut st = structure::decompose(
+                from_disc.as_deref().unwrap_or(&plain),
+                structure::EpisodeRange::default(),
+            );
 
-        // Whatever the disc said, only what was ripped can be worked on.
-        let ripped: Vec<String> = plain.iter().map(|s| s.key.clone()).collect();
-        if from_disc.is_some() {
-            st.episodes.retain(|k| ripped.contains(k));
-            st.loose.retain(|k| ripped.contains(k));
-            st.extras.retain(|k| ripped.contains(k));
-        }
-
-        if st.episodes.is_empty() {
-            // No play-all: fall back to the house-length cluster, and say so,
-            // because that ordering is a guess where the other one is evidence.
-            let by_duration =
-                structure::episodes_by_duration(&plain, structure::EpisodeRange::default());
-            if !by_duration.is_empty() {
-                events(Event::Warning(Warning::NoPlayAll { episodes: by_duration.len() }));
-                st.loose.retain(|k| !by_duration.contains(k));
-                st.episodes = by_duration;
+            // Whatever the disc said, only what was ripped can be worked on.
+            let ripped: Vec<String> = plain.iter().map(|s| s.key.clone()).collect();
+            if from_disc.is_some() {
+                st.episodes.retain(|k| ripped.contains(k));
+                st.loose.retain(|k| ripped.contains(k));
+                st.extras.retain(|k| ripped.contains(k));
             }
-        }
+
+            if st.episodes.is_empty() {
+                // No play-all: fall back to the house-length cluster, and say
+                // so, because that ordering is a guess where the other one is
+                // evidence.
+                let by_duration =
+                    structure::episodes_by_duration(&plain, structure::EpisodeRange::default());
+                if !by_duration.is_empty() {
+                    events(Event::Warning(Warning::NoPlayAll { episodes: by_duration.len() }));
+                    st.loose.retain(|k| !by_duration.contains(k));
+                    st.episodes = by_duration;
+                }
+            }
+            st
+        };
 
         let dir = files.first().and_then(|f| f.parent()).map(Path::to_path_buf).unwrap_or_default();
 
@@ -485,13 +500,18 @@ impl<'a> Pipeline<'a> {
                 chapters: t.chapters.clone(),
             })
             .collect();
-        let mut st = structure::decompose(&shapes, structure::EpisodeRange::default());
-        if st.episodes.is_empty() {
-            let by_duration =
-                structure::episodes_by_duration(&shapes, structure::EpisodeRange::default());
-            st.loose.retain(|k| !by_duration.contains(k));
-            st.episodes = by_duration;
-        }
+        let st = if matches!(media, Media::Movie { .. }) {
+            structure::feature(&shapes)
+        } else {
+            let mut st = structure::decompose(&shapes, structure::EpisodeRange::default());
+            if st.episodes.is_empty() {
+                let by_duration =
+                    structure::episodes_by_duration(&shapes, structure::EpisodeRange::default());
+                st.loose.retain(|k| !by_duration.contains(k));
+                st.episodes = by_duration;
+            }
+            st
+        };
 
         let episodes = match (media, media.provider_id()) {
             (Media::Series { season, .. }, Some(id)) => {
@@ -1351,6 +1371,67 @@ mod tests {
             }
         }
         assert!(checked >= 2, "producing announced no stages at all");
+    }
+
+    /// A film disc: one long title and a pile of short ones, none of which is
+    /// a play-all and one of which is episode-shaped.
+    fn film_disc(durations: &[Millis]) -> DiscScan {
+        let mut scan = fake_disc();
+        scan.label = "LKD-0E-YW1.1_DES".into();
+        scan.titles = durations
+            .iter()
+            .enumerate()
+            .map(|(i, d)| DiscTitle {
+                id: i as u32,
+                duration: *d,
+                chapter_count: 2,
+                chapters: vec![*d / 2, *d - *d / 2],
+                size_bytes: 0,
+                output_name: format!("title_t{i:02}.mkv"),
+                tracks: vec![],
+            })
+            .collect();
+        scan
+    }
+
+    #[test]
+    fn a_film_is_the_longest_title_and_is_read_even_with_extras_unticked() {
+        // The Lion King came out as a 19:41 making-of. The 1:24:45 feature was
+        // outside the fifteen-to-forty-five-minute episode window and the
+        // making-of was inside it, so the making-of was named as the film and
+        // the film was filed as an extra - which, with extras unticked, meant
+        // the film was never read off the disc at all.
+        let scan = film_disc(&[5_085_000, 1_181_000, 254_000, 73_000]);
+        let h = Harness { ripper: FakeRipper::new(scan.clone()), ..harness() };
+        let cat = TvMaze { http: &h.http };
+        let p = Pipeline::new(
+            Ports {
+                runner: &h.runner,
+                prober: &h.prober,
+                ripper: &h.ripper,
+                catalogue: &cat,
+                fs: &h.fs,
+                cancel: Cancel::new(),
+            },
+            JobSettings { include_extras: false, ..settings() },
+        );
+        let media =
+            Media::Movie { title: "The Lion King".into(), year: Some(1994), provider_id: None };
+        let plan = p.preview(&scan, &media, None, Path::new("/rip")).unwrap();
+
+        let features: Vec<&Item> = plan.iter().filter(|i| i.role == Role::Feature).collect();
+        assert_eq!(features.len(), 1, "a film disc holds one film");
+        assert!(
+            features[0].source.ends_with("title_t00.mkv"),
+            "the feature is {:?}, not the longest title",
+            features[0].source
+        );
+
+        // The half that cost the disc: an extra is not read at all, so naming
+        // the wrong title the feature loses the film rather than misfiling it.
+        let read = p.titles_to_rip(&scan, Some(&plan));
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].output_name, "title_t00.mkv");
     }
 
     /// A rip's intermediate files are the size of the disc, so leaving them is
