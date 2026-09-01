@@ -13,6 +13,10 @@
 
 Each of those has a different lifetime, which is why they are in different places. The rip does **not** go in the system temporary directory: on most desktops that is a tmpfs held in RAM, and a disc is eight gigabytes - filling it takes the session down with it.
 
+**What the rip folder holds is thrown away twice.** Once when a run finishes with files to show for it, and again at the start of the next rip - so a run that was cancelled, that failed, or whose process was killed does not leave a disc behind for good. A run that produced nothing keeps what it read until then, on purpose: those files are forty minutes of reading, `riplika process` can still turn them into episodes, and deleting them would mean going back to the disc.
+
+Which files those are is written down before the disc is read, in `.riplika-rip` beside them. The names cannot be worked out afterwards - MakeMKV chooses its own, and the folder is a preference that can be pointed anywhere - so nothing is ever deleted for matching a pattern. Anything in there that this did not put there stays.
+
 The glyph table and the wordlists are not offered as settings. They are application data with a standard place to live, built once by `riplika build` and then used without being thought about; there is no answer a user could give that would beat the default. Where a rip lands *is* a real question - it wants tens of gigabytes, and a small home partition is a good reason to put it elsewhere - so that one is asked.
 
 
@@ -37,6 +41,8 @@ Local time rather than UTC, because these are read by someone remembering which 
 The window keeps settings in `$XDG_CONFIG_HOME/riplika/preferences.json`, not GSettings - a schema has to be compiled into a system directory before the application will start, which is a poor trade for a dozen values. A missing or corrupt file falls back to defaults rather than refusing to launch; losing preferences should cost a re-tick, not a launch.
 
 The split is between policy and per-disc choice. Preferences hold what is true of every disc of a kind: preferred languages, whether commentary is wanted, where each library lives. The rip page holds what differs between one disc and the next, which is the quality and which of *this* disc's languages to take.
+
+Three of the switches on the rip page are policy even though they are shown there, because they read better beside the disc they apply to: extended cuts, bonus material and exact chapter marks. They are remembered as they are switched. Somebody who never wants the featurettes never wants them, and being asked again every disc is the application forgetting what it was told.
 
 **There are three libraries, and each has its own folder.** Video, music and games are read by different software and are not the same shelf, so one setting could not say which it meant. Without one configured, they default to `~/Videos`, `~/Music` and `~/Games`. A folder chosen while a CD is in the drive is a decision about music and leaves the other two alone.
 

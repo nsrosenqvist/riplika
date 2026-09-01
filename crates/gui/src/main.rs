@@ -896,6 +896,10 @@ fn warning_text(w: &Warning) -> String {
         // A count of sectors and a sentence composed in core, with nothing of
         // ours around it. There is nothing here for a translator to do.
         Warning::DumpIncomplete { .. } => w.text(),
+        Warning::CacheNotCleared { path, why } => tr_args(
+            "%1$s: %2$s - the cache folder still holds it",
+            &[&path.display().to_string(), why],
+        ),
         Warning::TrackCorrupt { track, sectors } => tr_args(
             "track %1$s is corrupt: %2$s disagree with the error detection written into them",
             &[&track.to_string(), &tr_n("%d sector", "%d sectors", *sectors as u32)],
@@ -2337,6 +2341,25 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             });
         });
     }
+    // The three switches on the rip page that are policy rather than a
+    // decision about this disc. Somebody who never wants bonus material never
+    // wants it, and having to untick it once a disc is the application
+    // forgetting what it was told. They were already read from preferences on
+    // the way in and never written back, so the file only ever held the
+    // defaults.
+    remember(
+        app,
+        &app.ui.include_extended,
+        |p| p.include_extended_cuts,
+        |p, v| p.include_extended_cuts = v,
+    );
+    remember(app, &app.ui.include_extras, |p| p.include_extras, |p, v| p.include_extras = v);
+    remember(
+        app,
+        &app.ui.accurate_chapters,
+        |p| p.accurate_chapters,
+        |p, v| p.accurate_chapters = v,
+    );
     if let Some(start) = find_button(&app.ui.output_dir, "start") {
         let app = Rc::clone(app);
         let tx = tx.clone();
@@ -2503,6 +2526,29 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             app.set_busy(Some("Stopping..."));
         });
     }
+}
+
+/// Keep a switch on the rip page, so the next disc starts where this one left.
+///
+/// Seeding the page calls `set_active`, which fires this handler too, so a
+/// value that has not changed is not written - otherwise every visit to the
+/// page would rewrite the preferences file.
+fn remember(
+    app: &Rc<App>,
+    row: &adw::SwitchRow,
+    get: fn(&Preferences) -> bool,
+    put: fn(&mut Preferences, bool),
+) {
+    let app = Rc::clone(app);
+    row.connect_active_notify(move |r| {
+        let now = r.is_active();
+        let unchanged = get(&app.prefs.prefs.borrow()) == now;
+        if unchanged {
+            return;
+        }
+        put(&mut app.prefs.prefs.borrow_mut(), now);
+        app.prefs.save();
+    });
 }
 
 /// Every button with this name in the window.
@@ -3123,6 +3169,7 @@ mod warning_text_tests {
             Warning::PlayAllsSkipped { titles: 2 },
             Warning::FreeReaderIncomplete { why: "encrypted".into() },
             Warning::FreeReaderFailed { why: "no drive".into() },
+            Warning::CacheNotCleared { path: "/c/title_t01.mkv".into(), why: "in use".into() },
         ]
     }
 

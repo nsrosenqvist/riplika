@@ -541,6 +541,12 @@ pub enum Warning {
     /// Definite, where C2 is advisory: these bytes are not the ones that were
     /// written, and no amount of agreement between readings would make them so.
     TrackCorrupt { track: u8, sectors: u64 },
+    /// A file the rip left in the cache folder could not be deleted.
+    ///
+    /// Worth saying rather than swallowing: a disc is eight gigabytes, and
+    /// somebody wondering where their disk went should be able to find out
+    /// from the log rather than from `du`.
+    CacheNotCleared { path: PathBuf, why: String },
     /// The drive's C2 error pointers say part of an audio track is damaged.
     ///
     /// Not fatal on its own - the track is read again, and if two readings
@@ -597,6 +603,9 @@ impl Warning {
                  into them",
                 plural(*sectors as usize, "sector")
             ),
+            Warning::CacheNotCleared { path, why } => {
+                format!("{}: {why} - the cache folder still holds it", path.display())
+            }
             Warning::TrackDamaged { track, sectors } => format!(
                 "track {track} is damaged: the drive had to guess at {}",
                 plural(*sectors, "sector")

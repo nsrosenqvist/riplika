@@ -599,6 +599,9 @@ pub fn run(
                 let items = p.organise(&files, Some(&scan), &media, disc, &mut events)?;
                 let _ = tx.send(Msg::Organised(items.clone()));
                 let report = p.produce(&items, &media, &mut events)?;
+                // Eight gigabytes of intermediate files, once the episodes
+                // exist. Nothing else in the window ever gets round to this.
+                p.discard_rip(&rip_dir, &report, &mut events);
                 let _ = tx.send(Msg::Finished(Box::new(report)));
                 Ok(())
             })(),

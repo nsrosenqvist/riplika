@@ -214,6 +214,14 @@ impl<'a> Pipeline<'a> {
     ) -> Result<Vec<PathBuf>> {
         events(Event::Stage(Stage::Rip));
         self.ports.fs.create_dir_all(dest)?;
+        // Whatever an earlier run left is dead weight - nothing reads it, and
+        // this run is about to write over the same names anyway.
+        self.empty_scratch(dest, events);
+        // Written down before a byte is read, so a run that is cancelled, that
+        // fails, or whose process is killed outright is still cleared up by
+        // the next one. Recording it afterwards would have covered none of
+        // those, which are exactly the runs that leave a disc behind.
+        self.record_scratch(dest, titles);
         let outcome = {
             let mut report = |fraction: f32, message: Option<&str>| {
                 events(Event::Progress {
@@ -238,6 +246,72 @@ impl<'a> Pipeline<'a> {
             )));
         }
         Ok(outcome.written)
+    }
+
+    /// Take back the cache directory once a run is over.
+    ///
+    /// Called by whoever drove the stages, since only they know the run ended.
+    ///
+    /// A run that produced nothing keeps its files. They are a disc's worth of
+    /// reading, `riplika process` can still turn them into episodes, and that
+    /// beats reading the disc again - so the one case where the intermediate
+    /// files are worth something is the one case they survive. They do not
+    /// survive the next rip.
+    pub fn discard_rip(&self, dir: &Path, report: &Report, events: Events) {
+        if report.produced.is_empty() {
+            return;
+        }
+        self.empty_scratch(dir, events);
+    }
+
+    /// Write down what this rip is about to put in `dir`.
+    ///
+    /// The names cannot be worked out later: MakeMKV chooses its own, and the
+    /// folder is a preference that can point anywhere, so sweeping it by
+    /// pattern would either miss files or delete somebody else's. Every title
+    /// asked for is recorded rather than every title that succeeded, because a
+    /// title that failed is the one most likely to have left a part-file.
+    fn record_scratch(&self, dir: &Path, titles: &[DiscTitle]) {
+        let lines: Vec<String> =
+            titles.iter().map(|t| dir.join(&t.output_name).display().to_string()).collect();
+        // Not being able to write it costs cleanup, not the rip.
+        let _ = self.ports.fs.write(&scratch_note(dir), lines.join("\n").as_bytes());
+    }
+
+    /// Delete what a recorded rip put in `dir`, and nothing else.
+    fn empty_scratch(&self, dir: &Path, events: Events) {
+        let note = scratch_note(dir);
+        let Ok(bytes) = self.ports.fs.read(&note) else {
+            return;
+        };
+        let recorded: Vec<String> = String::from_utf8_lossy(&bytes)
+            .lines()
+            .filter_map(|l| Path::new(l.trim()).file_stem()?.to_str().map(str::to_string))
+            .filter(|stem| !stem.is_empty())
+            .collect();
+        // By stem, not by name: the subtitles recognised from title_t41.mkv are
+        // title_t41.eng.srt beside it, and a part-file is title_t41.mkv.part.
+        // Both belong to a title this run read and neither is in the record.
+        let ours = |name: &str| {
+            recorded
+                .iter()
+                .any(|stem| name.starts_with(stem.as_str()) && name[stem.len()..].starts_with('.'))
+        };
+        for path in self.ports.fs.list(dir).unwrap_or_default() {
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !ours(name) {
+                continue;
+            }
+            if let Err(e) = self.ports.fs.remove_file(&path) {
+                events(Event::Warning(Warning::CacheNotCleared {
+                    path: path.clone(),
+                    why: e.to_string(),
+                }));
+            }
+        }
+        let _ = self.ports.fs.remove_file(&note);
     }
 
     /// Stages two and three: sort the ripped files out and name them.
@@ -688,9 +762,22 @@ impl<'a> Pipeline<'a> {
             }));
         }
         let files = self.rip(&scan, &titles, rip_dir, events)?;
-        let items = self.organise(&files, Some(&scan), &media, disc, events)?;
-        self.produce(&items, &media, events)
+        let report = self
+            .organise(&files, Some(&scan), &media, disc, events)
+            .and_then(|items| self.produce(&items, &media, events));
+        if let Ok(r) = &report {
+            self.discard_rip(rip_dir, r, events);
+        }
+        report
     }
+}
+
+/// Where a rip records what it put in the cache directory.
+///
+/// Hidden and fixed, so it is obvious what it belongs to and a second rip into
+/// the same folder cannot end up with two of them.
+fn scratch_note(dir: &Path) -> PathBuf {
+    dir.join(".riplika-rip")
 }
 
 /// Where a file is written while it is still being made.
@@ -1157,6 +1244,133 @@ mod tests {
         let items = p.organise(&files, None, &media, Some(2), &mut sink).unwrap();
         let first = items.iter().find(|i| matches!(i.role, Role::Episode { .. })).unwrap();
         assert_eq!(first.role, Role::Episode { season: 7, number: 3 });
+    }
+
+    /// A rip's intermediate files are the size of the disc, so leaving them is
+    /// the difference between a cache folder and a second copy of the library.
+    fn cache_after(
+        h: &Harness,
+        seed: &[&str],
+        run: impl Fn(&Pipeline, &mut dyn FnMut(Event)),
+    ) -> Vec<String> {
+        for f in seed {
+            h.fs.write(Path::new(f), b"x").unwrap();
+        }
+        let cat = TvMaze { http: &h.http };
+        let p = Pipeline::new(
+            Ports {
+                runner: &h.runner,
+                prober: &h.prober,
+                ripper: &h.ripper,
+                catalogue: &cat,
+                fs: &h.fs,
+                cancel: Cancel::new(),
+            },
+            settings(),
+        );
+        let mut sink = |_: Event| {};
+        run(&p, &mut sink);
+        let mut left: Vec<String> =
+            h.fs.list(Path::new("/rip"))
+                .unwrap()
+                .iter()
+                .map(|f| f.file_name().unwrap().to_string_lossy().into_owned())
+                .collect();
+        left.sort();
+        left
+    }
+
+    #[test]
+    fn a_finished_run_takes_its_intermediate_files_back_out_of_the_cache() {
+        // 14 GB of title_t*.mkv accumulated across three days of ripping,
+        // because every front end drove the stages itself and none of them
+        // deleted anything at the end.
+        let h = harness();
+        let left = cache_after(
+            &h,
+            &["/rip/title_t00.mkv", "/rip/title_t01.mkv", "/rip/title_t02.mkv"],
+            |p, sink| {
+                let scan = p.scan(&fake_disc().drive, sink).unwrap();
+                let media = p.identify(&scan, sink).remove(0).media;
+                let files = p.rip(&scan, &scan.titles, Path::new("/rip"), sink).unwrap();
+                let items = p.organise(&files, None, &media, Some(1), sink).unwrap();
+                let report = p.produce(&items, &media, sink).unwrap();
+                assert!(!report.produced.is_empty());
+                p.discard_rip(Path::new("/rip"), &report, sink);
+            },
+        );
+        assert!(left.is_empty(), "the cache still holds {left:?}");
+    }
+
+    #[test]
+    fn clearing_the_cache_touches_only_what_the_rip_put_there() {
+        // The folder is a preference and can be pointed anywhere, so this can
+        // never be a sweep of everything in it.
+        let h = harness();
+        let left = cache_after(
+            &h,
+            &["/rip/title_t01.mkv", "/rip/holiday.mkv", "/rip/notes.txt"],
+            |p, sink| {
+                let scan = p.scan(&fake_disc().drive, sink).unwrap();
+                let media = p.identify(&scan, sink).remove(0).media;
+                let files = p.rip(&scan, &scan.titles, Path::new("/rip"), sink).unwrap();
+                let items = p.organise(&files, None, &media, Some(1), sink).unwrap();
+                let report = p.produce(&items, &media, sink).unwrap();
+                p.discard_rip(Path::new("/rip"), &report, sink);
+            },
+        );
+        assert_eq!(left, vec!["holiday.mkv".to_string(), "notes.txt".to_string()]);
+    }
+
+    #[test]
+    fn subtitles_and_part_files_go_with_the_title_they_belong_to() {
+        // What is recorded is title_t01.mkv; what is beside it afterwards is
+        // title_t01.eng.srt and, if something died mid-mux, title_t01.mkv.part.
+        let h = harness();
+        let left = cache_after(
+            &h,
+            &["/rip/title_t01.mkv", "/rip/title_t01.eng.srt", "/rip/title_t01.mkv.part"],
+            |p, sink| {
+                let scan = p.scan(&fake_disc().drive, sink).unwrap();
+                let media = p.identify(&scan, sink).remove(0).media;
+                let files = p.rip(&scan, &scan.titles, Path::new("/rip"), sink).unwrap();
+                let items = p.organise(&files, None, &media, Some(1), sink).unwrap();
+                let report = p.produce(&items, &media, sink).unwrap();
+                p.discard_rip(Path::new("/rip"), &report, sink);
+            },
+        );
+        assert!(left.is_empty(), "the cache still holds {left:?}");
+    }
+
+    #[test]
+    fn the_next_rip_clears_what_a_run_that_never_finished_left() {
+        // The window froze between ripping and transcoding and was killed, so
+        // nothing was ever going to run at the end of that run. The record is
+        // written before the disc is read for exactly this.
+        let h = harness();
+        let left = cache_after(&h, &[], |p, sink| {
+            let scan = p.scan(&fake_disc().drive, sink).unwrap();
+            p.rip(&scan, &scan.titles, Path::new("/rip"), sink).unwrap();
+            // as if the process died here
+            for f in ["title_t00.mkv", "title_t01.mkv", "title_t01.eng.srt"] {
+                h.fs.write(&Path::new("/rip").join(f), b"x").unwrap();
+            }
+            p.rip(&scan, &scan.titles, Path::new("/rip"), sink).unwrap();
+        });
+        assert_eq!(left, vec![".riplika-rip".to_string()]);
+    }
+
+    #[test]
+    fn a_run_that_produced_nothing_keeps_what_it_read() {
+        // Reading the disc took forty minutes and `riplika process` can still
+        // turn these into episodes. Deleting them would mean reading it again.
+        let h = harness();
+        let left = cache_after(&h, &["/rip/title_t01.mkv"], |p, sink| {
+            let scan = p.scan(&fake_disc().drive, sink).unwrap();
+            p.rip(&scan, &scan.titles, Path::new("/rip"), sink).unwrap();
+            p.discard_rip(Path::new("/rip"), &Report::default(), sink);
+        });
+        assert!(left.contains(&"title_t01.mkv".to_string()), "left {left:?}");
     }
 }
 

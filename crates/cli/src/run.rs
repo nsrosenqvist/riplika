@@ -896,6 +896,7 @@ pub fn rip(
         pipeline.organise(&files, None, &media, disc, &mut events).map_err(|e| e.to_string())?;
     show_plan(&items);
     let report = pipeline.produce(&items, &media, &mut events).map_err(|e| e.to_string())?;
+    pipeline.discard_rip(rip_dir, &report, &mut events);
     log.finish(&summarise(&report));
     show_report(&report);
     if !report.is_complete() {
