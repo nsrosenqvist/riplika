@@ -1053,6 +1053,11 @@ impl App {
         self.ui.toasts.add_toast(adw::Toast::new(text));
     }
 
+    /// Is this the page currently being looked at?
+    fn at_step(&self, step: Step) -> bool {
+        self.ui.nav.visible_page().and_then(|p| p.tag()).is_some_and(|t| t == step.tag())
+    }
+
     /// Move to a step.
     ///
     /// AdwNavigationView is a stack, and pushing a tag already on it is an
@@ -1309,6 +1314,18 @@ impl App {
         if swapped {
             forget_the_disc(&mut self.state.borrow_mut());
             self.show_choice();
+            // And go back to the beginning, if the page being looked at was
+            // about that disc. Clearing the identification in place left a
+            // wizard standing on a question with nothing behind it; there is
+            // nothing on these pages worth keeping - a season number and two
+            // switches - so starting again is no loss.
+            //
+            // Not from the progress page, where something may still be
+            // running, and not from the results, where somebody reading what
+            // came off a disc has every reason to take it out of the drive.
+            if self.at_step(Step::Identify) || self.at_step(Step::Settings) {
+                self.go(Step::Drive);
+            }
         }
         self.refresh_drive_page();
     }
