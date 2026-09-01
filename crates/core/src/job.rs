@@ -1811,7 +1811,14 @@ pub struct Eta {
     started: std::time::Instant,
     /// Smoothed seconds-per-unit-of-progress.
     rate: Option<f64>,
-    last: Option<(std::time::Instant, f32)>,
+    /// When the fraction last *changed*, and what to.
+    ///
+    /// Not "when we were last told something". Progress arrives twice a second
+    /// whether or not it has moved, and anchoring on the last message meant a
+    /// minute of standing still followed by one per cent was measured as one
+    /// per cent in half a second. Every stalled second was thrown away, and
+    /// the rate came out several times faster than the drive was going.
+    moved: Option<(std::time::Instant, f32)>,
 }
 
 impl Default for Eta {
@@ -1822,7 +1829,13 @@ impl Default for Eta {
 
 impl Eta {
     pub fn new() -> Eta {
-        Eta { started: std::time::Instant::now(), rate: None, last: None }
+        Eta::started_at(std::time::Instant::now())
+    }
+
+    /// The same, from a clock the caller holds, so this can be tested without
+    /// sleeping through the thing being measured.
+    pub fn started_at(now: std::time::Instant) -> Eta {
+        Eta { started: now, rate: None, moved: None }
     }
 
     /// How long the whole job has been going.
@@ -1837,29 +1850,52 @@ impl Eta {
     /// guess, because it will be wrong by an order of magnitude and it will be
     /// believed.
     pub fn update(&mut self, fraction: f32) -> Option<std::time::Duration> {
-        let now = std::time::Instant::now();
+        self.update_at(std::time::Instant::now(), fraction)
+    }
+
+    /// The same, from a clock the caller holds.
+    pub fn update_at(
+        &mut self,
+        now: std::time::Instant,
+        fraction: f32,
+    ) -> Option<std::time::Duration> {
         let fraction = fraction.clamp(0.0, 1.0);
 
-        if let Some((then, before)) = self.last {
-            let moved = (fraction - before) as f64;
-            let seconds = now.duration_since(then).as_secs_f64();
-            if moved > 0.0 && seconds > 0.0 {
-                let instant = seconds / moved;
-                // Smoothed, because an optical drive's rate is not steady: it
-                // slows over a layer change and stalls on a retry, and an
-                // estimate that lurched with it would be unreadable.
-                self.rate = Some(match self.rate {
-                    Some(r) => r * 0.8 + instant * 0.2,
-                    None => instant,
-                });
+        match self.moved {
+            None => self.moved = Some((now, fraction)),
+            Some((then, before)) if fraction > before => {
+                let seconds = now.duration_since(then).as_secs_f64();
+                if seconds > 0.0 {
+                    let instant = seconds / (fraction - before) as f64;
+                    // Smoothed, because an optical drive's rate is not steady:
+                    // it slows over a layer change and stalls on a retry, and
+                    // an estimate that lurched with it would be unreadable.
+                    self.rate = Some(match self.rate {
+                        Some(r) => r * 0.8 + instant * 0.2,
+                        None => instant,
+                    });
+                    self.moved = Some((now, fraction));
+                }
             }
+            // A title being retried reports from zero again. Measuring the
+            // climb back from where it got to before would call it free.
+            Some((_, before)) if fraction < before => self.moved = Some((now, fraction)),
+            Some(_) => {}
         }
-        self.last = Some((now, fraction));
 
-        let rate = self.rate?;
+        let smoothed = self.rate?;
         if !(0.02..1.0).contains(&fraction) {
             return None;
         }
+        // What the stage has actually averaged, which is the half that cannot
+        // ignore time: every second counts towards it, including the ones
+        // where nothing moved, so the number grows while the bar is still
+        // instead of sitting at "6 minutes left" for six minutes.
+        let average = now.duration_since(self.started).as_secs_f64() / fraction as f64;
+        // The slower of the two beliefs. A rip that promises six minutes and
+        // takes nine is the failure worth avoiding; one that says twelve and
+        // takes nine only ever improves as it goes.
+        let rate = smoothed.max(average);
         let remaining = rate * (1.0 - fraction as f64);
         (remaining.is_finite() && remaining >= 0.0)
             .then(|| std::time::Duration::from_secs_f64(remaining.min(24.0 * 3600.0)))
@@ -1927,37 +1963,104 @@ mod eta_tests {
         assert_eq!(eta.update(0.01), None);
     }
 
+    /// A clock the test holds, so these do not sleep through what they measure.
+    fn at(start: std::time::Instant, seconds: f64) -> std::time::Instant {
+        start + std::time::Duration::from_secs_f64(seconds)
+    }
+
     #[test]
     fn a_steady_rate_gives_a_sensible_estimate() {
-        let mut eta = Eta::new();
-        eta.update(0.0);
-        std::thread::sleep(std::time::Duration::from_millis(60));
-        // half done in ~60ms, so ~60ms to go
-        let left = eta.update(0.5).expect("half way is enough to estimate from");
-        assert!(left.as_millis() < 1000, "{left:?}");
+        let t0 = std::time::Instant::now();
+        let mut eta = Eta::started_at(t0);
+        eta.update_at(t0, 0.0);
+        // half done in a minute, so about a minute to go
+        let left = eta.update_at(at(t0, 60.0), 0.5).expect("half way is enough to estimate from");
+        assert!((left.as_secs_f64() - 60.0).abs() < 1.0, "{left:?}");
     }
 
     #[test]
     fn a_drive_that_slows_is_followed_rather_than_jumped_after() {
         // an optical drive is not steady - it slows over a layer change and
         // stalls on a retry - so the estimate is smoothed
-        let mut eta = Eta::new();
-        eta.update(0.0);
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        let fast = eta.update(0.5).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(60));
-        let after_a_stall = eta.update(0.51).unwrap();
-        // it rose, but not to the full six seconds per point the stall implies
+        let t0 = std::time::Instant::now();
+        let mut eta = Eta::started_at(t0);
+        eta.update_at(t0, 0.0);
+        let fast = eta.update_at(at(t0, 30.0), 0.5).unwrap();
+        let after_a_stall = eta.update_at(at(t0, 90.0), 0.51).unwrap();
         assert!(after_a_stall > fast);
-        assert!(after_a_stall.as_secs_f64() < 3.0, "{after_a_stall:?}");
+    }
+
+    #[test]
+    fn standing_still_is_counted_rather_than_thrown_away() {
+        // Progress arrives twice a second whether or not it has moved. Taking
+        // the last message as the anchor measured a minute of standing still
+        // followed by one per cent as one per cent in half a second, and the
+        // window promised six minutes on a rip with nine to go.
+        let t0 = std::time::Instant::now();
+        let mut eta = Eta::started_at(t0);
+        eta.update_at(t0, 0.0);
+        eta.update_at(at(t0, 10.0), 0.05);
+        // sixty seconds of being told the same thing
+        for i in 0..120 {
+            eta.update_at(at(t0, 10.0 + i as f64 * 0.5), 0.05);
+        }
+        let left = eta.update_at(at(t0, 70.0), 0.06).expect("an estimate by now");
+        // 70s for six per cent is about eighteen minutes left, not four
+        assert!(left.as_secs() > 600, "{left:?} - the stall was discarded again");
+    }
+
+    #[test]
+    fn the_estimate_grows_while_nothing_moves() {
+        // The complaint that started this: "we have been on 5% for a while and
+        // it still says six minutes left".
+        let t0 = std::time::Instant::now();
+        let mut eta = Eta::started_at(t0);
+        eta.update_at(t0, 0.0);
+        eta.update_at(at(t0, 15.0), 0.05);
+        let first = eta.update_at(at(t0, 20.0), 0.05).unwrap();
+        let later = eta.update_at(at(t0, 200.0), 0.05).unwrap();
+        assert!(later > first, "still {later:?} after three minutes of nothing");
+    }
+
+    #[test]
+    fn a_title_starting_over_does_not_make_the_rest_look_free() {
+        // A retry reports from zero again. Measuring the climb back from where
+        // it had got to before would count it as progress that cost nothing.
+        let t0 = std::time::Instant::now();
+        let mut eta = Eta::started_at(t0);
+        eta.update_at(t0, 0.0);
+        eta.update_at(at(t0, 60.0), 0.5);
+        eta.update_at(at(t0, 61.0), 0.0);
+        let left = eta.update_at(at(t0, 121.0), 0.5).unwrap();
+        // half of it took a minute, twice, so a minute more at best
+        assert!(left.as_secs() >= 60, "{left:?}");
+    }
+
+    #[test]
+    fn a_real_rip_is_estimated_within_a_couple_of_minutes_from_five_per_cent() {
+        // The Lion King's feature: 9 minutes 20 to read, and at five per cent
+        // the window said "about 6 minutes left". Read speed is near enough
+        // steady once the drive is going, so five per cent in twenty-eight
+        // seconds is all it takes to know that.
+        let whole = 560.0;
+        let t0 = std::time::Instant::now();
+        let mut eta = Eta::started_at(t0);
+        let mut said = None;
+        for step in 0..=10 {
+            let f = step as f32 / 200.0; // up to five per cent
+            said = eta.update_at(at(t0, f as f64 * whole), f);
+        }
+        let left = said.expect("five per cent of nine minutes is enough to speak");
+        let truth = whole * 0.95;
+        assert!((left.as_secs_f64() - truth).abs() < 120.0, "said {left:?}, and {truth}s was left");
     }
 
     #[test]
     fn a_finished_job_claims_nothing() {
-        let mut eta = Eta::new();
-        eta.update(0.2);
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        assert_eq!(eta.update(1.0), None);
+        let t0 = std::time::Instant::now();
+        let mut eta = Eta::started_at(t0);
+        eta.update_at(t0, 0.2);
+        assert_eq!(eta.update_at(at(t0, 20.0), 1.0), None);
     }
 
     #[test]
