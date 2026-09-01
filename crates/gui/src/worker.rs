@@ -590,10 +590,8 @@ pub fn run(
                 if let Some(items) = &plan {
                     let _ = tx.send(Msg::Organised(items.clone()));
                 }
-                if titles.len() < scan.titles.len() {
-                    events(Event::Warning(Warning::PlayAllsSkipped {
-                        titles: scan.titles.len() - titles.len(),
-                    }));
+                if let Some(w) = p.play_alls_skipped(plan.as_deref()) {
+                    events(Event::Warning(w));
                 }
                 let files = p.rip(&scan, &titles, &rip_dir, &mut events)?;
                 let items = p.organise(&files, Some(&scan), &media, disc, &mut events)?;

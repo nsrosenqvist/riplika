@@ -204,6 +204,19 @@ impl<'a> Pipeline<'a> {
         scan.titles.iter().filter(|t| !redundant.contains(&t.output_name)).cloned().collect()
     }
 
+    /// The play-alls this run will not read, if there are any.
+    ///
+    /// Counted from the plan, not from how many titles were dropped. What
+    /// `titles_to_rip` leaves out is play-alls *and* everything the settings do
+    /// not want, so subtracting said "skipping 31 play-all titles, whose
+    /// content is on the disc already" about two play-alls and twenty-nine
+    /// extras somebody had unticked - which is two untruths in one sentence,
+    /// and contradicted the "2 play-all titles" the same log printed later.
+    pub fn play_alls_skipped(&self, plan: Option<&[Item]>) -> Option<Warning> {
+        let n = plan?.iter().filter(|i| i.role == Role::PlayAll).count();
+        (n > 0).then_some(Warning::PlayAllsSkipped { titles: n })
+    }
+
     /// Stage one: read the disc.
     pub fn rip(
         &self,
@@ -552,7 +565,14 @@ impl<'a> Pipeline<'a> {
                     .unwrap_or_default(),
             });
 
-            match self.produce_one(item, media, &dest, &table, n, events) {
+            match self.produce_one(
+                item,
+                media,
+                &dest,
+                &table,
+                Position { index: n, total: outputs.len() },
+                events,
+            ) {
                 Ok(p) => {
                     events(Event::ItemFinished {
                         index: n,
@@ -585,7 +605,7 @@ impl<'a> Pipeline<'a> {
         media: &Media,
         dest: &Path,
         table: &Option<Table>,
-        index: usize,
+        at: Position,
         events: Events,
     ) -> Result<Produced> {
         if let Some(parent) = dest.parent() {
@@ -596,11 +616,26 @@ impl<'a> Pipeline<'a> {
         // Subtitles first. Recognising from the rip rather than from the
         // transcode means the SRTs exist before encoding starts, so they can be
         // inputs to the same pass - one ffmpeg invocation instead of three.
-        events(Event::Stage(Stage::Subtitles));
-        let (subtitles, failed, recognised) =
-            self.recognise_all(&info, item, table, index, events)?;
+        // Announcing a stage blanks the progress bar, so each one here says
+        // where the run has got to straight afterwards. Without that, the whole
+        // of producing - a minute an episode, seven episodes - showed an empty
+        // bar and no text, while the only thing that reported progress was the
+        // ripper, which had finished.
+        let name = dest.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        // Episodes done, not a guess at how far into this one ffmpeg is: it is
+        // run with -v error and says nothing until it exits, and a made-up
+        // number that moves is worse than a true one that does not.
+        let done = at.index as f32 / at.total.max(1) as f32;
+        let position = |stage: Stage, events: Events| {
+            events(Event::Stage(stage));
+            events(Event::Progress { stage, fraction: done, message: Some(name.clone()) });
+        };
 
-        events(Event::Stage(Stage::Transcode));
+        position(Stage::Subtitles, events);
+        let (subtitles, failed, recognised) =
+            self.recognise_all(&info, item, table, at.index, events)?;
+
+        position(Stage::Transcode, events);
         let analysis = analyze::analyze(self.ports.runner, &item.source, &info)?;
         // Encode to a temporary name and rename on success. ffmpeg writing
         // straight to the destination means an interrupted run leaves a
@@ -756,10 +791,8 @@ impl<'a> Pipeline<'a> {
         // Work out what is worth reading before reading it.
         let plan = self.preview(&scan, &media, disc, rip_dir);
         let titles = self.titles_to_rip(&scan, plan.as_deref());
-        if titles.len() < scan.titles.len() {
-            events(Event::Warning(Warning::PlayAllsSkipped {
-                titles: scan.titles.len() - titles.len(),
-            }));
+        if let Some(w) = self.play_alls_skipped(plan.as_deref()) {
+            events(Event::Warning(w));
         }
         let files = self.rip(&scan, &titles, rip_dir, events)?;
         let report = self
@@ -770,6 +803,13 @@ impl<'a> Pipeline<'a> {
         }
         report
     }
+}
+
+/// Which of how many, for the events that say where a run has got to.
+#[derive(Debug, Clone, Copy)]
+struct Position {
+    index: usize,
+    total: usize,
 }
 
 /// Where a rip records what it put in the cache directory.
@@ -1244,6 +1284,73 @@ mod tests {
         let items = p.organise(&files, None, &media, Some(2), &mut sink).unwrap();
         let first = items.iter().find(|i| matches!(i.role, Role::Episode { .. })).unwrap();
         assert_eq!(first.role, Role::Episode { season: 7, number: 3 });
+    }
+
+    #[test]
+    fn only_the_play_alls_are_counted_as_play_alls() {
+        // The log said "skipping 31 play-all titles, whose content is on the
+        // disc already" for two play-alls and twenty-nine extras that had been
+        // unticked, then said "2 play-all titles" four lines later. A disc that
+        // drops something for each reason is the only one that shows it.
+        let mut scan = disc_with_a_play_all();
+        scan.titles.push(DiscTitle {
+            id: 3,
+            duration: 300_000,
+            chapter_count: 1,
+            chapters: vec![300_000],
+            size_bytes: 0,
+            output_name: "title_t03.mkv".into(),
+            tracks: vec![],
+        });
+        let h = Harness { ripper: FakeRipper::new(scan.clone()), ..harness() };
+        let cat = TvMaze { http: &h.http };
+        let p = Pipeline::new(
+            Ports {
+                runner: &h.runner,
+                prober: &h.prober,
+                ripper: &h.ripper,
+                catalogue: &cat,
+                fs: &h.fs,
+                cancel: Cancel::new(),
+            },
+            JobSettings { include_extras: false, ..settings() },
+        );
+        let mut sink = |_: Event| {};
+        let media = p.identify(&scan, &mut sink).remove(0).media;
+        let plan = p.preview(&scan, &media, Some(1), Path::new("/rip"));
+        let play_alls = plan.as_deref().unwrap().iter().filter(|i| i.role == Role::PlayAll).count();
+        let dropped = scan.titles.len() - p.titles_to_rip(&scan, plan.as_deref()).len();
+        assert_eq!(play_alls, 1);
+        assert!(
+            dropped > play_alls,
+            "the unticked extra should be dropped too, not only {play_alls}"
+        );
+        assert_eq!(
+            p.play_alls_skipped(plan.as_deref()),
+            Some(Warning::PlayAllsSkipped { titles: play_alls })
+        );
+    }
+
+    #[test]
+    fn every_stage_announced_while_producing_says_where_the_run_is() {
+        // A stage change blanks the progress bar, and producing announces two
+        // of them per episode. Nothing said the position again afterwards, so
+        // transcoding showed an empty bar and no text for its whole run while
+        // ffmpeg was working perfectly well.
+        let h = harness();
+        let (_, _, events) = run_all(&h, settings());
+        let mut checked = 0;
+        for (i, e) in events.iter().enumerate() {
+            let Event::Stage(s) = e else { continue };
+            if !matches!(s, Stage::Subtitles | Stage::Transcode) {
+                continue;
+            }
+            match events.get(i + 1) {
+                Some(Event::Progress { stage, .. }) if stage == s => checked += 1,
+                other => panic!("{s:?} is followed by {other:?}, so the bar stays empty"),
+            }
+        }
+        assert!(checked >= 2, "producing announced no stages at all");
     }
 
     /// A rip's intermediate files are the size of the disc, so leaving them is

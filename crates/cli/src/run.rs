@@ -882,14 +882,10 @@ pub fn rip(
     // video a second time.
     let plan = pipeline.preview(&scan, &media, disc, rip_dir);
     let titles = pipeline.titles_to_rip(&scan, plan.as_deref());
-    if titles.len() < scan.titles.len() {
-        // The same sentence the log and the window use, rather than a third
-        // copy of it - this one still said "play-all title(s)".
-        println!(
-            "  {}",
-            riplika_core::Warning::PlayAllsSkipped { titles: scan.titles.len() - titles.len() }
-                .text()
-        );
+    // The same sentence the log and the window use, rather than a third copy
+    // of it - this one still said "play-all title(s)".
+    if let Some(w) = pipeline.play_alls_skipped(plan.as_deref()) {
+        println!("  {}", w.text());
     }
     let files = pipeline.rip(&scan, &titles, rip_dir, &mut events).map_err(|e| e.to_string())?;
     let items =
