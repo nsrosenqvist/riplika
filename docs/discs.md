@@ -216,3 +216,45 @@ flatpak install org.gnome.Platform//50 org.gnome.Sdk//50 \
 python3 flatpak-cargo-generator.py Cargo.lock -o packaging/cargo-sources.json
 flatpak-builder --install --user build packaging/com.nsrosenqvist.Riplika.yml
 ```
+
+## Hardware notes
+
+Things measured on real discs and real drives here, kept because none of them
+is recoverable by reading the code. Most have a matching comment where they
+bite; this is the list.
+
+**A FakeRunner accepts commands real ffmpeg refuses.** Every test here drives one, which is what makes them fast and offline, and it means a command can be well-formed to the tests and rejected by ffmpeg. That is not hypothetical: files are written to a `.part` path while being made, ffmpeg picks its muxer from the extension, `.part` is not one, and every transcode failed with "Invalid argument" while the whole suite passed. Anything about *how ffmpeg reads a command* needs a real run to confirm - `riplika process` on a directory of two short files takes seconds.
+
+- **`pkill -f riplika`** matches the shell running it. Use `pkill -x`.
+- **The GUI runs jobs on worker threads inside itself**, so there is no separate process to look for, and restarting it kills a running rip.
+- **An optical drive can wedge in `D` state**, uninterruptible; not even `kill -9` reaches it until the read returns. Ejecting clears it.
+- **A DVD is ISO 9660 *and* UDF.** libdvdread reads the UDF. Copying only the ISO structures yields an image that mounts and will not open as a DVD.
+- **`DVDCSS_READ_DECRYPT` descrambles whatever it is given**, and a sector's payload starts at byte 128, so decrypting the volume descriptors leaves their first 128 bytes intact and turns the rest into noise.
+- **DVD title numbering is not contiguous.** One disc here has content at titles 2–19 and again at 39–58. Read the count from the disc, never infer it.
+- **MakeMKV reports chapter *counts*; the free reader reports chapter *durations*.** Only the durations can decompose a play-all, so anything that depends on them must handle their absence.
+- **A CD sector is 2352 bytes, and `/dev/sr0` gives you 2048 of them.** The drive checks the error correction, keeps the user data and discards the sync pattern, header and ECC, and the discarded part is what Redump hashes. An image of cooked sectors is a perfectly good image that matches nothing, and the failure reads as "this disc is not in the database". CDs go through `READ CD` for that reason; DVDs and Blu-rays have no such distinction.
+- **A CD's length comes from its table of contents, not the block device.** On the disc measured here the ISO volume says 339,313 sectors and the lead-out says 339,463. Redump quotes the whole track.
+- **MusicBrainz allows one request a second** and refuses the rest. An empty result therefore means either "never heard of it" or "never asked", and only one of those is worth telling somebody about. `Found::lookup_failed` keeps them apart.
+- **Reading a CD raw is about a fifth the speed of reading it cooked** (0.9 MB/s against 4-plus on the drive here), because the drive cannot read ahead the same way. That is the price of an image that can be verified.
+- **Do not benchmark the drive while something else is using it.** Doing that here produced a figure seven times too low and nearly a wrong conclusion with it.
+- **A disc with audio tracks on it is not necessarily a music disc.** Which track comes *first* decides. Mixed Mode puts data first and its soundtrack after, which is a PlayStation game, and reading "has audio tracks" as "is an album" filed one as music and sent its disc id to MusicBrainz. An enhanced music CD does the opposite: audio first, data track last, in a session of its own.
+- **A track's file starts at its pregap, not where the table of contents says the track starts.** The gap is usually 150 sectors and assuming that is how a ripper gets most discs right and some wrong: on the Moto Racer disc here, track two's pregap is 225. Read it from the Q subchannel.
+- **The drive can repeat a subchannel answer.** At that same boundary two consecutive sectors came back with identical Q data, so the boundary looked one sector early and the pregap computed as 226, which is not a whole count of anything. The *countdown* field in the same answer was right. Trust the countdown, not the address.
+- **Every drive returns audio displaced by a fixed number of samples.** A data sector carries its own address so the drive syncs exactly and a data track comes off byte-perfect; audio has no such marker. The drive here is **+669 samples**, found by searching for the shift that reproduced a known track's checksum. Uncorrected, a rip plays perfectly and matches nothing, being out by a fifteenth of a second. The correction is `read_offset` in the preferences, and defaults to zero because a wrong correction is worse than none.
+- **This drive cannot read past the lead-out.** LBA 232013 reads on the Moto Racer disc, 232014 is refused. With a positive read offset the last few hundred samples of the final track lie out there, so they become silence and the last track can never match a datfile, which the tool says outright rather than reporting the disc as unknown. A drive that can overread has no such limit.
+- **The drive lies about how much it sent.** The USB bridge here reports a residual of 88, 96, 128, 176, 192 or 256 bytes on transfers that plainly completed: the buffer comes back filled to the last byte and every sector's sync pattern sits at its exact stride. Cutting the answer at the residual leaves a part sector, which every caller reads as a failed read, so good two-sector reads were being thrown away, and the pregap scan was falling back to its slow, stale-answer path against a drive that had answered correctly. `scsi::read_sectors` disbelieves any residual shorter than one sector. This is also where the phantom "2640-byte C2 sector" came from, and two wrong conclusions with it.
+- **C2 error pointers are how you find out an audio track is wrong.** `READ CD` with flag byte `0xFA` appends 294 bytes to each sector, one bit per byte, saying which the drive had to guess at. The sector is then 2646 bytes. On the damaged disc here, two passes over one track were byte-identical for 7568 sectors and then differed in half of the rest, and **the first sector the drive flagged was the very sector at which the passes first differed**. That is the tripwire: a track with no C2 flags at all can be read once and believed, which halves the work on a healthy disc.
+- **C2 is a tripwire, not a map.** In the same measurement 2438 flagged sectors differed between passes and 7296 differing sectors were never flagged, every one of them within seven sectors of one that was. It says reliably that a disc is damaged. It does not say exactly where, so do not use it to decide which sectors to re-read.
+- **Two dumps disagreeing does not mean the drive is unreliable.** That was the conclusion here for a while, and it was wrong. It was not drift (overlapping reads matched at exactly position 0), not sector damage in isolation (a sector inside a differing run read identically four times), and not speed (two passes at 4x still differed in 3.7 MB). It was a scratched disc, and C2 said so as soon as it was asked properly.
+- **A data sector can be checked without a drive or a database.** It carries a CRC over its own contents - `crates/core/src/edc.rs`. That is the difference between "no datfile has this disc" and "this read is wrong", which the tool could not tell apart before and which call for opposite responses. The Cool Boarders 2 disc here turned out to be an uncatalogued pressing: identical audio to Redump's Europe entry, different data track, and all 61,036 checkable sectors of it sound.
+- **The EDC polynomial is 0x8001801B written the usual way round**, and a least-significant-bit-first CRC needs it reversed, as 0xD8018001. Quoting it as written and shifting right anyway fails every sector on the disc rather than a few, which at least announces itself. Mode 1 covers bytes 0..2064, Mode 2 Form 1 covers 16..2072, and a Form 2 sector's EDC is optional - zero means there is none, and a track of those has not been verified however many sectors came back.
+- **This drive reports no C2 for data sectors at all.** 55,625 of them came back unflagged on a disc scratched enough that the drive refuses whole reads elsewhere. C2 is worth asking for on audio and worth nothing on data - which is where EDC comes in.
+- **A disc is only identified when every track matches.** A boundary cut one sector wrong leaves the first file perfect and shifts everything after it, so checking one track proves nothing.
+
+### Working against a real drive
+
+There is usually a disc in `/dev/sr0`. Useful, but:
+
+- a full scan probes every title and takes minutes, so run it in the background
+- **do not truncate the output through `tail`**. Doing that once produced a confident and completely wrong diagnosis, because extras sort last and the episodes were above the cut.
+- `~/Videos` is a real library. Write to a scratch directory.
