@@ -777,7 +777,24 @@ impl<'a> Pipeline<'a> {
         // One stream is enough to tell which table fits: every language track
         // on a disc is set in the same face.
         let sample =
-            subs::source::load(self.ports.runner, &streams.source, streams.streams[0]).ok()?;
+            match subs::source::load(self.ports.runner, &streams.source, streams.streams[0]) {
+                Ok(s) => s,
+                // Silently giving up here is how this went unexplained for an
+                // afternoon: the run said "no glyph table" as though none were
+                // installed, when what had actually happened was that the track
+                // could not be opened to look at.
+                Err(e) => {
+                    note(
+                        Warning::SubtitlesUnreadable {
+                            language: streams.languages.first().cloned().unwrap_or_default(),
+                            why: e.to_string(),
+                        },
+                        report,
+                        events,
+                    );
+                    return None;
+                }
+            };
         let events_on_disc = sample.events();
         for ev in events_on_disc.iter().take(SAMPLE_CUES) {
             subs::tables::shapes(
@@ -786,6 +803,17 @@ impl<'a> Pipeline<'a> {
             );
         }
         if shapes.is_empty() {
+            note(
+                Warning::SubtitlesUnreadable {
+                    language: streams.languages.first().cloned().unwrap_or_default(),
+                    why: format!(
+                        "no lettering found in {} cues",
+                        events_on_disc.len().min(SAMPLE_CUES)
+                    ),
+                },
+                report,
+                events,
+            );
             return None;
         }
 

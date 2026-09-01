@@ -232,6 +232,9 @@ modules:
 
   - name: tesseract
     buildsystem: cmake-ninja
+    # Its CMakeLists refuses to generate in the source directory, and
+    # flatpak-builder builds in-source unless told otherwise.
+    builddir: true
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
       - -DBUILD_TRAINING_TOOLS=OFF

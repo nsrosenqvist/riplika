@@ -44,6 +44,24 @@ Measured against a table a person had labelled by hand, on the same Parks and Re
 | cues identical to the hand-labelled table's output | 455 of 481 (94.6%) |
 | characters differing | 70 of 19,213 (0.36%), half of them placeholders |
 
+Then run against the disc that started this, from an empty data directory - no table of any kind installed:
+
+```
+Learning this disc's lettering
+  137 shapes labelled, 1 ambiguous, 8 blank
+  lettering learned from this disc -> the-lion-king.json
+  subs Swedish: 457 cues, 39 unrecognised glyphs
+```
+
+```
+2
+00:00:07,280 --> 00:00:10,590
+och hur man påbörjar
+ett animationsprojekt på Disney.
+```
+
+Reading a track costs a Tesseract process per line and takes a couple of minutes for a disc nobody has met, once. The second disc of the same release costs nothing: it finds the table, reports `lettering: the-lion-king.json (100% of this disc)`, and reads nothing.
+
 Two characters are rewritten before the vote. A bar is read as a capital `I` - no subtitle font contains a pipe, and it is three quarters of the reader's mistakes. Typographic quotes become the straight ones subtitles are written with, not because either is wrong but because the reader picks between them line to line, the votes split, and the shape then settles on nothing and comes out blank.
 
 Only cues holding a shape that is still thin get read. The alphabet is done with in the first few dozen of a thousand, and reading them all would spend an hour of processes to learn nothing.
