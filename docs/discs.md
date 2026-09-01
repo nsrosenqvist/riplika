@@ -140,10 +140,10 @@ That table also carries chapter counts, and the demuxer reports chapter *duratio
 
 A desktop can offer an application when a disc is inserted, and the mechanism is the same one that opens a file: the volume is mounted and matched to a content type, and applications that declare it are offered.
 
-Riplika declares the four that matter:
+Riplika declares the ones it can actually read:
 
 ```
-MimeType=x-content/video-dvd;x-content/video-bluray;x-content/video-vcd;x-content/video-svcd;
+MimeType=x-content/video-dvd;x-content/video-vcd;x-content/video-svcd;x-content/audio-cdda;
 Exec=riplika-gui %u
 ```
 
@@ -158,6 +158,8 @@ install -Dm755 target/release/riplika-gui ~/.local/bin/riplika-gui
 install -Dm644 data/com.nsrosenqvist.Riplika.desktop ~/.local/share/applications/
 update-desktop-database ~/.local/share/applications
 ```
+
+**Do this or install the Flatpak, not both.** Both carry the same application id, and `$XDG_DATA_HOME` is searched before the Flatpak's export directory, so the file written above wins every launch from the desktop - silently, and for as long as it exists. A native build left over from an earlier afternoon is then what the icon starts, which looks like a bug that was fixed coming back. Remove `~/.local/share/applications/com.nsrosenqvist.Riplika.desktop` to hand the id back to the Flatpak.
 
 Then it appears in GNOME Settings under Removable Media, or in the prompt a desktop shows when a disc goes in, beside whatever else is installed:
 
