@@ -820,6 +820,15 @@ impl Wikidata<'_> {
     }
 }
 
+/// Where a file named by a Wikidata claim actually lives.
+///
+/// Wikidata names a file on Commons rather than linking to it. Special:FilePath
+/// resolves the name, and scales the picture on the way rather than handing
+/// back a poster scan the size of a wall.
+pub fn commons_image_url(file: &str) -> String {
+    format!("https://commons.wikimedia.org/wiki/Special:FilePath/{}?width=342", encode(file))
+}
+
 /// Candidate ids and their one-line descriptions, from a label search.
 pub fn parse_wikidata_search(json: &str) -> Vec<(String, String)> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
@@ -891,6 +900,14 @@ pub fn parse_wikidata_entities(
             })
         };
 
+        // A claim whose value is a bare string rather than an object. P18 is
+        // one: it names a file on Commons rather than describing it.
+        let plain = |property: &str| -> Option<String> {
+            claims?.get(property)?.as_array()?.iter().find_map(|s| {
+                s.get("mainsnak")?.get("datavalue")?.get("value")?.as_str().map(str::to_string)
+            })
+        };
+
         if !ids_of("P31").iter().any(|c| FILM_CLASSES.contains(&c.as_str())) {
             continue;
         }
@@ -932,10 +949,9 @@ pub fn parse_wikidata_entities(
             // Ranked by the search's own ordering, which is label similarity.
             // It is not a confidence in the disc; the runtime check is.
             score: 1.0 - (rank as f32 / order.len().max(1) as f32) * 0.5,
-            // Wikidata has images, behind another query per result. Not worth
-            // a request each to decorate a list somebody is about to choose
-            // from, so films found this way show the kind icon instead.
-            poster: None,
+            // No extra request for this: the entities call already asks for
+            // every candidate's claims in one go, and the image is among them.
+            poster: plain("P18").as_deref().map(commons_image_url),
             detail,
         });
     }
@@ -993,6 +1009,7 @@ mod wikidata_tests {
       "Q337078":{"labels":{"en":{"value":"The Big Lebowski"}},"claims":{
         "P31":[{"mainsnak":{"datavalue":{"value":{"id":"Q11424"}}}}],
         "P577":[{"mainsnak":{"datavalue":{"value":{"time":"+1998-02-26T00:00:00Z"}}}}],
+        "P18":[{"mainsnak":{"datavalue":{"value":"Big Lebowski poster.jpg"}}}],
         "P2047":[{"mainsnak":{"datavalue":{"value":{"amount":"+117"}}}}]}},
       "Q55716932":{"labels":{"en":{"value":"Jeffrey Lebowski"}},"claims":{
         "P31":[{"mainsnak":{"datavalue":{"value":{"id":"Q15632617"}}}}]}},
@@ -1009,6 +1026,27 @@ mod wikidata_tests {
         let found = parse_wikidata_search(SEARCH);
         let ids: Vec<String> = found.iter().map(|(i, _)| i.clone()).collect();
         parse_wikidata_entities(ENTITIES, &ids, &found)
+    }
+
+    #[test]
+    fn a_wikidata_film_carries_its_picture_without_another_request() {
+        // The entities call already asks for every candidate's claims, and
+        // P18 is among them - so this costs nothing, which is not what I said
+        // when I first left it out.
+        let h = hits();
+        let big = h.iter().find(|h| h.media.title() == "The Big Lebowski").expect("it is there");
+        let url = big.poster.as_deref().expect("P18 was in the claims");
+        assert!(url.starts_with("https://commons.wikimedia.org/wiki/Special:FilePath/"), "{url}");
+        assert!(url.contains("Big%20Lebowski%20poster.jpg"), "{url}");
+        assert!(url.ends_with("?width=342"), "the full scan is a poster the size of a wall");
+    }
+
+    #[test]
+    fn a_film_wikidata_has_no_picture_for_says_nothing_rather_than_guessing() {
+        let h = hits();
+        let parody =
+            h.iter().find(|h| h.media.title().contains("XXX Parody")).expect("it is there");
+        assert_eq!(parody.poster, None);
     }
 
     #[test]
