@@ -2,14 +2,17 @@
 Type=Application
 Name=Riplika
 GenericName=Disc Ripper
-Comment=Turn a disc into a tagged, subtitled library
+Comment=Copy discs to your computer, named and tagged
 Exec=riplika-gui %u
 Icon=com.nsrosenqvist.Riplika
 Terminal=false
-Categories=AudioVideo;Video;
+Categories=AudioVideo;Video;Audio;
 # What the desktop offers this application for when a disc is inserted. The
 # shell hands over the mount point, so the application has to work back from
 # that to a device.
-MimeType=x-content/video-dvd;x-content/video-bluray;x-content/video-vcd;x-content/video-svcd;
-Keywords=DVD;Blu-ray;disc;rip;subtitles;transcode;
+#
+# No x-content/video-bluray: offering to open one is a promise this cannot
+# keep, since a Blu-ray needs MakeMKV and has never been tested here.
+MimeType=x-content/video-dvd;x-content/video-vcd;x-content/video-svcd;x-content/audio-cdda;
+Keywords=DVD;CD;disc;rip;backup;subtitles;transcode;music;
 StartupNotify=true

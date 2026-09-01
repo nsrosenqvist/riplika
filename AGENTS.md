@@ -6,7 +6,7 @@ Riplika reads a disc and produces library files. Three pipelines share one drive
 - `riplika-cli` is `riplika`
 - `riplika-gui` is `riplika-gui`, GTK4 and libadwaita
 
-Reference material lives in [docs/](docs/). Hardware behaviour measured here, which is the part you cannot get from the code, is in [docs/discs.md](docs/discs.md#hardware-notes).
+Reference material lives in [docs/](docs/). Hardware behaviour measured here, which is the part you cannot get from the code, is in [docs/discs.md](docs/discs.md#hardware-notes). Cutting a release is [RELEASE.md](RELEASE.md).
 
 ## Commands
 
@@ -14,6 +14,7 @@ Reference material lives in [docs/](docs/). Hardware behaviour measured here, wh
 ./check.sh                              # everything CI runs, in CI's order
 ./po/build.sh                           # after adding or changing a UI string
 packaging/regenerate-cargo-sources.sh   # after Cargo.lock changes
+./release.sh 1.0.0 [notes.txt]          # see RELEASE.md
 ```
 
 `./check.sh` stops at the first failure. Read its exit status, not its output: `cargo clippy -- -D warnings` prints a denied lint as `error`, so grepping for `warning:` reports success while CI fails on the same tree.
