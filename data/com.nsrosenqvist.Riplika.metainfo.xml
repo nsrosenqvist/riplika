@@ -25,22 +25,23 @@
 
   <description>
     <p>
-      Riplika turns a disc into files a media server can read, without the
-      naming and tagging afterwards. It works out what kind of disc is in the
-      drive and reads it accordingly.
+      Riplika reads a disc and writes files a media server can use, with the
+      naming and tagging already done. It asks the drive what kind of disc it
+      is holding and reads it accordingly.
     </p>
     <p>
-      A DVD becomes encoded video with its subtitles turned from pictures into
-      text, named from a catalogue rather than from the volume label alone. A
-      music CD becomes FLAC or MP3, tagged and with its cover art, identified
-      by the disc id its table of contents produces. A game disc is copied
-      rather than converted, at the full sector size a preservation database
-      expects, and checked against Redump datfiles.
+      A DVD becomes encoded video whose subtitles have been turned from
+      pictures into text, named from a catalogue that is checked against the
+      structure of the disc itself. A music CD becomes FLAC or MP3, tagged and
+      with its cover art, identified by the disc id its table of contents
+      produces. A game disc is copied whole at the full sector size a
+      preservation database expects, then checked against Redump datfiles.
     </p>
     <p>
-      Where a disc is damaged, Riplika says so rather than writing a file that
-      looks finished. Audio is checked against the drive's own error pointers
-      and data sectors against the error detection written inside them.
+      A damaged disc is reported as damaged, and no file is left looking
+      finished when it is not. Audio is checked against the drive's own error
+      pointers, and data sectors against the error detection written inside
+      them.
     </p>
   </description>
 

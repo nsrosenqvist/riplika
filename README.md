@@ -3,10 +3,10 @@
 Riplika reads a disc and writes files a media server can use, with the naming
 and tagging already done.
 
-Doing the same thing by hand means a rip, then a transcode, then replacing the
-subtitle pictures with text so the server does not re-encode the film on every
-play. Little of that varies between discs, which is what makes it worth
-automating.
+By hand the same disc takes a rip, a transcode, and then work on the subtitles,
+which arrive as pictures and have to become text before a media server will stop
+re-encoding the film on every play. Little of that changes from disc to disc,
+and that is the case for automating it.
 
 ```
 Season 06/
@@ -16,16 +16,14 @@ Season 06/
     Parks and Recreation - S06E04 - Doppelgangers - Extended Cut.mp4
 ```
 
-There is a window and a command line, and both do the same things.
-
-Quality is High, Medium or Low, and the rest of what another tool would ask you
-is measured from the disc instead. The narrow set of choices is deliberate.
-Anyone who wants to sit over an encode and tune it is better served by the tools
-that already do that well.
+There is a window and a command line, and both do the same things. Quality has
+three settings and everything else is measured from the disc, which is a
+deliberate limit. Anyone who wants to sit over an encode and tune it is better
+served by the tools that already do that well.
 
 ## Three kinds of disc
 
-Which pipeline runs is decided by asking the drive, not by asking you.
+The drive is asked what it is holding, and the answer decides which pipeline runs.
 
 | In the drive | What comes out | Named by |
 | --- | --- | --- |
@@ -35,29 +33,29 @@ Which pipeline runs is decided by asking the drive, not by asking you.
 
 ### Video
 
-DVDs need nothing proprietary, since libdvdread and libdvdcss do the reading through ffmpeg. MakeMKV is used as a fallback where it is installed, for a disc the free reader cannot manage.
+DVDs need nothing proprietary. libdvdread and libdvdcss do the reading through ffmpeg, and MakeMKV is used as a fallback where it is installed, for a disc the free reader cannot manage.
 
-The volume label says what a disc claims to be, while its structure says what is actually on it. A "play all" title replays the episodes back to back, so decomposing it recovers which titles are episodes and what order they belong in. That reading is checked against a catalogue and shown to you before anything is read.
+The volume label says what a disc claims to be, and its structure says what is on it. A "play all" title replays the episodes back to back, so decomposing it recovers which titles are episodes and what order they belong in. What that produces is checked against a catalogue and shown to you before anything is encoded.
 
-A disc holding one long title is a film rather than a season, which the identification weighs alongside the name, and the pages then stop asking a film which season it is.
+A disc holding one long title is a film, and the identification weighs that alongside the name. The pages after it then stop asking a film which season it is.
 
-Crop and inverse telecine are measured rather than assumed, as are frame rate and pixel aspect. Of the three quality tiers, the middle one comes to about 170 MB for a 21-minute episode and is hard to tell from the disc.
+The encoder settings are measured from the video itself, including the crop and whether the picture needs inverse telecine. Of the three quality tiers, the middle one comes to about 170 MB for a 21-minute episode and is hard to tell from the disc.
 
-DVD subtitles are pictures, and Riplika turns them into text exactly rather than statistically, at 99% character accuracy, with cue timings that match the source by construction. A text subtitle also stops a media server burning the picture into the video and re-encoding it on every play.
+DVD subtitles arrive as pictures, and Riplika matches those bitmaps against a table of known letters, which gives 99% character accuracy and cue timings taken straight from the source. A text subtitle also stops a media server burning the picture into the video and re-encoding it on every play.
 
 ### Music
 
-The table of contents gives a disc id, which MusicBrainz answers with the pressing rather than a guess at the album. A disc it has never seen falls back to CD-Text, and a disc neither of them knows can be searched for by name. Cover art comes from the Cover Art Archive and is embedded as a front cover.
+The table of contents gives a disc id, and MusicBrainz answers that with the pressing itself. A disc it has never seen falls back to CD-Text, and a disc neither knows can be searched for by name. Cover art comes from the Cover Art Archive and is embedded as a front cover.
 
-Audio is read with cdparanoia, which re-reads and checks rather than trusting the first answer. FLAC and MP3 are both available at three quality tiers, with the tag vocabulary each format expects. Filenames follow a pattern you can set, and a slash in that pattern makes a folder.
+Audio is read with cdparanoia, which re-reads and checks its own work. FLAC and MP3 are both available at three quality tiers, with the tag vocabulary each format expects. Filenames follow a pattern you can set, and a slash in that pattern makes a folder.
 
 ### Games
 
-A game disc is copied rather than encoded, at the 2352 bytes a sector actually holds. A disc with audio tracks becomes one file per track and a cue sheet, because that is what such a disc is, and a flat image of one matches no database.
+A game disc is copied whole, at the 2352 bytes a sector actually holds. A disc with audio tracks becomes one file per track and a cue sheet, since a flat image of such a disc matches no database.
 
 Redump datfiles name the result from what it hashes to. When nothing matches exactly, Riplika says which disc it came closest to and which tracks disagreed, so a damaged read can be told apart from a pressing nobody has catalogued yet. Datfiles are fetched as soon as a game disc is recognised.
 
-Two checks run while a disc is being dumped. The drive's C2 error pointers say which audio sectors it had to guess at, since audio carries no error correction a host can verify. Data sectors carry their own error detection, which is checked directly, and a track that fails it is a bad read rather than an unknown disc.
+Audio and data are checked in different ways while a disc is dumped. The drive's C2 error pointers say which audio sectors it had to guess at, since audio carries no error correction a host can verify. Data sectors carry their own error detection, so a track failing that check is known to be a bad read.
 
 ## Getting started
 
@@ -122,10 +120,9 @@ no remotes configured has to add Flathub once first.
 For a Flathub submission, the same tag also carries a manifest with its source
 pinned to that tag, and the cargo source list it refers to. Both are generated
 from the manifest in `packaging/`, so there is no second copy to keep in step.
-What is still needed is at least one screenshot: Flathub requires one for any
-graphical application, linked directly and, if it lives in this repository,
-from a tag rather than a branch. `data/com.nsrosenqvist.Riplika.metainfo.xml`
-says where it goes.
+The screenshots a software centre shows are served from this repository at the
+tag, since a branch moves and what Flathub keeps is whatever it fetched at the
+time. `./release.sh` rewrites those URLs to the tag it is making.
 
 ## Documentation
 
@@ -140,7 +137,7 @@ says where it goes.
 
 ## Status
 
-Riplika works and is in use. The subtitle recogniser has been measured over 122 episodes. Disc handling has been run against real discs, including damaged ones: a PC CD-ROM matched Redump byte for byte, and a scratched PlayStation disc was caught by its own C2 flags rather than passing as a good dump. The Flatpak builds in CI on every push. The window is functional but has not had a designer near it.
+Riplika works and is in use. The subtitle recogniser has been measured over 122 episodes, and disc handling has been run against real discs, damaged ones included. A PC CD-ROM matched Redump byte for byte. A scratched PlayStation disc was caught by its own C2 flags before it could pass as a good dump. The Flatpak builds in CI on every push, and the window is functional but has not had a designer near it.
 
 Known gaps: Blu-ray is untested, so nothing here claims to handle it. Inside the Flatpak, a library configured somewhere other than the three default folders is not reachable, because the sandbox has no way for the application to ask for it, and MakeMKV cannot be bundled so the option to use it is not shown there.
 
