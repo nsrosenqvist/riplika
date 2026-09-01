@@ -249,3 +249,17 @@ There is usually a disc in `/dev/sr0`. Useful, but:
 - a full scan probes every title and takes minutes, so run it in the background
 - **do not truncate the output through `tail`**. Doing that once produced a confident and completely wrong diagnosis, because extras sort last and the episodes were above the cut.
 - `~/Videos` is a real library. Write to a scratch directory.
+
+## Releasing
+
+`./release.sh 0.3.0` writes the version into the manifests, runs the checks before tagging rather than after, then commits and tags. Pushing the tag is left to you, since that is what tells GitHub to build and announce a release.
+
+The release workflow attaches a `.flatpak` bundle to the tag, which installs on its own:
+
+```sh
+flatpak install ./riplika-0.3.0.flatpak
+```
+
+It needs the GNOME 50 runtime from Flathub, so a machine with no remotes has to add Flathub once first.
+
+For a Flathub submission the tag also carries a manifest with its source pinned to that tag, and the cargo source list it refers to. Both are generated from `packaging/com.nsrosenqvist.Riplika.yml` by `packaging/flathub-manifest.py`, so there is no second manifest to keep in step. The screenshots a software centre shows are served from this repository at the tag, since a branch moves and what Flathub keeps is whatever it fetched, and `./release.sh` rewrites those URLs to the tag it is making.
