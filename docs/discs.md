@@ -254,6 +254,8 @@ There is usually a disc in `/dev/sr0`. Useful, but:
 
 `./release.sh 0.3.0` writes the version into the manifests, runs the checks before tagging rather than after, then commits and tags. Pushing the tag is left to you, since that is what tells GitHub to build and announce a release.
 
+A second argument names a file of release notes, one line per bullet, which becomes the AppStream entry a software centre shows. Without it the entry carries the version and date alone, and the script prints what has landed since the last tag so there is something to write from. The notes are not generated: a changelog built from commit subjects would tell somebody deciding whether to update that the README stopped being hard-wrapped.
+
 The release workflow attaches a `.flatpak` bundle to the tag, which installs on its own:
 
 ```sh

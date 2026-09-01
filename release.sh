@@ -57,9 +57,35 @@ sed -i "s|/riplika/v[0-9][^/]*/data/screenshots/|/riplika/$TAG/data/screenshots/
 
 # A releases tag is required to pass validation, and a release nobody wrote
 # down is a release the software centre says nothing about.
-if ! grep -q "version=\"$VERSION\"" "$META"; then
-  sed -i "s|  <releases>|  <releases>\n    <release version=\"$VERSION\" date=\"$(date -I)\"/>|" "$META"
-fi
+#
+# The version and the date are the mechanical part and are filled in here. The
+# notes are not: a changelog built from commit subjects would tell somebody
+# deciding whether to update that the README stopped being hard-wrapped. Pass a
+# file of one line per bullet to say something worth reading, or leave it out
+# and the entry carries the version alone.
+python3 - "$META" "$VERSION" "$(date -I)" "${2:-}" <<'PYTHON'
+import html, sys
+meta, version, today, notes = sys.argv[1:5]
+text = open(meta).read()
+if f'version="{version}"' in text:
+    raise SystemExit(0)
+
+lines = []
+if notes:
+    lines = [l.strip() for l in open(notes) if l.strip()]
+
+if lines:
+    items = "\n".join(f"          <li>{html.escape(l)}</li>" for l in lines)
+    entry = (
+        f'    <release version="{version}" date="{today}">\n'
+        f"      <description>\n        <ul>\n{items}\n        </ul>\n      </description>\n"
+        f"    </release>"
+    )
+else:
+    entry = f'    <release version="{version}" date="{today}"/>'
+
+open(meta, "w").write(text.replace("  <releases>", f"  <releases>\n{entry}", 1))
+PYTHON
 appstreamcli validate --no-net "$META" >/dev/null
 
 echo "== checking before tagging, not after"
@@ -72,3 +98,11 @@ git tag -a "$TAG" -m "Riplika $VERSION"
 echo
 echo "Tagged $TAG. Nothing has left this machine yet."
 echo "  git push && git push origin $TAG"
+
+if [ -z "${2:-}" ]; then
+  echo
+  echo "No release notes were given, so the AppStream entry carries the version"
+  echo "alone. What has landed since the last tag, if you want to write some:"
+  echo
+  git log --format='  %s' "$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "$TAG")..$TAG" 2>/dev/null | head -30
+fi
