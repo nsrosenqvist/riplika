@@ -4,13 +4,13 @@
 
 # Riplika
 
-**Put a disc in and get library files out, named and tagged.**
+**Reads a disc and writes library files, named and tagged.**
 
 </div>
 
 ![Riplika, having identified a disc](data/hero.png)
 
-Doing this by hand takes a rip, a transcode, and then work on the subtitles, which arrive as pictures and have to become text before a media server will stop re-encoding the film on every play. Little of it changes from disc to disc.
+Doing this by hand means ripping the disc and transcoding it, then dealing with the subtitles, which arrive as pictures and have to become text before a media server will stop re-encoding the film on every play. Little of it changes from disc to disc.
 
 Riplika asks the drive what it is holding and runs the pipeline that suits it.
 
@@ -22,15 +22,15 @@ Riplika asks the drive what it is holding and runs the pipeline that suits it.
 
 ## What it does
 
-**Subtitles become text, exactly.** DVD subtitles are pictures. Riplika matches the bitmaps against a table of known letters, which gives 99% character accuracy and cue timings taken from the source. This is the most interesting part of the project and [has its own document](docs/subtitles.md).
+DVD subtitles arrive as pictures, and Riplika matches those bitmaps against a table of known letters, which gives 99% character accuracy and cue timings taken from the source. That is the most unusual part of the project and [has its own document](docs/subtitles.md).
 
-**Identification is argued, and shows its reasoning.** A volume label is a hypothesis. The shape of the disc is evidence: a "play all" title decomposes into which titles are episodes and what order they run in, one long title says the disc is a film, and runtimes are checked against the catalogue. You see why before anything is read.
+A volume label is a hypothesis, so the shape of the disc is read as evidence beside it. A "play all" title decomposes into which titles are episodes and what order they run in, and a disc holding one long title is read as a film. Runtimes are checked against whatever the catalogue answered, and the reasoning is shown to you before anything is read.
 
-**Damage is reported, not written out.** A game dump is verified against the drive's C2 error pointers for audio and the sectors' own error detection for data, so a bad read is told apart from a disc nobody has catalogued. When a dump nearly matches, Riplika says which disc and which tracks disagreed.
+A game dump is verified while it is made, against the drive's C2 error pointers for audio and against the error detection inside the sectors themselves for data. A bad read can then be told from a disc nobody has catalogued, and a dump that nearly matches names the disc it came closest to, along with the tracks that disagreed.
 
-**Nothing about the picture is guessed.** Crop and inverse telecine are measured from the video. Quality has three settings and everything else follows from the disc, which is a deliberate limit; anyone who wants to tune an encode is better served by the tools that already do that.
+Crop and inverse telecine are measured from the video. Quality has three settings and everything else follows from the disc, which is a deliberate limit, since anyone who wants to tune an encode is better served by the tools that already do that.
 
-**A window and a command line**, doing the same things.
+The window and the command line do the same things.
 
 ## Install
 
@@ -70,9 +70,9 @@ riplika-gui                             # or the window
 
 ## Status
 
-Works and is in use. The subtitle recogniser has been measured over 122 episodes, and disc handling has been run against real discs, damaged ones included: a PC CD-ROM matched Redump byte for byte, and a scratched PlayStation disc was caught by its own C2 flags before it could pass as a good dump.
+Riplika works and is in use. The subtitle recogniser has been measured over 122 episodes, and disc handling has been run against real discs including damaged ones. A PC CD-ROM matched Redump byte for byte, and a scratched PlayStation disc was caught by its own C2 flags before it could pass as a good dump.
 
-Blu-ray has never been tested against a disc. MakeMKV is used as a fallback where it is installed, for a disc the free reader cannot manage, and it cannot be bundled in the Flatpak.
+Blu-ray has never been tested against a disc. Where MakeMKV is installed it is used as a fallback for a disc the free reader cannot manage, though it cannot be bundled in the Flatpak.
 
 ## Licence
 
