@@ -949,9 +949,13 @@ pub fn parse_wikidata_entities(
             // Ranked by the search's own ordering, which is label similarity.
             // It is not a confidence in the disc; the runtime check is.
             score: 1.0 - (rank as f32 / order.len().max(1) as f32) * 0.5,
-            // No extra request for this: the entities call already asks for
-            // every candidate's claims in one go, and the image is among them.
-            poster: plain("P18").as_deref().map(commons_image_url),
+            // P3383 is "film poster" and P154 is "logo" - both say what they
+            // depict. P18 is "image of the subject" and promises nothing:
+            // asking it for Kung Fu Panda answers with a photograph of a
+            // Megabus, which is what Wikidata has on the film's item. A
+            // picture that is confidently the wrong thing is worse than the
+            // kind icon, so only the two that mean something are read.
+            poster: plain("P3383").or_else(|| plain("P154")).as_deref().map(commons_image_url),
             detail,
         });
     }
@@ -1009,7 +1013,8 @@ mod wikidata_tests {
       "Q337078":{"labels":{"en":{"value":"The Big Lebowski"}},"claims":{
         "P31":[{"mainsnak":{"datavalue":{"value":{"id":"Q11424"}}}}],
         "P577":[{"mainsnak":{"datavalue":{"value":{"time":"+1998-02-26T00:00:00Z"}}}}],
-        "P18":[{"mainsnak":{"datavalue":{"value":"Big Lebowski poster.jpg"}}}],
+        "P3383":[{"mainsnak":{"datavalue":{"value":"Big Lebowski poster.jpg"}}}],
+        "P18":[{"mainsnak":{"datavalue":{"value":"A bus, for some reason.jpg"}}}],
         "P2047":[{"mainsnak":{"datavalue":{"value":{"amount":"+117"}}}}]}},
       "Q55716932":{"labels":{"en":{"value":"Jeffrey Lebowski"}},"claims":{
         "P31":[{"mainsnak":{"datavalue":{"value":{"id":"Q15632617"}}}}]}},
@@ -1039,6 +1044,19 @@ mod wikidata_tests {
         assert!(url.starts_with("https://commons.wikimedia.org/wiki/Special:FilePath/"), "{url}");
         assert!(url.contains("Big%20Lebowski%20poster.jpg"), "{url}");
         assert!(url.ends_with("?width=342"), "the full scan is a poster the size of a wall");
+        assert!(!url.contains("bus"), "P18 promises nothing about what it depicts");
+    }
+
+    #[test]
+    fn a_logo_stands_in_when_there_is_no_poster() {
+        // Sparse data is the normal case here: of three films in this fixture
+        // only one has a picture of any kind.
+        let entities = ENTITIES.replace("P3383", "P154");
+        let found = parse_wikidata_search(SEARCH);
+        let ids: Vec<String> = found.iter().map(|(i, _)| i.clone()).collect();
+        let h = parse_wikidata_entities(&entities, &ids, &found);
+        let big = h.iter().find(|h| h.media.title() == "The Big Lebowski").expect("it is there");
+        assert!(big.poster.is_some(), "a logo is of the film, which a bus is not");
     }
 
     #[test]
