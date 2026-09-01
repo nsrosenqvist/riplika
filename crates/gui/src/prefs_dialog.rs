@@ -7,6 +7,7 @@
 //! quality, the output folder, and which of *this* disc's languages to take.
 
 use crate::i18n::{tr, tr_args};
+use crate::rows;
 use adw::prelude::*;
 use riplika_core::host;
 use riplika_core::lang;
@@ -35,7 +36,7 @@ impl Store {
 }
 
 fn folder_row(title: &str, subtitle: &str) -> adw::ActionRow {
-    adw::ActionRow::builder().title(title).subtitle(subtitle).activatable(true).build()
+    rows::action().title(title).subtitle(subtitle).activatable(true).build()
 }
 
 fn describe(path: &Option<PathBuf>, empty: &str) -> String {
@@ -61,7 +62,7 @@ where
     // worse than no control.
     let sandboxed = riplika_core::host::in_flatpak();
     let installed = Preferences::makemkv_available();
-    let makemkv = adw::SwitchRow::builder()
+    let makemkv = rows::switch()
         .title(tr("Use MakeMKV when needed"))
         .subtitle(if installed {
             match host::which(MAKEMKV) {
@@ -101,7 +102,7 @@ where
         )
         .build();
 
-    let expander = adw::ExpanderRow::builder().title(tr("Languages")).build();
+    let expander = rows::expander().title(tr("Languages")).build();
     let summary = |p: &Preferences| {
         let names: Vec<String> = p.languages().wanted().iter().map(|l| l.name.clone()).collect();
         if names.is_empty() {
@@ -114,7 +115,7 @@ where
 
     for language in lang::all() {
         let code = language.code.clone();
-        let row = adw::SwitchRow::builder().title(&language.name).build();
+        let row = rows::switch().title(&language.name).build();
         row.set_active(store.prefs.borrow().preferred_languages.contains(&code));
         let store2 = Rc::clone(&store);
         let expander2 = expander.clone();
@@ -149,11 +150,11 @@ where
             naming::TOKENS.iter().map(|(t, _)| *t).collect::<Vec<_>>().join("  ")
         ))
         .build();
-    let template_row = adw::EntryRow::builder().title(tr("Pattern")).build();
+    let template_row = rows::entry().title(tr("Pattern")).build();
     template_row.set_text(&store.prefs.borrow().episode_template);
     // What it will actually produce, updated as it is typed - the only way to
     // know a pattern does what you meant without ripping a disc to find out.
-    let preview_row = adw::ActionRow::builder().title(tr("Preview")).build();
+    let preview_row = rows::action().title(tr("Preview")).build();
     preview_row.add_css_class("property");
     let container = store.prefs.borrow().container;
     preview_row.set_subtitle(&naming::preview(&template_row.text(), container));
@@ -173,9 +174,9 @@ where
             naming::MUSIC_TOKENS.iter().map(|(t, _)| *t).collect::<Vec<_>>().join("  ")
         ))
         .build();
-    let music_template_row = adw::EntryRow::builder().title(tr("Pattern")).build();
+    let music_template_row = rows::entry().title(tr("Pattern")).build();
     music_template_row.set_text(&store.prefs.borrow().music_template);
-    let music_preview_row = adw::ActionRow::builder().title(tr("Preview")).build();
+    let music_preview_row = rows::action().title(tr("Preview")).build();
     music_preview_row.add_css_class("property");
     let music_extension = store.prefs.borrow().music_format.target().extension();
     music_preview_row
@@ -193,7 +194,7 @@ where
              media server consults about the same files.",
         )
         .build();
-    let tmdb_row = adw::PasswordEntryRow::builder().title(tr("TMDB API key")).build();
+    let tmdb_row = rows::password().title(tr("TMDB API key")).build();
     if let Some(k) = secret::tmdb_key() {
         tmdb_row.set_text(&k);
     }
@@ -203,17 +204,17 @@ where
 
     // --- track policy -----------------------------------------------------
     let tracks = adw::PreferencesGroup::builder().title(tr("Tracks")).build();
-    let dual = adw::SwitchRow::builder()
+    let dual = rows::switch()
         .title(tr("Add a stereo AAC track"))
         .subtitle(tr("So browser clients do not make the server transcode AC3"))
         .build();
     dual.set_active(store.prefs.borrow().dual_audio);
-    let bitmaps = adw::SwitchRow::builder()
+    let bitmaps = rows::switch()
         .title(tr("Keep VobSub bitmaps"))
         .subtitle(tr("Redundant once recognised, and selecting one forces a burn-in re-encode"))
         .build();
     bitmaps.set_active(store.prefs.borrow().keep_bitmap_subs);
-    let commentary = adw::SwitchRow::builder().title(tr("Keep commentary tracks")).build();
+    let commentary = rows::switch().title(tr("Keep commentary tracks")).build();
     commentary.set_active(!store.prefs.borrow().drop_commentary);
     tracks.add(&dual);
     tracks.add(&bitmaps);
@@ -298,7 +299,7 @@ where
     for (_, name) in riplika_core::redump::SYSTEMS {
         systems.append(name);
     }
-    let system_row = adw::ComboRow::builder()
+    let system_row = rows::combo()
         .title(tr("System"))
         .subtitle(tr("Downloaded from redump.org into the folder above"))
         .model(&systems)
@@ -424,7 +425,13 @@ where
         let toasts = dialog.clone();
         tmdb_row.connect_apply(move |e| {
             if let Err(err) = secret::store("tmdb", &e.text()) {
-                toasts.set_title(&format!("Could not save the key: {err}"));
+                // add_toast, not set_title: this used to rename the dialog, so
+                // "Preferences" in the header became the error and stayed
+                // there, while nothing appeared where a failure is looked for.
+                let toast =
+                    adw::Toast::new(&tr_args("Could not save the key: %1$s", &[&err.to_string()]));
+                toast.set_use_markup(false);
+                toasts.add_toast(toast);
             }
         });
     }

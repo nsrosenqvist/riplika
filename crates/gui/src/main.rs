@@ -7,6 +7,7 @@
 
 mod i18n;
 mod prefs_dialog;
+mod rows;
 mod show_picker;
 mod worker;
 
@@ -387,7 +388,7 @@ fn build_ui() -> Ui {
         .build();
 
     let drive_group = adw::PreferencesGroup::builder().build();
-    let drive_combo = adw::ComboRow::builder().title(tr("Drive")).build();
+    let drive_combo = rows::combo().title(tr("Drive")).build();
     drive_group.add(&drive_combo);
     // Hidden unless there is more than one: a chooser offering one option is
     // a decision the user does not have.
@@ -430,10 +431,8 @@ fn build_ui() -> Ui {
     // wrong.
     let id_body = body();
     let id_group = adw::PreferencesGroup::builder().title(tr("Identified as")).build();
-    let chosen_row = adw::ActionRow::builder()
-        .title(tr("Not identified"))
-        .subtitle(tr("Choose the show"))
-        .build();
+    let chosen_row =
+        rows::action().title(tr("Not identified")).subtitle(tr("Choose the show")).build();
     // The cover, once there is one, and the kind of disc until then. A poster
     // is decoration and may never arrive, so what is here at the start has to
     // be something worth looking at on its own.
@@ -462,8 +461,8 @@ fn build_ui() -> Ui {
         .title(tr("This disc"))
         .description(tr("Which part of the show it holds. The disc number decides where episode numbering starts."))
         .build();
-    let season_entry = adw::EntryRow::builder().title(tr("Season")).build();
-    let disc_entry = adw::EntryRow::builder().title(tr("Disc")).build();
+    let season_entry = rows::entry().title(tr("Season")).build();
+    let disc_entry = rows::entry().title(tr("Disc")).build();
     detail_group.add(&season_entry);
     detail_group.add(&disc_entry);
 
@@ -482,14 +481,14 @@ fn build_ui() -> Ui {
     let set_body = body();
     let quality = adw::PreferencesGroup::builder().title(tr("Quality")).build();
     let tiers = tier_list();
-    let video = adw::ComboRow::builder()
+    let video = rows::combo()
         .title(tr("Picture"))
         .subtitle(tr("Medium is the sweet spot for DVD: about 170 MB an episode"))
         .model(&tiers)
         .selected(1)
         .build();
     let audio_tiers = tier_list();
-    let audio = adw::ComboRow::builder()
+    let audio = rows::combo()
         .title(tr("Sound"))
         .subtitle(tr("High keeps the original AC3 untouched; browsers cannot decode it"))
         .model(&audio_tiers)
@@ -497,15 +496,14 @@ fn build_ui() -> Ui {
         .build();
     let music = adw::PreferencesGroup::builder().title(tr("Music")).build();
     let music_formats = gtk::StringList::new(&["FLAC", "MP3"]);
-    let music_format = adw::ComboRow::builder()
+    let music_format = rows::combo()
         .title(tr("Format"))
         .subtitle(tr("FLAC keeps the disc exactly; MP3 plays on anything"))
         .model(&music_formats)
         .selected(0)
         .build();
     let music_tiers = tier_list();
-    let music_quality =
-        adw::ComboRow::builder().title(tr("Quality")).model(&music_tiers).selected(0).build();
+    let music_quality = rows::combo().title(tr("Quality")).model(&music_tiers).selected(0).build();
     apply_music_quality_rule(&music_quality, AudioFormat::Flac);
     music_format.connect_selected_notify({
         let quality = music_quality.clone();
@@ -515,7 +513,7 @@ fn build_ui() -> Ui {
     music.add(&music_quality);
 
     let containers = gtk::StringList::new(&["MP4", "Matroska"]);
-    let container = adw::ComboRow::builder()
+    let container = rows::combo()
         .title(tr("Container"))
         // The one row on this page that said only its own name. Both carry
         // the show and episode tags - MP4 gets them from ffmpeg directly,
@@ -533,7 +531,7 @@ fn build_ui() -> Ui {
         .model(&containers)
         .selected(0)
         .build();
-    let accurate_chapters = adw::SwitchRow::builder()
+    let accurate_chapters = rows::switch()
         .title(tr("Exact chapter marks"))
         // The drift is a tenth of a per cent, so it is proportional: the
         // first mark is nearly exact and the last is the worst. Under two
@@ -561,11 +559,11 @@ fn build_ui() -> Ui {
         .title(tr("What to take"))
         .description(tr("Episodes are always taken. Anything unticked is not read at all."))
         .build();
-    let include_extended = adw::SwitchRow::builder()
+    let include_extended = rows::switch()
         .title(tr("Extended episodes"))
         .subtitle(tr("Longer cuts some discs carry alongside the broadcast versions"))
         .build();
-    let include_extras = adw::SwitchRow::builder()
+    let include_extras = rows::switch()
         .title(tr("Bonus material"))
         .subtitle(tr("Featurettes, deleted scenes, gag reels"))
         .build();
@@ -573,7 +571,7 @@ fn build_ui() -> Ui {
     contents_group.add(&include_extras);
 
     let folders = adw::PreferencesGroup::builder().title(tr("Output")).build();
-    let output_dir = adw::ActionRow::builder().title(tr("Folder")).activatable(true).build();
+    let output_dir = rows::action().title(tr("Folder")).activatable(true).build();
     folders.add(&output_dir);
 
     let start = gtk::Button::builder()
@@ -1054,7 +1052,12 @@ impl App {
         if text.trim().is_empty() {
             return;
         }
-        self.ui.toasts.add_toast(adw::Toast::new(text));
+        let toast = adw::Toast::new(text);
+        // A toast parses its title as markup too, and some of these carry an
+        // error message - a path, or ffmpeg's own words. One ampersand in
+        // either would slide an empty bar across the page.
+        toast.set_use_markup(false);
+        self.ui.toasts.add_toast(toast);
     }
 
     /// Is this the page currently being looked at?
@@ -1164,16 +1167,13 @@ impl App {
         self.ui.language_rows.borrow_mut().clear();
 
         if available.is_empty() {
-            let row = adw::SwitchRow::builder()
-                .title(tr("No language tracks found"))
-                .sensitive(false)
-                .build();
+            let row = rows::switch().title(tr("No language tracks found")).sensitive(false).build();
             self.ui.language_group.add(&row);
             return;
         }
         for (code, wanted) in self.prefs.prefs.borrow().preselect(available) {
             let language = lang::parse(&code);
-            let row = adw::SwitchRow::builder()
+            let row = rows::switch()
                 .title(&language.name)
                 // The code is worth showing: a disc may tag the same language
                 // two ways, and this is what distinguishes the rows.
@@ -1392,7 +1392,10 @@ impl App {
 
         let (title, description, ready) = Self::drive_status(&drives, selected.as_ref());
         self.ui.drive_page.set_title(&title);
-        self.ui.drive_page.set_description(Some(&description));
+        // An AdwStatusPage description is markup and has no switch to turn
+        // that off the way a row does, so the drive's own name - the only part
+        // of this that is not ours - is escaped instead.
+        self.ui.drive_page.set_description(Some(&glib::markup_escape_text(&description)));
         // Analysing a drive with no disc in it can only fail, so it is not
         // offered rather than offered and then refused.
         self.ui.drive_next.set_sensitive(ready && !self.is_busy());
@@ -1762,7 +1765,7 @@ impl App {
         }
         for p in &r.produced {
             let langs: Vec<&str> = p.subtitles.iter().map(|s| s.language.name.as_str()).collect();
-            let row = adw::ActionRow::builder()
+            let row = rows::action()
                 .title(p.destination.file_name().unwrap_or_default().to_string_lossy().to_string())
                 .subtitle(format!(
                     "{}   subtitles: {}",
@@ -1774,7 +1777,7 @@ impl App {
             self.ui.result_rows.borrow_mut().push(row);
         }
         for (f, why) in &r.skipped {
-            let row = adw::ActionRow::builder()
+            let row = rows::action()
                 .title(f.file_name().unwrap_or_default().to_string_lossy().to_string())
                 .subtitle(why)
                 .css_classes(vec!["error".to_string()])

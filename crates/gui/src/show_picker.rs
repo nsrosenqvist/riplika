@@ -12,6 +12,7 @@
 //! a list, and nothing about what is in the list.
 
 use crate::i18n::tr;
+use crate::rows;
 use adw::prelude::*;
 use riplika_core::identify::music::Match;
 use riplika_core::model::Candidate;
@@ -95,7 +96,7 @@ impl Picker {
     pub fn show(&self, choices: &[Choice], on_choose: impl Fn(usize) + 'static) {
         self.clear();
         if choices.is_empty() {
-            let row = adw::ActionRow::builder()
+            let row = rows::action()
                 .title(tr("Nothing found"))
                 .subtitle(tr("Try a different spelling, or part of the title"))
                 .build();
@@ -106,11 +107,8 @@ impl Picker {
         }
         let chooser = std::rc::Rc::new(on_choose);
         for (i, c) in choices.iter().enumerate() {
-            let row = adw::ActionRow::builder()
-                .title(&c.title)
-                .subtitle(&c.subtitle)
-                .activatable(true)
-                .build();
+            let row =
+                rows::action().title(&c.title).subtitle(&c.subtitle).activatable(true).build();
             if let Some(confidence) = c.confidence {
                 let pct = gtk::Label::new(Some(&format!("{:.0}%", confidence * 100.0)));
                 pct.add_css_class("dim-label");
@@ -139,7 +137,7 @@ impl Picker {
         if typed.is_empty() {
             return;
         }
-        let row = adw::ActionRow::builder()
+        let row = rows::action()
             .title(tr("Use this name anyway"))
             .subtitle(&explanation)
             .activatable(true)
@@ -153,7 +151,7 @@ impl Picker {
     /// Say that a search is under way, where its answer will appear.
     pub fn show_searching(&self) {
         self.clear();
-        let row = adw::ActionRow::builder().title(tr("Searching...")).build();
+        let row = rows::action().title(tr("Searching...")).build();
         row.add_suffix(&gtk::Spinner::builder().spinning(true).build());
         row.set_sensitive(false);
         self.list.append(&row);
@@ -167,8 +165,7 @@ impl Picker {
     /// searched is looking.
     pub fn show_problem(&self, why: &str) {
         self.clear();
-        let row =
-            adw::ActionRow::builder().title(tr("That search did not work")).subtitle(why).build();
+        let row = rows::action().title(tr("That search did not work")).subtitle(why).build();
         row.set_sensitive(false);
         self.list.append(&row);
         self.offer_the_typed_name();
