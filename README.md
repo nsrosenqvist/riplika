@@ -1,8 +1,12 @@
 # Riplika
 
-Riplika turns a disc into files a media server can read, without the naming and tagging afterwards.
+Riplika reads a disc and writes files a media server can use, with the naming
+and tagging already done.
 
-Put a disc in and Riplika works out what kind it is, reads the parts worth keeping, and writes them where the software that plays them will look:
+Doing the same thing by hand means a rip, then a transcode, then replacing the
+subtitle pictures with text so the server does not re-encode the film on every
+play. Little of that varies between discs, which is what makes it worth
+automating.
 
 ```
 Season 06/
@@ -13,6 +17,11 @@ Season 06/
 ```
 
 There is a window and a command line, and both do the same things.
+
+Quality is High, Medium or Low, and the rest of what another tool would ask you
+is measured from the disc instead. The narrow set of choices is deliberate.
+Anyone who wants to sit over an encode and tune it is better served by the tools
+that already do that well.
 
 ## Three kinds of disc
 
