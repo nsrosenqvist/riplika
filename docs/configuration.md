@@ -17,8 +17,7 @@ The glyph table and the wordlists are not offered as settings. They are applicat
 
 ## The logs
 
-Every disc writes its own file, all in one directory, named so that sorting them
-puts a season in the order it was ripped:
+Every disc writes its own file, all in one directory, named so that sorting them puts a season in the order it was ripped:
 
 ```
 2026-08-27T2015-PARKS_AND_RECREATION_S6D1.log
@@ -26,21 +25,11 @@ puts a season in the order it was ripped:
 2026-08-29T1102-PARKS_AND_RECREATION_S6D3.log
 ```
 
-A season is six or seven discs over as many evenings, and by the end there is no
-answering "did episode four of disc two have unrecognised glyphs?" from memory.
-The label is in the name so a directory listing says which disc each one was
-without opening it.
+A season is six or seven discs over as many evenings, and by the end there is no answering "did episode four of disc two have unrecognised glyphs?" from memory. The label is in the name so a directory listing says which disc each one was without opening it.
 
-Written as the run happens rather than assembled at the end, and flushed line by
-line: the runs worth reading afterwards are the interrupted ones and the failed
-ones, and a log built at the end would not exist for either. Progress is left
-out - it arrives hundreds of times a second and says nothing the lines around it
-do not.
+Written as the run happens rather than assembled at the end, and flushed line by line: the runs worth reading afterwards are the interrupted ones and the failed ones, and a log built at the end would not exist for either. Progress is left out - it arrives hundreds of times a second and says nothing the lines around it do not.
 
-Local time rather than UTC, because these are read by someone remembering which
-evening they did which disc, and by one implementation shared between the window
-and the terminal - a season ripped partly with each would otherwise sort into an
-order that is neither.
+Local time rather than UTC, because these are read by someone remembering which evening they did which disc, and by one implementation shared between the window and the terminal - a season ripped partly with each would otherwise sort into an order that is neither.
 
 ## Preferences
 

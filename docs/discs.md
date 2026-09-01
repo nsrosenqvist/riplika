@@ -136,9 +136,7 @@ That table also carries chapter counts, and the demuxer reports chapter *duratio
 
 ## Opening automatically when a disc goes in
 
-A desktop can offer an application when a disc is inserted, and the mechanism is
-the same one that opens a file: the volume is mounted and matched to a content
-type, and applications that declare it are offered.
+A desktop can offer an application when a disc is inserted, and the mechanism is the same one that opens a file: the volume is mounted and matched to a content type, and applications that declare it are offered.
 
 Riplika declares the four that matter:
 
@@ -147,15 +145,9 @@ MimeType=x-content/video-dvd;x-content/video-bluray;x-content/video-vcd;x-conten
 Exec=riplika-gui %u
 ```
 
-The `%u` is the important half. What the desktop hands over is the *mount
-point* - `file:///run/media/someone/PARKS_AND_RECREATION` - because that is what
-it knows about, while everything here works from a device. So the window reads
-the kernel's mount table and works back, then selects that drive rather than
-guessing, which is the only way to be right on a machine with two.
+The `%u` is the important half. What the desktop hands over is the *mount point* - `file:///run/media/someone/PARKS_AND_RECREATION` - because that is what it knows about, while everything here works from a device. So the window reads the kernel's mount table and works back, then selects that drive rather than guessing, which is the only way to be right on a machine with two.
 
-Both encodings have to be undone to get there, and they are not the same
-encoding: the URI percent-encodes a space as `%20` and the mount table escapes
-it in octal as `\040`.
+Both encodings have to be undone to get there, and they are not the same encoding: the URI percent-encodes a space as `%20` and the mount table escapes it in octal as `\040`.
 
 To register it after building:
 
@@ -165,8 +157,7 @@ install -Dm644 data/com.nsrosenqvist.Riplika.desktop ~/.local/share/applications
 update-desktop-database ~/.local/share/applications
 ```
 
-Then it appears in GNOME Settings under Removable Media, or in the prompt a
-desktop shows when a disc goes in, beside whatever else is installed:
+Then it appears in GNOME Settings under Removable Media, or in the prompt a desktop shows when a disc goes in, beside whatever else is installed:
 
 ```
 $ gio mime x-content/video-dvd
@@ -219,9 +210,7 @@ flatpak-builder --install --user build packaging/com.nsrosenqvist.Riplika.yml
 
 ## Hardware notes
 
-Things measured on real discs and real drives here, kept because none of them
-is recoverable by reading the code. Most have a matching comment where they
-bite; this is the list.
+Things measured on real discs and real drives here, kept because none of them is recoverable by reading the code. Most have a matching comment where they bite; this is the list.
 
 **A FakeRunner accepts commands real ffmpeg refuses.** Every test here drives one, which is what makes them fast and offline, and it means a command can be well-formed to the tests and rejected by ffmpeg. That is not hypothetical: files are written to a `.part` path while being made, ffmpeg picks its muxer from the extension, `.part` is not one, and every transcode failed with "Invalid argument" while the whole suite passed. Anything about *how ffmpeg reads a command* needs a real run to confirm - `riplika process` on a directory of two short files takes seconds.
 

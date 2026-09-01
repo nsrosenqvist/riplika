@@ -1,12 +1,8 @@
 # Riplika
 
-Riplika reads a disc and writes files a media server can use, with the naming
-and tagging already done.
+Riplika reads a disc and writes files a media server can use, with the naming and tagging already done.
 
-By hand the same disc takes a rip, a transcode, and then work on the subtitles,
-which arrive as pictures and have to become text before a media server will stop
-re-encoding the film on every play. Little of that changes from disc to disc,
-and that is the case for automating it.
+By hand the same disc takes a rip, a transcode, and then work on the subtitles, which arrive as pictures and have to become text before a media server will stop re-encoding the film on every play. Little of that changes from disc to disc, and that is the case for automating it.
 
 ```
 Season 06/
@@ -16,10 +12,7 @@ Season 06/
     Parks and Recreation - S06E04 - Doppelgangers - Extended Cut.mp4
 ```
 
-There is a window and a command line, and both do the same things. Quality has
-three settings and everything else is measured from the disc, which is a
-deliberate limit. Anyone who wants to sit over an encode and tune it is better
-served by the tools that already do that well.
+There is a window and a command line, and both do the same things. Quality has three settings and everything else is measured from the disc, which is a deliberate limit. Anyone who wants to sit over an encode and tune it is better served by the tools that already do that well.
 
 ## Three kinds of disc
 
@@ -107,22 +100,15 @@ See [docs/subtitles.md](docs/subtitles.md), which explains why this beats runnin
 
 ### Publishing
 
-The release workflow builds a `.flatpak` bundle and attaches it to the tag, so
-anyone can install a release without a repository being involved:
+The release workflow builds a `.flatpak` bundle and attaches it to the tag, so anyone can install a release without a repository being involved:
 
 ```sh
 flatpak install ./riplika-0.3.0.flatpak
 ```
 
-That needs the GNOME 50 runtime, which comes from Flathub, so a machine with
-no remotes configured has to add Flathub once first.
+That needs the GNOME 50 runtime, which comes from Flathub, so a machine with no remotes configured has to add Flathub once first.
 
-For a Flathub submission, the same tag also carries a manifest with its source
-pinned to that tag, and the cargo source list it refers to. Both are generated
-from the manifest in `packaging/`, so there is no second copy to keep in step.
-The screenshots a software centre shows are served from this repository at the
-tag, since a branch moves and what Flathub keeps is whatever it fetched at the
-time. `./release.sh` rewrites those URLs to the tag it is making.
+For a Flathub submission, the same tag also carries a manifest with its source pinned to that tag, and the cargo source list it refers to. Both are generated from the manifest in `packaging/`, so there is no second copy to keep in step. The screenshots a software centre shows are served from this repository at the tag, since a branch moves and what Flathub keeps is whatever it fetched at the time. `./release.sh` rewrites those URLs to the tag it is making.
 
 ## Documentation
 

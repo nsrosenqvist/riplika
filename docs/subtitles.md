@@ -137,30 +137,12 @@ Measured: of Frozen's 110 glyphs, **1** matches the Parks and Recreation table; 
 
 ## Reading the track
 
-A VobSub track is read out of Matroska directly, by about three hundred lines of
-EBML in `subs/matroska.rs` - the timestamp scale, the subtitle tracks, and the
-blocks belonging to one of them. Matroska is a large format and almost none of
-it matters here.
+A VobSub track is read out of Matroska directly, by about three hundred lines of EBML in `subs/matroska.rs` - the timestamp scale, the subtitle tracks, and the blocks belonging to one of them. Matroska is a large format and almost none of it matters here.
 
-This replaced `mkvextract`. ffmpeg can *read* VobSub but has no muxer to write
-the `.idx`/`.sub` pair, so obtaining one meant calling MKVToolNix - which
-requires Qt for every one of its tools, not only its window. That made it
-impossible to put subtitle recognition in a Flatpak without bundling Qt for the
-sake of one binary, and it was a dependency the native build did not need
-either.
+This replaced `mkvextract`. ffmpeg can *read* VobSub but has no muxer to write the `.idx`/`.sub` pair, so obtaining one meant calling MKVToolNix - which requires Qt for every one of its tools, not only its window. That made it impossible to put subtitle recognition in a Flatpak without bundling Qt for the sake of one binary, and it was a dependency the native build did not need either.
 
-Reading it here also skips a step in the common case. A rip *is* Matroska, so
-there is nothing to copy out first; only a subtitle inside some other container
-still needs ffmpeg to remux it, and a file is identified by its magic rather
-than its name.
+Reading it here also skips a step in the common case. A rip *is* Matroska, so there is nothing to copy out first; only a subtitle inside some other container still needs ffmpeg to remux it, and a file is identified by its magic rather than its name.
 
-Checked against the thing it replaced, on an episode carrying a real VobSub
-track: 448 cues either way, no unrecognised glyphs either way, and the two SRTs
-are byte-identical.
+Checked against the thing it replaced, on an episode carrying a real VobSub track: 448 cues either way, no unrecognised glyphs either way, and the two SRTs are byte-identical.
 
-One detail worth recording, because getting it wrong is silent: an unknown
-element size in EBML is every *value* bit set, so how many bits there are has to
-be known before the comparison. A one-byte size of 1 is the number one; a
-one-byte size of 127 means "to the end of the parent". Conflating them makes a
-one-byte element swallow the rest of the file, and the file simply appears to
-contain no tracks.
+One detail worth recording, because getting it wrong is silent: an unknown element size in EBML is every *value* bit set, so how many bits there are has to be known before the comparison. A one-byte size of 1 is the number one; a one-byte size of 127 means "to the end of the parent". Conflating them makes a one-byte element swallow the rest of the file, and the file simply appears to contain no tracks.
