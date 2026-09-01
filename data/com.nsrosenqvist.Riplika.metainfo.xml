@@ -25,9 +25,9 @@
 
   <description>
     <p>
-      Riplika reads a disc and writes files a media server can use, with the
-      naming and tagging already done. It asks the drive what kind of disc it
-      is holding and reads it accordingly.
+      Riplika takes the tedious and technical parts out of backing up a media
+      library. It asks the drive what kind of disc it is holding, reads it
+      accordingly, and writes files that are already named and tagged.
     </p>
     <p>
       A DVD becomes encoded video whose subtitles have been turned from
