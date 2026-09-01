@@ -25,7 +25,7 @@ Two things, and both are real.
 
 **Damage.** MakeMKV retries unreadable sectors and carries on past the ones it cannot get. libdvdread mostly gives up. That covers scratched discs and also the deliberately corrupt sectors some copy protections write to break naive rippers.
 
-Losing either of those *silently* would be worse than not having the free path at all, because both fail the same way: the scan succeeds and quietly returns fewer titles. So `auto` watches for the signature - `Error cracking CSS key`, unreadable sectors - abandons the scan the moment it appears, and hands the disc to MakeMKV:
+Losing either of those *silently* would be worse than not having the free path at all, because both fail the same way, with a scan that succeeds and returns fewer titles than the disc holds. So `auto` watches for the signature - `Error cracking CSS key`, unreadable sectors - abandons the scan the moment it appears, and hands the disc to MakeMKV:
 
 ```
 reader: ffmpeg dvdvideo (makemkv in reserve)
@@ -99,7 +99,7 @@ Verified end to end against a real disc: rescuing one episode reads 0.79 GB, wri
 
 **It is resumable.** A map file is written beside the image in ddrescue's own format, recording the state of every sector. Stop it, clean the disc, run it again: only what is still missing is attempted. That is the difference between a scratched disc being a lost cause and being a second attempt.
 
-**What is not encrypted must not be decrypted.** `DVDCSS_READ_DECRYPT` descrambles whatever it is handed, and a DVD sector's payload starts at byte 128 - so decrypting the volume descriptors leaves their first 128 bytes intact and turns the rest into noise. The image then still mounts as a filesystem and still will not open as a DVD, which is a genuinely confusing way to fail. Only the video objects are read with decryption.
+**What is not encrypted must not be decrypted.** `DVDCSS_READ_DECRYPT` descrambles whatever it is handed, and a DVD sector's payload starts at byte 128 - so decrypting the volume descriptors leaves their first 128 bytes intact and turns the rest into noise. The image then still mounts as a filesystem and still will not open as a DVD, which is a confusing way to fail. Only the video objects are read with decryption.
 
 **Holes become padding, not zeros.** Unrecoverable sectors are filled with MPEG program-stream padding packets, which a demuxer skips. Zeros where a packet header belongs make it treat the rest of the stream as corrupt, so the choice is between losing a moment and losing the remainder of the file.
 
@@ -113,7 +113,7 @@ MakeMKV remains better on a disc whose damage is deliberate rather than accident
 
 ## Two things that make the free DVD path work
 
-Both were found by running it against a real disc, and both fail in the same dangerous way - a scan that succeeds and quietly returns a season with no episodes in it.
+Both were found by running it against a real disc, and both fail in the same dangerous way, with a scan that succeeds and returns a season holding no episodes.
 
 **`DVDCSS_METHOD=key`.** libdvdcss defaults to cracking title keys by brute force. On this disc that failed for exactly the VTSs holding the episodes:
 

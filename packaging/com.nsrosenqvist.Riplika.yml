@@ -1,19 +1,27 @@
 # Flatpak manifest for Riplika.
 #
-# The sandbox shapes what this can be, in two ways worth stating plainly.
+# Everything the three pipelines need is built here. ffmpeg with libdvdread,
+# libdvdnav and libdvdcss reads and encodes video; cdparanoia reads audio off a
+# CD and LAME encodes it to MP3; a game disc needs neither, since it is copied
+# rather than converted. A missing one of these does not announce itself at
+# startup, so packaging/check-flatpak.sh asks for each by name.
 #
-# MakeMKV cannot be bundled: it is proprietary, so redistributing it in this
+# Two things the sandbox decides, which are worth stating plainly.
+#
+# MakeMKV cannot be bundled, being proprietary, so redistributing it in this
 # manifest is not ours to do. Calling the host's copy would need
-# --talk-name=org.freedesktop.Flatpak, which is sandbox escape wearing a hat -
+# --talk-name=org.freedesktop.Flatpak, which is sandbox escape wearing a hat:
 # it would let this application run anything at all on the host, and claiming
-# to be sandboxed afterwards would be a lie. So the Flatpak is DVD-only, which
-# is workable precisely because the DVD path needs nothing proprietary:
-# libdvdread, libdvdnav and libdvdcss do the work, and ffmpeg exposes them.
-# Blu-ray needs the native build with makemkvcon on PATH.
+# to be sandboxed afterwards would be a lie. Video from a Blu-ray therefore
+# needs the native build with makemkvcon on PATH. DVDs, music CDs and game
+# discs all work in here, because none of those paths needs anything
+# proprietary.
 #
 # --device=all is required and is not a small permission. Flatpak has no
-# narrower option for an optical drive: --device=dri is the GPU, and there is
-# nothing for /dev/sr0 alone. Reading a disc means access to devices generally.
+# narrower option for an optical drive, since --device=dri is the GPU and
+# there is nothing for /dev/sr0 alone. Reading a disc means access to devices
+# generally, and the three permissions below it are each explained where they
+# are asked for.
 app-id: com.nsrosenqvist.Riplika
 runtime: org.gnome.Platform
 runtime-version: '50'
