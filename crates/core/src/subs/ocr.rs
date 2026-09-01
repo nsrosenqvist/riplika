@@ -43,7 +43,20 @@ pub const ZOOM: usize = 3;
 /// `l`, a curly quote for a straight one - is a real collision between real
 /// characters and is left for the vote to settle.
 fn plausible(text: &str) -> String {
-    text.replace('|', "I")
+    text.chars()
+        .map(|c| match c {
+            '|' => 'I',
+            // Typographic quotes, which Tesseract picks between run to run for
+            // the same shape. The disagreement is what costs: the votes split,
+            // the shape settles on nothing, and it comes out as a placeholder.
+            // Subtitles are written with straight quotes, and a straight quote
+            // where the disc drew a curly one is a difference nobody reading
+            // an episode will notice - where a blank is.
+            '\u{2018}' | '\u{2019}' | '\u{2032}' => '\'',
+            '\u{201c}' | '\u{201d}' | '\u{2033}' => '"',
+            other => other,
+        })
+        .collect()
 }
 
 /// Tesseract, run once per sampled line.
@@ -143,6 +156,15 @@ pub mod tests {
         // Tesseract answers "| mean, there were rumors" for three capital I in
         // four, and no subtitle font has a pipe in it.
         assert_eq!(plausible("| mean, there were rumors"), "I mean, there were rumors");
+    }
+
+    #[test]
+    fn curly_quotes_are_read_as_the_straight_ones_subtitles_use() {
+        // Tesseract picks between " and \u{2018} for the same shape from one line to
+        // the next. Split votes settle on nothing and the shape comes out as a
+        // placeholder, which is worse than either answer.
+        assert_eq!(plausible("\u{201c}Hello,\u{201d} he said"), "\"Hello,\" he said");
+        assert_eq!(plausible("it\u{2019}s"), "it's");
     }
 
     #[test]

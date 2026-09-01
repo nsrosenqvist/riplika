@@ -241,6 +241,29 @@ enum Cmd {
         #[arg(long, default_value_t = 0)]
         stream: usize,
     },
+    /// Label a glyph table by reading a sample of the disc's own subtitles.
+    ///
+    /// For a disc nobody has a table for. Tesseract reads a sample of lines,
+    /// the labels are voted from what it says, and everything afterwards is
+    /// the ordinary exact lookup. Wrong readings are outvoted; shapes it
+    /// cannot settle are left blank for `sheet` rather than guessed.
+    Learn {
+        input: PathBuf,
+        #[arg(long, default_value = "glyphs.json")]
+        table: PathBuf,
+        #[arg(long, default_value_t = 0)]
+        stream: usize,
+        /// Tesseract traineddata, e.g. eng or swe.
+        #[arg(long, default_value = "eng")]
+        lang: String,
+        #[arg(long, default_value_t = 0.90)]
+        min_agreement: f32,
+        /// The most cues to read.
+        #[arg(long, default_value_t = 400)]
+        cues: usize,
+        #[arg(long)]
+        name: Option<String>,
+    },
     /// Write an HTML page for reviewing and correcting labels.
     Sheet {
         #[arg(long, default_value = "glyphs.json")]
@@ -417,6 +440,9 @@ fn dispatch() -> Result<(), String> {
 
         Cmd::Build { inputs, table, reference, min_agreement, name, stream } => {
             glyphs::build(&inputs, &table, reference.as_deref(), min_agreement, name, stream)
+        }
+        Cmd::Learn { input, table, stream, lang, min_agreement, cues, name } => {
+            glyphs::learn(&input, &table, stream, &lang, min_agreement, cues, name)
         }
         Cmd::Sheet { table, out, zoom } => {
             let t = Table::load(&table).map_err(|e| e.to_string())?;

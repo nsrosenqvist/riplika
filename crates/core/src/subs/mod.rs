@@ -12,6 +12,7 @@
 //! 99.0% character accuracy, no unrecognised glyphs. Where the two disagree
 //! this is right 16.5% of the time and the reference 0.6%.
 
+pub mod learn;
 pub mod matroska;
 pub mod ocr;
 pub mod picture;

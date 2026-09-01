@@ -7,7 +7,7 @@
 //! the building ones: the one manual step is where the mistakes come from.
 
 use riplika_core::host::RealRunner;
-use riplika_core::subs::{segment, source, srt, table};
+use riplika_core::subs::{learn, segment, source, srt, table};
 use segment::SegOpts;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -34,9 +34,7 @@ pub fn build(
     }
 
     let opts = SegOpts::default();
-    let (mut n_ev, mut n_gl, mut n_votes, mut n_aligned, mut n_skipped) = (0, 0, 0, 0, 0);
-    // per glyph: gaps observed with no space after, and with a space after
-    let mut gapobs: BTreeMap<usize, (Vec<i32>, Vec<i32>)> = BTreeMap::new();
+    let mut teacher = learn::Teacher::new();
 
     for input in inputs {
         let src = match source::load(&RealRunner::default(), input, stream) {
@@ -46,7 +44,6 @@ pub fn build(
                 continue;
             }
         };
-        let events = src.events();
 
         // reference cues keyed by start time - our SRTs share the stream's timing
         let refmap: BTreeMap<u64, String> = match reference {
@@ -64,94 +61,93 @@ pub fn build(
             None => BTreeMap::new(),
         };
 
-        for ev in &events {
-            n_ev += 1;
+        for ev in &src.events() {
             let lines = segment::segment(&ev.spu, &src.idx.palette, &opts);
-            let idxs: Vec<Vec<usize>> =
-                lines.iter().map(|l| l.glyphs.iter().map(|g| t.observe(g)).collect()).collect();
-            let linegaps: Vec<Vec<i32>> = lines.iter().map(segment::gaps).collect();
-            n_gl += idxs.iter().map(|v| v.len()).sum::<usize>();
-
-            let Some(text) = refmap.get(&ev.start_ms) else {
-                continue;
-            };
-            // Vote only where the shapes and the reference agree exactly on
-            // structure; a guess here would poison the table.
-            let rlines: Vec<&str> = text.lines().collect();
-            if rlines.len() != idxs.len() {
-                n_skipped += 1;
-                continue;
-            }
-            let ok = rlines
-                .iter()
-                .zip(&idxs)
-                .all(|(r, gs)| r.chars().filter(|c| !c.is_whitespace()).count() == gs.len());
-            if !ok {
-                n_skipped += 1;
-                continue;
-            }
-            n_aligned += 1;
-            for ((r, gs), lg) in rlines.iter().zip(&idxs).zip(&linegaps) {
-                // Walk the reference including its spaces, so we learn not just
-                // what each glyph is but whether a space follows it.
-                let mut k = 0usize;
-                let mut space_pending = false;
-                for c in r.chars() {
-                    if c.is_whitespace() {
-                        space_pending = true;
-                        continue;
-                    }
-                    if k >= gs.len() {
-                        break;
-                    }
-                    t.vote(gs[k], &c.to_string());
-                    n_votes += 1;
-                    if k > 0
-                        && let Some(&g) = lg.get(k - 1)
-                    {
-                        let e = gapobs.entry(gs[k - 1]).or_default();
-                        if space_pending { e.1.push(g) } else { e.0.push(g) }
-                    }
-                    space_pending = false;
-                    k += 1;
-                }
-            }
+            teacher.read(&mut t, &lines, refmap.get(&ev.start_ms).map(String::as_str));
         }
         println!("  {}", input.file_name().unwrap_or_default().to_string_lossy());
     }
 
-    // Turn the gap observations into a per-glyph threshold: midway between the
-    // typical within-word gap and the typical gap that carried a space.
-    let mut learned = 0;
-    for (gi, (mut no, mut yes)) in gapobs {
-        if no.len() < 6 || yes.len() < 6 {
-            continue;
-        }
-        no.sort_unstable();
-        yes.sort_unstable();
-        let lo = no[no.len() * 3 / 4];
-        let hi = yes[yes.len() / 4];
-        if hi > lo {
-            t.glyphs[gi].gap = Some((lo + hi + 1) / 2);
-            learned += 1;
-        }
-    }
-    let (set, ambiguous, shaky) = t.apply_votes(min_agreement);
-    t.reindex();
+    let lesson = teacher.lesson;
+    let settled = teacher.settle(&mut t, min_agreement);
     t.save(table_path).map_err(|e| e.to_string())?;
 
     println!();
-    println!("events segmented   : {n_ev}");
-    println!("glyph instances    : {n_gl}");
+    println!("events segmented   : {}", lesson.events);
+    println!("glyph instances    : {}", lesson.instances);
     println!("distinct glyphs    : {}", t.glyphs.len());
     if reference.is_some() {
-        println!("cues aligned       : {n_aligned} (skipped {n_skipped})");
-        println!("votes cast         : {n_votes}");
-        println!("labelled           : {set}");
-        println!("ambiguity classes  : {ambiguous}  (font draws them identically)");
-        println!("undecided          : {shaky}");
+        println!("cues aligned       : {} (skipped {})", lesson.aligned, lesson.skipped);
+        println!("votes cast         : {}", lesson.votes);
+        println!("labelled           : {}", settled.labelled);
+        println!("ambiguity classes  : {}  (font draws them identically)", settled.ambiguous);
+        println!("undecided          : {}", settled.undecided);
     }
-    println!("per-glyph spacing  : {learned} glyphs");
+    println!("per-glyph spacing  : {} glyphs", settled.spacing);
+    println!("unlabelled         : {}", t.unlabelled());
+    println!("table              : {}", table_path.display());
+    Ok(())
+}
+
+/// Label a table by reading a sample of the disc's own lines.
+///
+/// The disc is its own reference. Nothing is downloaded, nothing is asked of
+/// the user, and the reading is thrown away - only the labels survive, and
+/// every episode afterwards decodes by exact lookup as before.
+#[allow(clippy::too_many_arguments)]
+pub fn learn(
+    input: &Path,
+    table_path: &Path,
+    stream: usize,
+    lang: &str,
+    min_agreement: f32,
+    cues: usize,
+    name: Option<String>,
+) -> Result<(), String> {
+    let runner = RealRunner::default();
+    if !riplika_core::subs::ocr::available(&runner) {
+        return Err("tesseract is not installed, so there is nothing to read the shapes".into());
+    }
+    let mut t = if table_path.exists() {
+        Table::load(table_path).map_err(|e| e.to_string())?
+    } else {
+        Table::default()
+    };
+    if let Some(n) = name {
+        t.source = n;
+    }
+    if t.version == 0 {
+        t.version = 1;
+    }
+
+    let src = source::load(&runner, input, stream).map_err(|e| e.to_string())?;
+    let scratch = source::temp_dir("ocr").map_err(|e| e.to_string())?;
+    let reader = riplika_core::subs::ocr::Tesseract {
+        runner: &runner,
+        scratch: &scratch.0,
+        language: lang.to_string(),
+    };
+    let effort = learn::Effort { cues, agreement: min_agreement, ..learn::Effort::default() };
+    let opts = SegOpts::default();
+    let events = src.events();
+    let stream = learn::Stream { events: &events, palette: &src.idx.palette, opts: &opts };
+    let mut last = 0;
+    let settled = learn::from_reader(&reader, stream, &mut t, effort, &mut |f| {
+        let pct = (f * 100.0) as u32;
+        if pct >= last + 5 {
+            last = pct;
+            eprint!("\r  reading {pct}%");
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    eprintln!();
+    t.save(table_path).map_err(|e| e.to_string())?;
+
+    println!("distinct glyphs    : {}", t.glyphs.len());
+    println!("labelled           : {}", settled.labelled);
+    println!("ambiguity classes  : {}  (font draws them identically)", settled.ambiguous);
+    println!("undecided          : {}", settled.undecided);
+    println!("per-glyph spacing  : {} glyphs", settled.spacing);
     println!("unlabelled         : {}", t.unlabelled());
     println!("table              : {}", table_path.display());
     Ok(())
