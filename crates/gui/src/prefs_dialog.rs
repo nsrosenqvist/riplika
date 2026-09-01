@@ -54,16 +54,12 @@ where
     let page = adw::PreferencesPage::builder().title(tr("General")).build();
 
     // --- reading discs ----------------------------------------------------
-    let reading = adw::PreferencesGroup::builder()
-        .title(tr("Reading discs"))
-        .description(
-            "DVDs are read with libdvdread and libdvdcss, which need nothing \
-             proprietary. MakeMKV is needed for Blu-ray, and for DVDs the free \
-             reader cannot manage - a disc whose region does not match the \
-             drive, or one that is scratched.",
-        )
-        .build();
-
+    //
+    // Left out entirely inside a flatpak. MakeMKV is proprietary and cannot be
+    // bundled, so it is never on PATH in there and the switch could only ever
+    // sit greyed out explaining itself. A control that can never be used is
+    // worse than no control.
+    let sandboxed = riplika_core::host::in_flatpak();
     let installed = Preferences::makemkv_available();
     let makemkv = adw::SwitchRow::builder()
         .title(tr("Use MakeMKV when needed"))
@@ -82,8 +78,18 @@ where
     // failure would otherwise surface forty minutes into a disc.
     makemkv.set_sensitive(installed);
     makemkv.set_active(installed && store.prefs.borrow().makemkv_fallback);
-    reading.add(&makemkv);
-    page.add(&reading);
+    if !sandboxed {
+        let reading = adw::PreferencesGroup::builder()
+            .title(tr("Reading discs"))
+            .description(
+                "DVDs are read with libdvdread and libdvdcss, which need \
+                 nothing proprietary. MakeMKV is used as a fallback when it is \
+                 installed, for a disc the free reader cannot manage.",
+            )
+            .build();
+        reading.add(&makemkv);
+        page.add(&reading);
+    }
 
     // --- languages --------------------------------------------------------
     let languages = adw::PreferencesGroup::builder()

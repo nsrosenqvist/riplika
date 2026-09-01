@@ -29,13 +29,13 @@ Which pipeline runs is decided by asking the drive, not by asking you.
 
 | In the drive | What comes out | Named by |
 | --- | --- | --- |
-| DVD or Blu-ray | Encoded video with text subtitles | TMDB, TVmaze or Wikidata |
+| DVD | Encoded video with text subtitles | TMDB, TVmaze or Wikidata |
 | Music CD | FLAC or MP3, tagged, with cover art | MusicBrainz, or the disc's own CD-Text |
 | Game disc | A raw image, or a cue sheet and one file per track | Redump datfiles |
 
 ### Video
 
-DVDs need nothing proprietary, since libdvdread and libdvdcss do the reading through ffmpeg. MakeMKV covers Blu-ray, and DVDs the free path cannot manage, such as a disc whose region does not match the drive.
+DVDs need nothing proprietary, since libdvdread and libdvdcss do the reading through ffmpeg. MakeMKV is used as a fallback where it is installed, for a disc the free reader cannot manage.
 
 The volume label says what a disc claims to be, while its structure says what is actually on it. A "play all" title replays the episodes back to back, so decomposing it recovers which titles are episodes and what order they belong in. That reading is checked against a catalogue and shown to you before anything is read.
 
@@ -61,13 +61,13 @@ Two checks run while a disc is being dumped. The drive's C2 error pointers say w
 
 ## Getting started
 
-The Flatpak carries everything except MakeMKV:
+The Flatpak carries everything it needs:
 
 ```sh
 flatpak-builder --user --install --force-clean build packaging/com.nsrosenqvist.Riplika.yml
 ```
 
-For a native build you need ffmpeg, cdparanoia, and MakeMKV if you want Blu-ray. On Arch:
+For a native build you need ffmpeg and cdparanoia. On Arch:
 
 ```sh
 sudo pacman -S ffmpeg libdvdcss libdvdread libdvdnav cdparanoia
@@ -142,7 +142,7 @@ says where it goes.
 
 Riplika works and is in use. The subtitle recogniser has been measured over 122 episodes. Disc handling has been run against real discs, including damaged ones: a PC CD-ROM matched Redump byte for byte, and a scratched PlayStation disc was caught by its own C2 flags rather than passing as a good dump. The Flatpak builds in CI on every push. The window is functional but has not had a designer near it.
 
-Known gaps: Blu-ray needs MakeMKV, and no free reader is worth pretending otherwise about. Inside the Flatpak, a library configured somewhere other than the three default folders is not reachable, because the sandbox has no way for the application to ask for it.
+Known gaps: Blu-ray is untested, so nothing here claims to handle it. Inside the Flatpak, a library configured somewhere other than the three default folders is not reachable, because the sandbox has no way for the application to ask for it, and MakeMKV cannot be bundled so the option to use it is not shown there.
 
 ## Licence
 

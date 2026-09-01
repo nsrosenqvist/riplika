@@ -42,10 +42,6 @@
       looks finished. Audio is checked against the drive's own error pointers
       and data sectors against the error detection written inside them.
     </p>
-    <p>
-      Blu-ray needs MakeMKV, which cannot be bundled here. Everything else in
-      this package works on its own.
-    </p>
   </description>
 
   <launchable type="desktop-id">com.nsrosenqvist.Riplika.desktop</launchable>
@@ -61,7 +57,6 @@
 
   <keywords>
     <keyword>DVD</keyword>
-    <keyword>Blu-ray</keyword>
     <keyword>CD</keyword>
     <keyword>rip</keyword>
     <keyword>subtitles</keyword>

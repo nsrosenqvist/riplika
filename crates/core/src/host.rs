@@ -130,6 +130,16 @@ impl Output {
     }
 }
 
+/// Are we running inside a flatpak?
+///
+/// The file is what flatpak puts in every sandbox, and asking for it is the
+/// documented way to find out. Worth knowing because some things cannot work
+/// in here however they are configured, and offering them anyway leaves a
+/// control that explains itself only by staying grey.
+pub fn in_flatpak() -> bool {
+    Path::new("/.flatpak-info").exists()
+}
+
 /// What a job's error says when it was stopped rather than went wrong.
 ///
 /// A value both sides agree on, because the two do different things with it:

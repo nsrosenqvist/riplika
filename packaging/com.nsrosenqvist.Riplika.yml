@@ -12,10 +12,11 @@
 # manifest is not ours to do. Calling the host's copy would need
 # --talk-name=org.freedesktop.Flatpak, which is sandbox escape wearing a hat:
 # it would let this application run anything at all on the host, and claiming
-# to be sandboxed afterwards would be a lie. Video from a Blu-ray therefore
-# needs the native build with makemkvcon on PATH. DVDs, music CDs and game
-# discs all work in here, because none of those paths needs anything
-# proprietary.
+# to be sandboxed afterwards would be a lie. A disc the free reader cannot
+# manage therefore needs the native build with makemkvcon on PATH, and the
+# window does not offer the option in here, since it could only sit greyed
+# out. DVDs, music CDs and game discs all work in the sandbox, because none of
+# those paths needs anything proprietary.
 #
 # --device=all is required and is not a small permission. Flatpak has no
 # narrower option for an optical drive, since --device=dri is the GPU and
