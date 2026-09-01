@@ -13,6 +13,8 @@
 //! this is right 16.5% of the time and the reference 0.6%.
 
 pub mod matroska;
+pub mod ocr;
+pub mod picture;
 pub mod recognize;
 pub mod resolve;
 pub mod segment;
