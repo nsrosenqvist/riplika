@@ -36,6 +36,15 @@ check "cdparanoia is present"          bash -c \
   "flatpak run --command=cdparanoia $APP -V 2>&1 | grep -q 'cdparanoia III'"
 check "mkvextract is NOT needed"       bash -c \
   "! flatpak run --command=sh $APP -c 'command -v mkvextract' >/dev/null 2>&1"
+# A disc whose subtitle face is not already in a glyph table is labelled by
+# reading it. Without these it keeps its subtitles as pictures, which is what
+# The Lion King did on every build before they were bundled.
+check "tesseract is present"           bash -c \
+  "flatpak run --command=tesseract $APP --version 2>&1 | grep -q '^tesseract'"
+check "it can find its language data"  bash -c \
+  "flatpak run --command=tesseract $APP --list-langs 2>&1 | grep -qx eng"
+check "and the languages discs use"    bash -c \
+  "flatpak run --command=tesseract $APP --list-langs 2>&1 | grep -qx swe"
 echo "--- the application ---"
 check "the CLI runs"                   bash -c \
   "flatpak run --command=riplika $APP --version | grep -q riplika"

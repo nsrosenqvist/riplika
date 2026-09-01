@@ -681,6 +681,19 @@ fn reporter() -> impl FnMut(Event) {
                 let _ = std::io::stdout().flush();
                 on_progress_line = true;
             }
+            Event::TableChosen { path, covered, built } => {
+                clear(&mut on_progress_line);
+                let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                if built {
+                    println!("  lettering learned from this disc -> {name}");
+                } else {
+                    println!("  lettering: {name} ({:.0}% of this disc)", covered * 100.0);
+                }
+            }
+            Event::LetteringLearned { labelled, ambiguous, blank } => {
+                clear(&mut on_progress_line);
+                println!("  {labelled} shapes labelled, {ambiguous} ambiguous, {blank} blank");
+            }
             Event::ItemStarted { index, total, name } => {
                 clear(&mut on_progress_line);
                 println!("  [{}/{}] {name}", index + 1, total);

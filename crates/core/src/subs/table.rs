@@ -73,6 +73,17 @@ impl Table {
         Ok(t)
     }
 
+    /// The same as `load`, for callers that read through the `Fs` port.
+    ///
+    /// The index is not stored - it is derived from the glyphs - so a table
+    /// deserialised without rebuilding it looks empty to every lookup, which
+    /// reads as "this table knows nothing about this disc".
+    pub fn from_bytes(bytes: &[u8]) -> Result<Table, String> {
+        let mut t: Table = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+        t.reindex();
+        Ok(t)
+    }
+
     pub fn save(&self, path: &Path) -> Result<(), String> {
         let mut t = self.clone();
         // most-seen first keeps the review sheet in a useful order

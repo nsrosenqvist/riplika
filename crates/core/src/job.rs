@@ -30,6 +30,9 @@ pub enum Stage {
     /// Checking a finished image against what it should be.
     Verify,
     Subtitles,
+    /// Working out what this disc's lettering says, for a face nobody has a
+    /// table for yet. Once per release, not once per disc.
+    Lettering,
     Transcode,
 }
 
@@ -42,6 +45,7 @@ impl Stage {
             Stage::Organise => "Sorting titles",
             Stage::Verify => "Verifying",
             Stage::Subtitles => "Reading subtitles",
+            Stage::Lettering => "Learning this disc's lettering",
             Stage::Transcode => "Transcoding",
         }
     }
@@ -66,6 +70,20 @@ pub enum Event {
         index: usize,
         destination: PathBuf,
         bytes: u64,
+    },
+    /// Which glyph table this disc is being decoded with, and how well it fits.
+    TableChosen {
+        path: PathBuf,
+        /// Share of the disc's glyph instances it can put a character to.
+        covered: f32,
+        /// Whether it was built for this disc just now.
+        built: bool,
+    },
+    /// What reading the disc's own lettering settled.
+    LetteringLearned {
+        labelled: usize,
+        ambiguous: usize,
+        blank: usize,
     },
     Subtitle {
         item: usize,
@@ -559,24 +577,7 @@ impl<'a> Pipeline<'a> {
         let mut report = Report::default();
         let outputs: Vec<&Item> = items.iter().filter(|i| i.role.wanted(&self.settings)).collect();
 
-        let table = match &self.settings.glyph_table {
-            Some(p) if self.ports.fs.exists(p) => match Table::load(p) {
-                Ok(t) => Some(t),
-                Err(e) => {
-                    let w = Warning::GlyphTableUnreadable { path: p.clone(), why: e.to_string() };
-                    events(Event::Warning(w.clone()));
-                    report.warnings.push(w);
-                    None
-                }
-            },
-            Some(p) => {
-                let w = Warning::GlyphTableMissing { path: p.clone() };
-                events(Event::Warning(w.clone()));
-                report.warnings.push(w);
-                None
-            }
-            None => None,
-        };
+        let table = self.lettering(&outputs, media, &mut report, events);
 
         for (n, item) in outputs.iter().enumerate() {
             self.ports.cancel.check()?;
@@ -624,6 +625,182 @@ impl<'a> Pipeline<'a> {
             }
         }
         Ok(report)
+    }
+
+    /// The subtitle streams this run is going to want, and where they live.
+    fn wanted_subtitles(&self, outputs: &[&Item]) -> Option<Wanted> {
+        let item = outputs.first()?;
+        let info = self.ports.prober.probe(&item.source).ok()?;
+        let streams = transcode::subtitles_to_recognise(&info, &self.settings.languages);
+        if streams.is_empty() {
+            return None;
+        }
+        let tracks = info.tracks_of(TrackKind::Subtitle);
+        let languages = streams
+            .iter()
+            .map(|s| tracks.get(*s).map(|t| t.language.clone()).unwrap_or_else(|| "und".into()))
+            .collect();
+        Some(Wanted { source: item.source.clone(), streams, languages })
+    }
+
+    /// Read a sample of the disc and label a table from what it says.
+    fn learn_lettering(
+        &self,
+        wanted: &Wanted,
+        media: &Media,
+        shapes: &std::collections::BTreeMap<String, u64>,
+        report: &mut Report,
+        events: Events,
+    ) -> Option<Table> {
+        let Some(dir) = self.settings.tables_dir.clone() else {
+            note(Warning::NoGlyphTable, report, events);
+            return None;
+        };
+        let installed = subs::ocr::languages(self.ports.runner);
+        if installed.is_empty() {
+            note(Warning::CannotLearnLettering { shapes: shapes.len() }, report, events);
+            return None;
+        }
+        if self.ports.fs.create_dir_all(&dir).is_err() {
+            note(Warning::NoGlyphTable, report, events);
+            return None;
+        }
+
+        events(Event::Stage(Stage::Lettering));
+        let scratch = match subs::source::temp_dir("ocr") {
+            Ok(d) => d,
+            Err(_) => {
+                note(Warning::NoGlyphTable, report, events);
+                return None;
+            }
+        };
+        let opts = subs::segment::SegOpts::default();
+        let mut table = Table::default();
+        table.version = 1;
+        table.source = media.title().to_string();
+        let mut settled = subs::learn::Settled::default();
+
+        for (n, (stream, language)) in wanted.streams.iter().zip(&wanted.languages).enumerate() {
+            if self.ports.cancel.check().is_err() {
+                break;
+            }
+            let code = lang::parse(language).code;
+            let Some(data) = subs::ocr::data_for(&installed, &code) else {
+                continue;
+            };
+            let Ok(src) = subs::source::load(self.ports.runner, &wanted.source, *stream) else {
+                continue;
+            };
+            let reader = subs::ocr::Tesseract {
+                runner: self.ports.runner,
+                scratch: &scratch.0,
+                language: data,
+            };
+            let cues = src.events();
+            let share = 1.0 / wanted.streams.len() as f32;
+            let base = n as f32 * share;
+            let outcome = subs::learn::from_reader(
+                &reader,
+                subs::learn::Stream { events: &cues, palette: &src.idx.palette, opts: &opts },
+                &mut table,
+                subs::learn::Effort::default(),
+                &mut |f| {
+                    events(Event::Progress {
+                        stage: Stage::Lettering,
+                        fraction: base + f * share,
+                        message: None,
+                    });
+                },
+            );
+            match outcome {
+                Ok(s) => settled = s,
+                Err(e) => note(
+                    Warning::SubtitlesUnreadable { language: language.clone(), why: e.to_string() },
+                    report,
+                    events,
+                ),
+            }
+        }
+
+        if settled.labelled == 0 {
+            note(Warning::CannotLearnLettering { shapes: shapes.len() }, report, events);
+            return None;
+        }
+        let path = subs::tables::path_for(&dir, media.title());
+        match serde_json::to_vec_pretty(&table)
+            .map_err(|e| e.to_string())
+            .and_then(|b| self.ports.fs.write(&path, &b).map_err(|e| e.to_string()))
+        {
+            Ok(()) => events(Event::TableChosen { path, covered: 1.0, built: true }),
+            // Not fatal: it was built, it works for this disc, and the only
+            // cost of not keeping it is reading the next disc of the set again.
+            Err(why) => note(Warning::CacheNotCleared { path, why }, report, events),
+        }
+        events(Event::LetteringLearned {
+            labelled: settled.labelled,
+            ambiguous: settled.ambiguous,
+            blank: table.unlabelled(),
+        });
+        Some(table)
+    }
+
+    /// The glyph table to decode this disc's subtitles with.
+    ///
+    /// Every table there is gets tried against the shapes actually on the disc,
+    /// and the one that explains most of them wins. Nothing is keyed or
+    /// remembered: a second disc of the same release reuses the first's table
+    /// because it fits, not because anything wrote down that they are related.
+    ///
+    /// When none fits, the disc is read and labelled into a table of its own.
+    /// That is the only way this can work for somebody who is not going to
+    /// label a few hundred shapes by hand, and before it existed a disc from a
+    /// studio the shipped table did not cover produced subtitles that were
+    /// nothing but placeholders.
+    fn lettering(
+        &self,
+        outputs: &[&Item],
+        media: &Media,
+        report: &mut Report,
+        events: Events,
+    ) -> Option<Table> {
+        // A table named in preferences that is not there is a mistake worth
+        // saying out loud, whatever else is available.
+        if let Some(p) = &self.settings.glyph_table
+            && !self.ports.fs.exists(p)
+        {
+            note(Warning::GlyphTableMissing { path: p.clone() }, report, events);
+        }
+
+        let streams = self.wanted_subtitles(outputs)?;
+        let opts = subs::segment::SegOpts::default();
+        let mut shapes = std::collections::BTreeMap::new();
+        // One stream is enough to tell which table fits: every language track
+        // on a disc is set in the same face.
+        let sample =
+            subs::source::load(self.ports.runner, &streams.source, streams.streams[0]).ok()?;
+        let events_on_disc = sample.events();
+        for ev in events_on_disc.iter().take(SAMPLE_CUES) {
+            subs::tables::shapes(
+                &subs::segment::segment(&ev.spu, &sample.idx.palette, &opts),
+                &mut shapes,
+            );
+        }
+        if shapes.is_empty() {
+            return None;
+        }
+
+        let paths = subs::tables::candidates(
+            self.ports.fs,
+            self.settings.glyph_table.as_deref(),
+            self.settings.tables_dir.as_deref(),
+        );
+        if let Some((path, table, covered)) = subs::tables::best(self.ports.fs, &paths, &shapes) {
+            events(Event::TableChosen { path, covered, built: false });
+            return Some(table);
+        }
+        drop(events_on_disc);
+        drop(sample);
+        self.learn_lettering(&streams, media, &shapes, report, events)
     }
 
     fn produce_one(
@@ -855,6 +1032,25 @@ impl<'a> Pipeline<'a> {
         }
         report
     }
+}
+
+/// Say a warning once, to whoever is watching and to the report.
+fn note(w: Warning, report: &mut Report, events: Events) {
+    events(Event::Warning(w.clone()));
+    report.warnings.push(w);
+}
+
+/// How many cues to look at before deciding which table fits.
+///
+/// Enough to see the alphabet several times over. The question is which face
+/// the disc is set in, and that is answered by the first minute of dialogue.
+const SAMPLE_CUES: usize = 80;
+
+/// The subtitle streams a run wants, and where to read them from.
+struct Wanted {
+    source: PathBuf,
+    streams: Vec<usize>,
+    languages: Vec<String>,
 }
 
 /// Which of how many, for the events that say where a run has got to.

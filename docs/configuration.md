@@ -6,6 +6,7 @@
 |---|---|---|
 | `$XDG_CONFIG_HOME/riplika/` | settings | worth backing up |
 | `$XDG_DATA_HOME/riplika/` | glyph table, wordlists, Redump datfiles | rebuildable, but slowly |
+| `$XDG_DATA_HOME/riplika/tables/` | a glyph table per release, as discs are met | rebuilt by re-reading a disc |
 | `$XDG_CACHE_HOME/riplika/rip/` | a disc, before encoding | thrown away |
 | `$XDG_CACHE_HOME/riplika/art/` | cover pictures, once fetched | thrown away |
 | `$XDG_STATE_HOME/riplika/logs/` | one file per disc | kept, for reading back |

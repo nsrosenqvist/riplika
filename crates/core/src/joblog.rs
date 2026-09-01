@@ -148,6 +148,17 @@ impl JobLog {
                 destination.file_name().unwrap_or_default().to_string_lossy(),
                 bytes / 1_048_576
             ),
+            Event::TableChosen { path, covered, built } => {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                if *built {
+                    format!("   lettering learned from this disc -> {name}")
+                } else {
+                    format!("   lettering: {name} ({:.0}% of this disc)", covered * 100.0)
+                }
+            }
+            Event::LetteringLearned { labelled, ambiguous, blank } => {
+                format!("   {labelled} shapes labelled, {ambiguous} ambiguous, {blank} left blank")
+            }
             Event::Subtitle { language, cues, unknown, recognised, .. } => {
                 if *recognised {
                     format!("   subtitles {language}: {cues} cues, {unknown} unrecognised glyphs")

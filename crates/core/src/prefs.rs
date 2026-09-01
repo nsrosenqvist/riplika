@@ -327,8 +327,18 @@ impl Preferences {
             drop_commentary: self.drop_commentary,
             words_dir: self.words_dir(),
             glyph_table: self.glyph_table(),
+            tables_dir: Some(Self::tables_dir()),
             episode_template: Some(self.episode_template.clone()).filter(|t| !t.trim().is_empty()),
         }
+    }
+
+    /// `$XDG_DATA_HOME/riplika/tables` - a glyph table per release.
+    ///
+    /// Beside the shipped one rather than replacing it: that one was built and
+    /// checked by hand and is the best table there is for the discs it covers.
+    /// These are the ones the application labelled for itself.
+    pub fn tables_dir() -> PathBuf {
+        Self::data_dir().join("tables")
     }
 
     /// `$XDG_DATA_HOME/riplika` - the glyph table and the wordlists.

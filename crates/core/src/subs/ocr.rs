@@ -116,6 +116,35 @@ pub fn read(reader: &dyn Reader, line: &Line) -> Result<String> {
     reader.read_line(&png)
 }
 
+/// The traineddata installed, e.g. `["eng", "swe"]`.
+///
+/// Asked rather than assumed: reading a Swedish track with the English data
+/// labels every a-ring as an a, and a table is reused by every disc of that
+/// release afterwards, so a wrong label here is not a wrong episode but a
+/// wrong season. Where the track's own language is missing, English still
+/// reads most of the alphabet and the letters it cannot are left blank.
+pub fn languages(runner: &dyn Runner) -> Vec<String> {
+    let Ok(out) = runner.run(&Command::new("tesseract").arg("--list-langs")) else {
+        return Vec::new();
+    };
+    out.stdout
+        .lines()
+        .chain(out.stderr.lines())
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.contains(' ') && !l.ends_with(':'))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Which traineddata to read a track of this language with.
+pub fn data_for(installed: &[String], language: &str) -> Option<String> {
+    let has = |c: &str| installed.iter().any(|l| l == c);
+    if has(language) {
+        return Some(language.to_string());
+    }
+    has("eng").then(|| "eng".to_string())
+}
+
 /// Whether a reader is installed at all.
 ///
 /// Checked before a disc is offered the treatment, so the answer is "this
@@ -173,6 +202,28 @@ pub mod tests {
         // the other here would hide the collision the table exists to record.
         assert_eq!(plausible("Iowa"), "Iowa");
         assert_eq!(plausible("lowa"), "lowa");
+    }
+
+    #[test]
+    fn a_track_is_read_with_its_own_language_where_that_is_installed() {
+        let installed = vec!["eng".to_string(), "swe".to_string()];
+        assert_eq!(data_for(&installed, "swe").as_deref(), Some("swe"));
+        // Icelandic is not installed; English still reads most of the alphabet
+        assert_eq!(data_for(&installed, "isl").as_deref(), Some("eng"));
+        assert_eq!(data_for(&[], "eng"), None);
+    }
+
+    #[test]
+    fn the_language_list_is_read_past_the_line_that_introduces_it() {
+        // tesseract prints "List of available languages in ...:" first, and
+        // taking that as a language name asks it for traineddata called "List".
+        let out = "List of available languages in \"/x/tessdata\" (3):\neng\nosd\nswe\n";
+        let langs: Vec<&str> = out
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.contains(' ') && !l.ends_with(':'))
+            .collect();
+        assert_eq!(langs, ["eng", "osd", "swe"]);
     }
 
     #[test]

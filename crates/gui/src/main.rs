@@ -887,6 +887,10 @@ fn warning_text(w: &Warning) -> String {
             "%1$s on this disc are not in the glyph table, which was built for another release; subtitles kept as pictures",
             &[&tr_n("%d shape", "%d shapes", *shapes as u32)],
         ),
+        Warning::CannotLearnLettering { shapes } => tr_args(
+            "no glyph table fits this disc and there is nothing installed to read its %1$s; subtitles kept as pictures",
+            &[&tr_n("%d shape", "%d shapes", *shapes as u32)],
+        ),
         Warning::SubtitlesUnreadable { language, why } => {
             tr_args("%1$s subtitles could not be read: %2$s", &[language, why])
         }
@@ -969,6 +973,7 @@ fn stage_label(stage: riplika_core::job::Stage) -> String {
         Stage::Organise => tr("Sorting titles"),
         Stage::Verify => tr("Verifying"),
         Stage::Subtitles => tr("Reading subtitles"),
+        Stage::Lettering => tr("Learning this disc's lettering"),
         Stage::Transcode => tr("Transcoding"),
     }
 }
@@ -2078,6 +2083,27 @@ impl App {
                     &[&destination.file_name().unwrap_or_default().to_string_lossy(), &mib(bytes)],
                 ));
             }
+            Event::TableChosen { path, covered, built } => {
+                let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                self.log_line(&if built {
+                    tr_args("lettering learned from this disc, kept as %1$s", &[&name])
+                } else {
+                    tr_args(
+                        "lettering: %1$s, which covers %2$s of this disc",
+                        &[&name, &format!("{:.0}%", covered * 100.0)],
+                    )
+                });
+            }
+            Event::LetteringLearned { labelled, ambiguous, blank } => {
+                self.log_line(&tr_args(
+                    "%1$s labelled, %2$s the font draws alike, %3$s left blank",
+                    &[
+                        &tr_n("%d shape", "%d shapes", labelled as u32),
+                        &tr_n("%d shape", "%d shapes", ambiguous as u32),
+                        &tr_n("%d shape", "%d shapes", blank as u32),
+                    ],
+                ));
+            }
             Event::Subtitle { language, cues, recognised, unknown, .. } => {
                 self.log_line(&if recognised {
                     // The two counts are composed rather than written into the
@@ -3183,6 +3209,7 @@ mod warning_text_tests {
             Warning::FreeReaderFailed { why: "no drive".into() },
             Warning::CacheNotCleared { path: "/c/title_t01.mkv".into(), why: "in use".into() },
             Warning::GlyphTableIsForAnotherFont { shapes: 115 },
+            Warning::CannotLearnLettering { shapes: 115 },
             Warning::SubtitlesUnreadable {
                 language: "Swedish".into(),
                 why: "no such stream".into(),
@@ -3271,12 +3298,13 @@ mod stage_label_tests {
     use super::*;
     use riplika_core::job::Stage;
 
-    const ALL: [Stage; 6] = [
+    const ALL: [Stage; 7] = [
         Stage::Scan,
         Stage::Identify,
         Stage::Rip,
         Stage::Organise,
         Stage::Subtitles,
+        Stage::Lettering,
         Stage::Transcode,
     ];
 

@@ -392,6 +392,13 @@ pub struct JobSettings {
     pub music_format: crate::prefs::AudioFormat,
     /// Only meaningful when `music_format` is a lossy one.
     pub music_quality: Quality,
+    /// Where tables built for a disc are kept, and looked for.
+    ///
+    /// A glyph table is per release: DVD subtitles are a rendered font and
+    /// different studios use different faces, so the one shipped for one disc
+    /// fits nothing else. `None` means a disc whose font is not already known
+    /// keeps its subtitles as pictures.
+    pub tables_dir: Option<PathBuf>,
     /// How track filenames are built. `None` uses the default.
     pub music_template: Option<String>,
     pub languages: LanguageSet,
@@ -439,6 +446,7 @@ impl Default for JobSettings {
             music_format: crate::prefs::AudioFormat::Flac,
             music_quality: Quality::High,
             music_template: None,
+            tables_dir: None,
             accurate_chapters: false,
             languages: LanguageSet::default(),
             dual_audio: false,
@@ -534,6 +542,12 @@ pub enum Warning {
     /// Recreation table. Said once for the disc, since every language track on
     /// a disc is set in the same font.
     GlyphTableIsForAnotherFont { shapes: usize },
+    /// No table fits this disc and nothing on this machine can label one.
+    ///
+    /// The subtitles are kept as pictures, which is a real answer - they are
+    /// still there and still in the right language - but it is worth saying
+    /// that text was possible and what was missing.
+    CannotLearnLettering { shapes: usize },
     /// A subtitle track could not be read at all. The reason is the tool's.
     SubtitlesUnreadable { language: String, why: String },
     /// Subtitles were recognised, but not all of the glyphs were known.
@@ -600,6 +614,11 @@ impl Warning {
             Warning::GlyphTableIsForAnotherFont { shapes } => format!(
                 "the glyph table was built for another release and does not fit this disc \
                  ({} on it are not in it); subtitles kept as pictures",
+                plural(*shapes, "shape")
+            ),
+            Warning::CannotLearnLettering { shapes } => format!(
+                "no glyph table fits this disc and tesseract is not installed to read its \
+                 {}; subtitles kept as pictures",
                 plural(*shapes, "shape")
             ),
             Warning::SubtitlesUnreadable { language, why } => {
@@ -794,6 +813,7 @@ mod tests {
             Warning::FreeReaderIncomplete { why: "encrypted".into() },
             Warning::FreeReaderFailed { why: "no drive".into() },
             Warning::GlyphTableIsForAnotherFont { shapes: 115 },
+            Warning::CannotLearnLettering { shapes: 115 },
             Warning::SubtitlesUnreadable { language: "Swedish".into(), why: "no stream".into() },
         ];
         for w in &all {

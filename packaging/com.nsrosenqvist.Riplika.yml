@@ -59,6 +59,10 @@ finish-args:
   # --filesystem=host wearing a different hat - udisks decides for itself
   # whether the caller may unmount, and asks the session if it is unsure.
   - --system-talk-name=org.freedesktop.UDisks2
+  # Where the language data for reading a new disc's lettering was installed.
+  # Tesseract has a compiled-in default and it is not this one, so without it a
+  # disc nobody has a glyph table for gets "Error opening data file".
+  - --env=TESSDATA_PREFIX=/app/share/tessdata
   # Noticing a disc going in or coming out, so the window follows the tray
   # rather than waiting to be asked to look again.
   #
@@ -204,6 +208,88 @@ modules:
       - type: archive
         url: https://downloads.xiph.org/releases/cdparanoia/cdparanoia-III-10.2.src.tgz
         sha256: 005db45ef4ee017f5c32ec124f913a0546e77014266c6a1c50df902a55fe64df
+
+  # Leptonica and Tesseract, for labelling a glyph table on a disc nobody has
+  # one for. Not how subtitles are decoded - that is an exact lookup of shapes
+  # already labelled and stays that way - but how the labels are arrived at
+  # once per release font. Without it a disc from a studio the shipped table
+  # does not cover keeps its subtitles as pictures, which is what The Lion King
+  # did.
+  - name: leptonica
+    buildsystem: autotools
+    config-opts:
+      - --disable-static
+      # Nothing here reads a scanned page: the input is a PNG this application
+      # drew itself, moments earlier, from the shapes it segmented.
+      - --without-jpeg
+      - --without-giflib
+      - --without-libwebp
+      - --without-libopenjpeg
+    sources:
+      - type: archive
+        url: https://github.com/DanBloomberg/leptonica/releases/download/1.85.0/leptonica-1.85.0.tar.gz
+        sha256: 3745ae3bf271a6801a2292eead83ac926e3a9bc1bf622e9cd4dd0f3786e17205
+
+  - name: tesseract
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_TRAINING_TOOLS=OFF
+      - -DDISABLE_ARCHIVE=ON
+      - -DDISABLE_CURL=ON
+    sources:
+      - type: archive
+        url: https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.0.tar.gz
+        sha256: f2fb34ca035b6d087a42875a35a7a5c4155fa9979c6132365b1e5a28ebc3fc11
+
+  # The fast models rather than the accurate ones. What they are asked to read
+  # is a line this application rendered from its own segmentation - black on
+  # white, no skew, no noise - and the difference between the two model sets
+  # does not show on that, while the accurate ones are ten times the size.
+  - name: tessdata
+    buildsystem: simple
+    build-commands:
+      - install -Dm644 eng.traineddata /app/share/tessdata/eng.traineddata
+      - install -Dm644 swe.traineddata /app/share/tessdata/swe.traineddata
+      - install -Dm644 deu.traineddata /app/share/tessdata/deu.traineddata
+      - install -Dm644 fra.traineddata /app/share/tessdata/fra.traineddata
+      - install -Dm644 spa.traineddata /app/share/tessdata/spa.traineddata
+      - install -Dm644 ita.traineddata /app/share/tessdata/ita.traineddata
+      - install -Dm644 nld.traineddata /app/share/tessdata/nld.traineddata
+      - install -Dm644 dan.traineddata /app/share/tessdata/dan.traineddata
+      - install -Dm644 nor.traineddata /app/share/tessdata/nor.traineddata
+      - install -Dm644 fin.traineddata /app/share/tessdata/fin.traineddata
+    sources:
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/eng.traineddata
+        sha256: 7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/swe.traineddata
+        sha256: f7304988d41f833efebcc2d529df54b1903ecebbc3da1faabd19a0fddd4fe586
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/deu.traineddata
+        sha256: 19d219bbb6672c869d20a9636c6816a81eb9a71796cb93ebe0cb1530e2cdb22d
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/fra.traineddata
+        sha256: ced037562e8c80c13122dece28dd477d399af80911a28791a66a63ac1e3445ca
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/spa.traineddata
+        sha256: 6f2e04d02774a18f01bed44b1111f2cd7f3ba7ac9dc4373cd3f898a40ea6b464
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/ita.traineddata
+        sha256: b8f89e1e785118dac4d51ae042c029a64edb5c3ee42ef73027a6d412748d8827
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/nld.traineddata
+        sha256: ced0e5e046a84c908a6aa7accbef9a232c4a5d9a8276691b81c6ee64d02963f6
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/dan.traineddata
+        sha256: acb1fd074487a31d1294fcdfd7d7c673467ffd8aeacb2ccd61ebcbf04eb4e2fa
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/nor.traineddata
+        sha256: 0451eb4f8049ae78196806bf878a389a2f40f1386fe038568cf4441226ba6ef2
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/fin.traineddata
+        sha256: 61a04cd62b507c3d9ae0e1cda399e6715ebf49dea9df47897c8acdcd3bd3e13c
 
   # No mkvtoolnix: the VobSub track is read out of Matroska directly, because
   # MKVToolNix wants Qt for every one of its tools and bundling Qt to obtain

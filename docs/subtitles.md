@@ -26,12 +26,41 @@ Measured on 122 episodes (62,590 cues, 1.9M glyph instances) against a Tesseract
 
 Of the cues that disagree, **16.5% are ones where riplika produces valid English and the reference does not** (`he fell in` vs `he tell in`, `Go on` vs `Goon`, `a lot of` vs `a fot of`), 82.9% differ only in punctuation or spacing, and 0.6%, or 20 cues in 62,590, are cases where the reference looks better.
 
-## Building a glyph table
+## Where a table comes from
 
-Building one is a one-time cost per release font. If you already have trusted subtitles for a few episodes, labels can be voted from them automatically; otherwise the table comes out unlabelled and you fill it in from the review page.
+**A disc labels its own.** A table is per release, so a disc from a studio you have not ripped before has no table and would decode to nothing but placeholders. Rather than ask for a few hundred shapes to be typed in, the disc is read: `riplika learn` renders a sample of its lines back out from the shapes it segmented, hands them to Tesseract, and votes the labels from what comes back. The window does the same thing by itself when no table fits, under "Learning this disc's lettering".
+
+Nothing about decoding changes. The reading happens once per release, and is thrown away; every episode afterwards is the same exact lookup it always was.
+
+What makes an unreliable reader usable is the structural check. A line only votes when it agrees with the segmentation on how many characters it holds, so a misread line is discarded whole rather than teaching the table a nonsense, and what survives is a majority across every instance of a shape. A shape whose votes will not agree is recorded as an ambiguity class rather than given a label.
+
+Measured against a table a person had labelled by hand, on the same Parks and Recreation title:
+
+| | |
+|---|---|
+| lines agreeing with the segmentation on character count | 120 of 120 |
+| shapes found / labelled / left blank | 131 / 126 / 4 |
+| time | 45 seconds |
+| cues identical to the hand-labelled table's output | 455 of 481 (94.6%) |
+| characters differing | 70 of 19,213 (0.36%), half of them placeholders |
+
+Two characters are rewritten before the vote. A bar is read as a capital `I` - no subtitle font contains a pipe, and it is three quarters of the reader's mistakes. Typographic quotes become the straight ones subtitles are written with, not because either is wrong but because the reader picks between them line to line, the votes split, and the shape then settles on nothing and comes out blank.
+
+Only cues holding a shape that is still thin get read. The alphabet is done with in the first few dozen of a thousand, and reading them all would spend an hour of processes to learn nothing.
+
+## Which table a disc is decoded with
+
+Every table is tried against the shapes actually on the disc, and the one that explains most of them wins. Nothing is keyed or remembered: a second disc of a season reuses the first's table because it fits, not because anything recorded that they are related, and a disc from a new release fails the test and gets a table of its own.
+
+"Fits" is 90% of glyph *instances*, not of distinct shapes - a table missing one shape that happens to be `e` is useless, and one missing a symbol that appears twice in a film is not. A table for the wrong release manages about 1%, so there is no ambiguity in practice.
+
+## Building a table by hand
+
+Still the better table where you have the material for it, and what the shipped one is. If you already have trusted subtitles for a few episodes, labels can be voted from them and are exact rather than read.
 
 ```sh
 # 1. observe glyphs, and (optionally) vote labels from known-good SRTs
+riplika learn title_t02.mkv --table glyphs.json    # read the disc's own lines
 riplika build /media/*.mp4 --table glyphs.json --reference ./known-good/
 
 # 2. review whatever is unlabelled or uncertain
@@ -133,7 +162,7 @@ riplika check --table glyphs.json
 
 ## Tables do not transfer between releases
 
-Measured: of Frozen's 110 glyphs, **1** matches the Parks and Recreation table; of Cloudy with a Chance of Meatballs' 139, **2** match Frozen's. Different studios use different subtitle faces (21px cap height vs 22px here), so a table is per-release. Labelling a fresh one from the review sheet takes a few minutes and needs no knowledge of the language, only of the alphabet.
+Measured: of Frozen's 110 glyphs, **1** matches the Parks and Recreation table; of Cloudy with a Chance of Meatballs' 139, **2** match Frozen's. Different studios use different subtitle faces (21px cap height vs 22px here), so a table is per-release - which is why a disc labels its own rather than being decoded against whichever one happens to be installed.
 
 ## Reading the track
 

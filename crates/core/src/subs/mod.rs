@@ -23,6 +23,7 @@ pub mod sheet;
 pub mod source;
 pub mod srt;
 pub mod table;
+pub mod tables;
 pub mod vobsub;
 
 #[cfg(test)]

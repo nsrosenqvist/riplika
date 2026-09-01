@@ -20,7 +20,7 @@ Riplika takes the tedious and technical parts out of backing up a media library.
 
 ## What it does
 
-DVD subtitles arrive as pictures, and Riplika matches those bitmaps against a table of known letters, which gives 99% character accuracy and cue timings taken from the source. That is the most unusual part of the project and [has its own document](docs/subtitles.md).
+DVD subtitles arrive as pictures, and Riplika matches those bitmaps against a table of known letters, which gives 99% character accuracy and cue timings taken from the source. A disc whose lettering is not in any table yet reads its own and builds one, so this needs nothing of you. That is the most unusual part of the project and [has its own document](docs/subtitles.md).
 
 A volume label is a hypothesis, so the shape of the disc is read as evidence beside it. A "play all" title decomposes into which titles are episodes and what order they run in, and a disc holding one long title is read as a film. Runtimes are checked against whatever the catalogue answered, and the reasoning is shown to you before anything is read.
 
