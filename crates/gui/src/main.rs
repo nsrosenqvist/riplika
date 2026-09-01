@@ -881,6 +881,15 @@ fn warning_text(w: &Warning) -> String {
             "%1$s: %2$s - the table may not cover %1$s",
             &[language, &tr_n("%d unrecognised glyph", "%d unrecognised glyphs", *glyphs as u32)],
         ),
+        // One line however long: xgettext does not follow a Rust string
+        // continuation, so a wrapped literal never reaches a translator.
+        Warning::GlyphTableIsForAnotherFont { shapes } => tr_args(
+            "%1$s on this disc are not in the glyph table, which was built for another release; subtitles kept as pictures",
+            &[&tr_n("%d shape", "%d shapes", *shapes as u32)],
+        ),
+        Warning::SubtitlesUnreadable { language, why } => {
+            tr_args("%1$s subtitles could not be read: %2$s", &[language, why])
+        }
         Warning::PlayAllsSkipped { titles } => tr_args(
             "skipping %1$s, whose content is on the disc already",
             &[&tr_n("%d play-all title", "%d play-all titles", *titles as u32)],
@@ -3173,6 +3182,11 @@ mod warning_text_tests {
             Warning::FreeReaderIncomplete { why: "encrypted".into() },
             Warning::FreeReaderFailed { why: "no drive".into() },
             Warning::CacheNotCleared { path: "/c/title_t01.mkv".into(), why: "in use".into() },
+            Warning::GlyphTableIsForAnotherFont { shapes: 115 },
+            Warning::SubtitlesUnreadable {
+                language: "Swedish".into(),
+                why: "no such stream".into(),
+            },
         ]
     }
 

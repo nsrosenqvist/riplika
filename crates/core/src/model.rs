@@ -526,6 +526,16 @@ pub enum Warning {
     NoGlyphTable,
     /// One file could not be produced. The others still were.
     ItemSkipped { name: String, why: String },
+    /// The glyph table was built for a different release, and does not fit.
+    ///
+    /// Not a failure of the disc or of the recognition: DVD subtitles are a
+    /// rendered bitmap font, and different studios use different faces, so a
+    /// table is per-release. Of Frozen's 110 shapes, one is in the Parks and
+    /// Recreation table. Said once for the disc, since every language track on
+    /// a disc is set in the same font.
+    GlyphTableIsForAnotherFont { shapes: usize },
+    /// A subtitle track could not be read at all. The reason is the tool's.
+    SubtitlesUnreadable { language: String, why: String },
     /// Subtitles were recognised, but not all of the glyphs were known.
     UnrecognisedGlyphs { language: String, glyphs: usize },
     /// Play-all titles are the same video again, so they are not produced.
@@ -587,6 +597,14 @@ impl Warning {
                 "{language}: {} - the table may not cover {language}",
                 plural(*glyphs, "unrecognised glyph")
             ),
+            Warning::GlyphTableIsForAnotherFont { shapes } => format!(
+                "the glyph table was built for another release and does not fit this disc \
+                 ({} on it are not in it); subtitles kept as pictures",
+                plural(*shapes, "shape")
+            ),
+            Warning::SubtitlesUnreadable { language, why } => {
+                format!("{language} subtitles could not be read: {why}")
+            }
             Warning::PlayAllsSkipped { titles } => format!(
                 "skipping {}, whose content is on the disc already",
                 plural(*titles, "play-all title")
@@ -775,10 +793,24 @@ mod tests {
             Warning::PlayAllsSkipped { titles: 2 },
             Warning::FreeReaderIncomplete { why: "encrypted".into() },
             Warning::FreeReaderFailed { why: "no drive".into() },
+            Warning::GlyphTableIsForAnotherFont { shapes: 115 },
+            Warning::SubtitlesUnreadable { language: "Swedish".into(), why: "no stream".into() },
         ];
         for w in &all {
             assert!(!w.text().trim().is_empty(), "{w:?} says nothing");
         }
+    }
+
+    #[test]
+    fn a_table_built_for_another_release_says_so_with_the_count_it_deserves() {
+        // The Lion King came out as 1,532 lines of placeholders' worth of
+        // nothing: 1,179 cues segmented perfectly and 115 distinct shapes none
+        // of which the installed table had. "not recognised, bitmap kept" said
+        // none of that, eight times.
+        let many = Warning::GlyphTableIsForAnotherFont { shapes: 115 };
+        assert!(many.text().contains("115 shapes"), "{}", many.text());
+        let one = Warning::GlyphTableIsForAnotherFont { shapes: 1 };
+        assert!(one.text().contains("1 shape "), "{}", one.text());
     }
 
     #[test]

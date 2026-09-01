@@ -132,11 +132,18 @@ pub struct Pipeline<'a> {
     pub settings: JobSettings,
     /// Whether the missing glyph table has been mentioned yet.
     said_no_table: std::sync::atomic::AtomicBool,
+    /// Whether the table having been built for another release has been.
+    said_wrong_font: std::sync::atomic::AtomicBool,
 }
 
 impl<'a> Pipeline<'a> {
     pub fn new(ports: Ports<'a>, settings: JobSettings) -> Self {
-        Pipeline { ports, settings, said_no_table: std::sync::atomic::AtomicBool::new(false) }
+        Pipeline {
+            ports,
+            settings,
+            said_no_table: std::sync::atomic::AtomicBool::new(false),
+            said_wrong_font: std::sync::atomic::AtomicBool::new(false),
+        }
     }
 
     pub fn drives(&self) -> Result<Vec<Drive>> {
@@ -767,17 +774,42 @@ impl<'a> Pipeline<'a> {
                     });
                     recognised.push(r);
                 }
-                Ok((_, _)) | Err(_) => {
+                outcome => {
                     // Keeping the bitmap is the safety net: a language with an
                     // unusable text track still has *a* track, and losing the
                     // language entirely is much worse than the redundancy.
+                    //
+                    // What went wrong is said, though. This used to report
+                    // zero cues and zero unknown glyphs whatever had happened,
+                    // so a disc whose font is simply not in the table read the
+                    // same as a track that would not extract - eight lines of
+                    // "not recognised" and nothing to act on. The Lion King
+                    // segmented perfectly: 1,179 cues, and 115 distinct shapes
+                    // none of which the table had ever seen.
+                    let (cues, unknown, shapes, why) = match &outcome {
+                        Ok((_, d)) => (d.cues, d.unknown, d.distinct_unknown.len(), None),
+                        Err(e) => (0, 0, 0, Some(e.to_string())),
+                    };
                     events(Event::Subtitle {
                         item: index,
                         language: language.name.clone(),
-                        cues: 0,
-                        unknown: 0,
+                        cues,
+                        unknown,
                         recognised: false,
                     });
+                    match why {
+                        Some(why) => events(Event::Warning(Warning::SubtitlesUnreadable {
+                            language: language.name.to_string(),
+                            why,
+                        })),
+                        // Said once for the disc. Every language track on a
+                        // disc is rendered in the same font, so this is one
+                        // fact about the disc rather than eight about tracks.
+                        None if cues > 0 && !self.said_wrong_font.swap(true, Ordering::Relaxed) => {
+                            events(Event::Warning(Warning::GlyphTableIsForAnotherFont { shapes }));
+                        }
+                        None => {}
+                    }
                     let _ = self.ports.fs.remove_file(&srt_path);
                     failed.push(stream);
                 }
