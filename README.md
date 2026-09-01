@@ -10,9 +10,7 @@
 
 ![Riplika, having identified a disc](data/hero.png)
 
-Riplika takes the tedious and technical parts out of backing up a media library. You should not need an opinion about codecs or subtitle formats to get a disc onto your computer.
-
-It asks the drive what it is holding and runs the pipeline that suits it.
+Riplika takes the tedious and technical parts out of backing up a media library. You should not need an opinion about codecs or subtitle formats to get a disc onto your computer. It asks the drive what it is holding and runs the pipeline that suits it.
 
 | | Produces | Named from |
 |---|---|---|
