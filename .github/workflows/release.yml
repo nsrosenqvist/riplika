@@ -120,10 +120,24 @@ jobs:
           flatpak build-bundle repo "$BUNDLE" com.nsrosenqvist.Riplika
           echo "bundled $BUNDLE"
 
+      - name: Manifest for Flathub
+        # Built from the canonical manifest with the working-tree source
+        # swapped for this tag, so the two cannot drift. Attached to the
+        # release because a Flathub submission needs it and the cargo source
+        # list beside it.
+        run: |
+          set -eu
+          ./packaging/flathub-manifest.py "${GITHUB_REF_NAME}" \
+            > com.nsrosenqvist.Riplika.yml
+          cp packaging/cargo-sources.json .
+
       - uses: actions/upload-artifact@v6
         with:
           name: flatpak
-          path: riplika-*.flatpak
+          path: |
+            riplika-*.flatpak
+            com.nsrosenqvist.Riplika.yml
+            cargo-sources.json
 
   release:
     name: Publish
@@ -166,4 +180,6 @@ jobs:
           files: |
             artifacts/*.tar.gz
             artifacts/*.flatpak
+            artifacts/com.nsrosenqvist.Riplika.yml
+            artifacts/cargo-sources.json
             artifacts/SHA256SUMS

@@ -56,6 +56,14 @@ check "it can write to Music"          bash -c \
   "flatpak run --command=sh $APP -c 'mkdir -p ~/Music && test -w ~/Music'"
 check "it can write to Games"          bash -c \
   "flatpak run --command=sh $APP -c 'mkdir -p ~/Games && test -w ~/Games'"
+# What a software centre reads. Missing, the application installs and runs and
+# shows up with no name, description or licence beside it.
+check "the metainfo shipped"           bash -c \
+  "flatpak run --command=sh $APP -c 'test -f /app/share/metainfo/$APP.metainfo.xml'"
+# Validated on the host: the runtime carries no appstreamcli, and the file
+# inside the sandbox is a copy of this one anyway.
+check "the metainfo is valid"          appstreamcli validate --no-net \
+  "$(dirname "$0")/../data/$APP.metainfo.xml"
 check "the icon shipped"               bash -c \
   "flatpak run --command=sh $APP -c 'test -f /app/share/icons/hicolor/scalable/apps/$APP.svg'"
 check "the entry points at that icon"  bash -c \

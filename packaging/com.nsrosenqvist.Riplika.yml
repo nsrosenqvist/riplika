@@ -225,6 +225,11 @@ modules:
       # or anything else and the launcher shows a blank square.
       - install -Dm644 data/icons/hicolor/scalable/apps/com.nsrosenqvist.Riplika.svg
           /app/share/icons/hicolor/scalable/apps/com.nsrosenqvist.Riplika.svg
+      # What a software centre shows. Required for Flathub, and worth having
+      # without it: a bundle installed by hand carries this too, and the
+      # application otherwise appears with no name, description or licence.
+      - install -Dm644 data/com.nsrosenqvist.Riplika.metainfo.xml
+          /app/share/metainfo/com.nsrosenqvist.Riplika.metainfo.xml
       # the translations, where i18n::init looks inside a sandbox
       - ./po/install.sh /app/share
 

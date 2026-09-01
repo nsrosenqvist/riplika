@@ -98,6 +98,26 @@ riplika label --table glyphs.json corrections.json
 
 See [docs/subtitles.md](docs/subtitles.md), which explains why this beats running OCR over the pictures.
 
+### Publishing
+
+The release workflow builds a `.flatpak` bundle and attaches it to the tag, so
+anyone can install a release without a repository being involved:
+
+```sh
+flatpak install ./riplika-0.3.0.flatpak
+```
+
+That needs the GNOME 50 runtime, which comes from Flathub, so a machine with
+no remotes configured has to add Flathub once first.
+
+For a Flathub submission, the same tag also carries a manifest with its source
+pinned to that tag, and the cargo source list it refers to. Both are generated
+from the manifest in `packaging/`, so there is no second copy to keep in step.
+What is still needed is at least one screenshot: Flathub requires one for any
+graphical application, linked directly and, if it lives in this repository,
+from a tag rather than a branch. `data/com.nsrosenqvist.Riplika.metainfo.xml`
+says where it goes.
+
 ## Documentation
 
 | | |

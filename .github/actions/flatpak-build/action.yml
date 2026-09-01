@@ -22,6 +22,9 @@ runs:
       # elfutils: without eu-strip it builds every module and then fails
       # stripping the first one.
       #
+      # appstream: check-flatpak.sh validates the metainfo with appstreamcli,
+      # which the GNOME runtime does not carry, so it runs on the host.
+      #
       # librsvg2-common: exporting validates the application icon through
       # gdk-pixbuf, which has no SVG loader without it - so a perfectly good
       # icon is rejected with "Format not recognized" after twelve minutes of
@@ -31,7 +34,7 @@ runs:
       run: |
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
-          flatpak flatpak-builder elfutils ca-certificates librsvg2-common
+          flatpak flatpak-builder elfutils ca-certificates librsvg2-common appstream
         flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
     - name: Cache the built modules

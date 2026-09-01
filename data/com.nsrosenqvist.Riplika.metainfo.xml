@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  What a software centre shows about Riplika.
+
+  Required to appear on Flathub, and worth having without it: a bundle
+  installed by hand carries this too, and without it the application shows up
+  with no name, no description and no licence beside it.
+
+  The summary and description are the same claims the README makes, kept
+  short enough to read in a list.
+-->
+<component type="desktop-application">
+  <id>com.nsrosenqvist.Riplika</id>
+
+  <name>Riplika</name>
+  <summary>Turn discs into a tagged library</summary>
+
+  <!-- The text here, not the program it describes. -->
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <developer id="com.nsrosenqvist">
+    <name>Niklas Rosenqvist</name>
+  </developer>
+
+  <description>
+    <p>
+      Riplika turns a disc into files a media server can read, without the
+      naming and tagging afterwards. It works out what kind of disc is in the
+      drive and reads it accordingly.
+    </p>
+    <p>
+      A DVD becomes encoded video with its subtitles turned from pictures into
+      text, named from a catalogue rather than from the volume label alone. A
+      music CD becomes FLAC or MP3, tagged and with its cover art, identified
+      by the disc id its table of contents produces. A game disc is copied
+      rather than converted, at the full sector size a preservation database
+      expects, and checked against Redump datfiles.
+    </p>
+    <p>
+      Where a disc is damaged, Riplika says so rather than writing a file that
+      looks finished. Audio is checked against the drive's own error pointers
+      and data sectors against the error detection written inside them.
+    </p>
+    <p>
+      Blu-ray needs MakeMKV, which cannot be bundled here. Everything else in
+      this package works on its own.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">com.nsrosenqvist.Riplika.desktop</launchable>
+
+  <url type="homepage">https://github.com/nsrosenqvist/riplika</url>
+  <url type="bugtracker">https://github.com/nsrosenqvist/riplika/issues</url>
+  <url type="vcs-browser">https://github.com/nsrosenqvist/riplika</url>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+  </categories>
+
+  <keywords>
+    <keyword>DVD</keyword>
+    <keyword>Blu-ray</keyword>
+    <keyword>CD</keyword>
+    <keyword>rip</keyword>
+    <keyword>subtitles</keyword>
+    <keyword>transcode</keyword>
+  </keywords>
+
+  <!--
+    Screenshots are the one thing still missing before this can be submitted.
+    Flathub requires at least one for a graphical application, as a direct
+    link to an image on the web; if they live in this repository the URL has
+    to name a tag or a commit rather than a branch, since a branch moves.
+
+    <screenshots>
+      <screenshot type="default">
+        <caption>What the disc turned out to be</caption>
+        <image>https://raw.githubusercontent.com/nsrosenqvist/riplika/v0.3.0/data/screenshots/identify.png</image>
+      </screenshot>
+    </screenshots>
+  -->
+
+  <content_rating type="oars-1.1"/>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#a5d8ff</color>
+    <color type="primary" scheme_preference="dark">#1c4966</color>
+  </branding>
+
+  <releases>
+    <release version="0.2.0" date="2026-08-28">
+      <description>
+        <p>
+          Music CDs and game discs alongside video, each identified and
+          verified in the way that suits it.
+        </p>
+      </description>
+    </release>
+  </releases>
+</component>
