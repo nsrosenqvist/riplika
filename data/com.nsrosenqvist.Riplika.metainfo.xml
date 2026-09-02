@@ -71,19 +71,19 @@
   <screenshots>
     <screenshot type="default">
       <caption>A disc in the drive, waiting to be read</caption>
-      <image>https://raw.githubusercontent.com/nsrosenqvist/riplika/v0.2.0/data/screenshots/drive.png</image>
+      <image>https://raw.githubusercontent.com/nsrosenqvist/riplika/v1.0.0/data/screenshots/drive.png</image>
     </screenshot>
     <screenshot>
       <caption>What the disc turned out to be, and the reasons for thinking so</caption>
-      <image>https://raw.githubusercontent.com/nsrosenqvist/riplika/v0.2.0/data/screenshots/identify.png</image>
+      <image>https://raw.githubusercontent.com/nsrosenqvist/riplika/v1.0.0/data/screenshots/identify.png</image>
     </screenshot>
     <screenshot>
       <caption>Quality, languages, and what to take from the disc</caption>
-      <image>https://raw.githubusercontent.com/nsrosenqvist/riplika/v0.2.0/data/screenshots/settings.png</image>
+      <image>https://raw.githubusercontent.com/nsrosenqvist/riplika/v1.0.0/data/screenshots/settings.png</image>
     </screenshot>
     <screenshot>
       <caption>Ripping, with the episodes it worked out listed underneath</caption>
-      <image>https://raw.githubusercontent.com/nsrosenqvist/riplika/v0.2.0/data/screenshots/ripping.png</image>
+      <image>https://raw.githubusercontent.com/nsrosenqvist/riplika/v1.0.0/data/screenshots/ripping.png</image>
     </screenshot>
   </screenshots>
 
@@ -104,6 +104,18 @@
   </branding>
 
   <releases>
+    <release version="1.0.0" date="2026-09-02">
+      <description>
+        <ul>
+          <li>Reads DVDs, music CDs and game discs, choosing the pipeline from what the drive is holding.</li>
+          <li>Turns DVD subtitle pictures into text, and reads a disc&#x27;s lettering for itself when nobody has seen that release before.</li>
+          <li>Names films and episodes from TMDB, TVmaze or Wikipedia, checked against the shape of the disc rather than trusted outright.</li>
+          <li>Tags music from MusicBrainz and writes cover art beside the album.</li>
+          <li>Verifies a game dump as it is made, and matches it against the Redump database rather than guessing from a volume label.</li>
+          <li>Crop and inverse telecine are measured from the video, and progress is read from the encoder rather than estimated.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-08-28">
       <description>
         <p>
