@@ -1538,16 +1538,26 @@ impl App {
         match disc {
             Some(d) => {
                 self.ui.chosen_row.set_title(&d.describe());
+                // What happens next, rather than a remark about disc labels.
+                // A game is named by what its dump hashes to, so there is
+                // nothing to choose here and nothing to search for - saying
+                // that a label is "only a hint" answers a question nobody
+                // asked and leaves the page looking like it failed.
                 self.ui.chosen_row.set_subtitle(&match &d.serial {
                     Some(serial) => tr_args("PlayStation disc %1$s", &[serial]),
-                    None => tr("Named once it has been read; a disc label is only a hint"),
+                    None => tr("Checked against the preservation database once it is dumped"),
                 });
                 self.ui.identify_next.set_sensitive(!self.is_busy());
             }
             None => {
-                self.ui.chosen_row.set_title(&tr("Not identified"));
-                self.ui.chosen_row.set_subtitle(&tr("This disc could not be read"));
-                self.ui.identify_next.set_sensitive(false);
+                // Still worth dumping. What could not be read is the disc's
+                // own description of itself, and the dump is verified against
+                // the database by its hashes either way.
+                self.ui.chosen_row.set_title(&tr("A disc that does not say what it is"));
+                self.ui.chosen_row.set_subtitle(&tr(
+                    "Checked against the preservation database once it is dumped",
+                ));
+                self.ui.identify_next.set_sensitive(!self.is_busy());
             }
         }
     }

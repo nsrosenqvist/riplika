@@ -546,6 +546,85 @@ pub fn is_pvd(pvd: &[u8]) -> bool {
 }
 
 /// The volume label out of a primary volume descriptor.
+/// Where UDF keeps the pointer to everything else.
+const ANCHOR_SECTOR: u64 = 256;
+
+/// A UDF descriptor tag: the kind is the first two bytes, little-endian.
+fn tag_of(sector: &[u8]) -> u16 {
+    if sector.len() < 2 { 0 } else { u16::from_le_bytes([sector[0], sector[1]]) }
+}
+
+/// A UDF `dstring`: a compression byte, the characters, and the used length in
+/// the final byte of the field.
+///
+/// Compression 8 is one byte a character, 16 is two, big-endian. The length
+/// counts the compression byte, which is why one is taken off it.
+fn dstring(field: &[u8]) -> Option<String> {
+    let used = *field.last()? as usize;
+    if used < 2 || used > field.len() {
+        return None;
+    }
+    let text = &field[1..used];
+    let s = match field[0] {
+        8 => text.iter().map(|b| *b as char).collect::<String>(),
+        16 => text
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .filter_map(|p| char::from_u32(u32::from(u16::from_be_bytes(*p))))
+            .collect::<String>(),
+        _ => return None,
+    };
+    let s = s.trim_end_matches('\0').trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+/// What a UDF disc calls itself.
+///
+/// Read because a pressed PC-DVD often carries no ISO 9660 at all, and one
+/// that does not was arriving as "unnamed disc" with its name printed on the
+/// box - and on the desktop's own mount point, since the kernel reads UDF.
+///
+/// The anchor at sector 256 points at the volume descriptor sequence; the
+/// logical volume descriptor in it holds the name the disc is mounted under,
+/// and the primary volume descriptor holds one too, which is the fallback.
+pub fn udf_label(f: &mut File) -> Option<String> {
+    udf_label_by(&mut |lba, count| {
+        read_at(f, lba * SECTOR as u64, count * SECTOR).ok_or_else(|| crate::Error("read".into()))
+    })
+}
+
+/// The same, over whatever can read sectors - a device, an image, or a drive
+/// being addressed through SCSI, which is how a game disc is looked at.
+pub fn udf_label_by(read: &mut dyn FnMut(u64, usize) -> crate::Result<Vec<u8>>) -> Option<String> {
+    let anchor = read(ANCHOR_SECTOR, 1).ok()?;
+    if tag_of(&anchor) != 2 {
+        return None;
+    }
+    let length = u32::from_le_bytes(anchor[16..20].try_into().ok()?) as u64;
+    let start = u32::from_le_bytes(anchor[20..24].try_into().ok()?) as u64;
+    let mut primary = None;
+    for n in 0..(length / SECTOR as u64).min(64) {
+        let Ok(d) = read(start + n, 1) else {
+            break;
+        };
+        match tag_of(&d) {
+            // Logical volume descriptor: the name the disc mounts under.
+            6 => {
+                if let Some(name) = d.get(84..212).and_then(dstring) {
+                    return Some(name);
+                }
+            }
+            // Primary volume descriptor, whose name is usually the same.
+            1 => primary = primary.or_else(|| d.get(24..56).and_then(dstring)),
+            // Terminating descriptor.
+            8 => break,
+            _ => {}
+        }
+    }
+    primary
+}
+
 pub fn volume_label(pvd: &[u8]) -> Option<String> {
     if !is_pvd(pvd) {
         return None;
@@ -884,6 +963,72 @@ mod tests {
             img[at + 6] = 1;
         }
         img
+    }
+
+    /// A UDF volume laid out the way the Sims 3 expansion is: an anchor at
+    /// sector 256 pointing at a sequence beginning at 32, with the primary
+    /// descriptor first and the logical one three sectors later.
+    fn udf_volume(logical: Option<&[u8]>, primary: Option<&[u8]>) -> Vec<u8> {
+        let mut img = pure_udf();
+        img.resize(300 * SECTOR, 0);
+        let at = ANCHOR_SECTOR as usize * SECTOR;
+        img[at..at + 2].copy_from_slice(&2u16.to_le_bytes());
+        img[at + 16..at + 20].copy_from_slice(&(6u32 * SECTOR as u32).to_le_bytes());
+        img[at + 20..at + 24].copy_from_slice(&32u32.to_le_bytes());
+        if let Some(name) = primary {
+            let d = 32 * SECTOR;
+            img[d..d + 2].copy_from_slice(&1u16.to_le_bytes());
+            img[d + 24..d + 24 + name.len()].copy_from_slice(name);
+            img[d + 55] = name.len() as u8;
+        }
+        if let Some(name) = logical {
+            let d = 35 * SECTOR;
+            img[d..d + 2].copy_from_slice(&6u16.to_le_bytes());
+            img[d + 84..d + 84 + name.len()].copy_from_slice(name);
+            img[d + 211] = name.len() as u8;
+        }
+        img
+    }
+
+    fn label_of(img: &[u8], tag: &str) -> Option<String> {
+        let path =
+            std::env::temp_dir().join(format!("riplika-udf-{}-{tag}.iso", std::process::id()));
+        std::fs::write(&path, img).unwrap();
+        let mut f = File::open(&path).unwrap();
+        let got = udf_label(&mut f);
+        let _ = std::fs::remove_file(&path);
+        got
+    }
+
+    #[test]
+    fn a_udf_disc_says_what_it_is_called() {
+        // The Sims 3 expansion: no ISO 9660 at all, and its name only in UDF -
+        // so it arrived as "unnamed disc" with the name on the box, and on the
+        // desktop's own mount point, since the kernel reads UDF.
+        let img = udf_volume(Some(b"\x08Sims3SP01"), None);
+        assert_eq!(label_of(&img, "logical").as_deref(), Some("Sims3SP01"));
+    }
+
+    #[test]
+    fn the_primary_descriptor_answers_when_the_logical_one_does_not() {
+        let img = udf_volume(None, Some(b"\x08Sims3SP01"));
+        assert_eq!(label_of(&img, "primary").as_deref(), Some("Sims3SP01"));
+    }
+
+    #[test]
+    fn a_name_written_two_bytes_a_character_is_read_that_way() {
+        // Compression 16 is big-endian UTF-16, which a disc pressed for a
+        // market that needs it will use.
+        let mut name = vec![16u8];
+        for c in "Sim".chars() {
+            name.extend_from_slice(&(c as u16).to_be_bytes());
+        }
+        assert_eq!(label_of(&udf_volume(Some(&name), None), "wide").as_deref(), Some("Sim"));
+    }
+
+    #[test]
+    fn a_disc_with_no_anchor_where_one_should_be_has_no_udf_name() {
+        assert_eq!(label_of(&vec![0u8; 300 * SECTOR], "none"), None);
     }
 
     #[test]

@@ -39,8 +39,16 @@ impl GameDisc {
 /// Read what the disc will say. `read` takes an LBA and a sector count.
 pub fn inspect(read: &mut dyn FnMut(u64, usize) -> Result<Vec<u8>>) -> Result<GameDisc> {
     let pvd = read(16, 1)?;
-    let (root_lba, root_size) =
-        parse_pvd_root(&pvd).ok_or_else(|| Error("not an ISO 9660 volume".into()))?;
+    let Some((root_lba, root_size)) = parse_pvd_root(&pvd) else {
+        // No ISO 9660. A pressed PC-DVD is often pure UDF, and there is no
+        // directory here this can walk - but the disc still says what it is
+        // called, and a disc arriving as "unnamed" with its name on the box is
+        // the difference between a dump somebody can file and one they cannot.
+        return match crate::disc::udf_label_by(read) {
+            Some(label) => Ok(GameDisc { label: Some(label), ..Default::default() }),
+            None => Err(Error("not an ISO 9660 volume".into())),
+        };
+    };
 
     let mut disc = GameDisc { label: crate::disc::volume_label(&pvd), ..Default::default() };
 

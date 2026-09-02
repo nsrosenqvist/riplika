@@ -142,6 +142,8 @@ The volume recognition sequence starts at sector 16 and runs until a terminator.
 
 The whole sequence is read now. An ISO descriptor anywhere in it is used as before; failing that, a UDF marker means there is a filesystem here, and one this does not read is exactly what a data disc is. A disc with neither is still an empty drive, which is the distinction worth keeping: the point is not to call every unreadable disc a data disc.
 
+**What such a disc is called comes from UDF too.** The anchor at sector 256 points at the volume descriptor sequence, and the logical volume descriptor in it holds the name the desktop mounts the disc under; the primary descriptor carries one as well, as a fallback. Without reading it a Sims 3 expansion arrived as "unnamed disc" with its name printed on the box - and on the mount point three lines up in `mount`, because the kernel reads UDF perfectly well. Names are `dstring`s: a compression byte, the characters, and the used length in the last byte of the field, one byte a character or two big-endian.
+
 ## Opening automatically when a disc goes in
 
 A desktop can offer an application when a disc is inserted, and the mechanism is the same one that opens a file: the volume is mounted and matched to a content type, and applications that declare it are offered.

@@ -40,7 +40,10 @@ fn read_volume_label(device: &Path) -> Option<String> {
     f.seek(SeekFrom::Start(PVD_OFFSET)).ok()?;
     let mut buf = [0u8; 2048];
     f.read_exact(&mut buf).ok()?;
-    volume_label(&buf)
+    // ISO first, because a bridge disc has both and they agree. A pressed
+    // PC-DVD often has only the second, and arrived as an unnamed disc with
+    // its name on the desktop's own mount point.
+    volume_label(&buf).or_else(|| crate::disc::udf_label(&mut f))
 }
 
 /// ISO 9660 puts its primary volume descriptor in sector 16.
