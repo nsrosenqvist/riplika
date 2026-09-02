@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Riplika 0.2.0\n"
 "Report-Msgid-Bugs-To: https://github.com/nsrosenqvist/riplika/issues\n"
-"POT-Creation-Date: 2026-09-02 16:12+0200\n"
+"POT-Creation-Date: 2026-09-02 16:28+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -341,7 +341,7 @@ msgid "glyph table %1$s does not exist"
 msgstr ""
 
 #: crates/gui/src/main.rs:880
-msgid "no glyph table, so subtitles stay as bitmaps"
+msgid "no glyph table could be made, so subtitles stay as bitmaps"
 msgstr ""
 
 #: crates/gui/src/main.rs:886 crates/gui/src/main.rs:2172
@@ -606,7 +606,7 @@ msgid "Cancelled"
 msgstr ""
 
 #: crates/gui/src/main.rs:2074 crates/gui/src/main.rs:2086
-#: crates/gui/src/main.rs:2615
+#: crates/gui/src/main.rs:2612
 msgid "Close"
 msgstr ""
 
@@ -679,19 +679,19 @@ msgstr ""
 msgid "Nothing to rip yet"
 msgstr ""
 
-#: crates/gui/src/main.rs:2575
+#: crates/gui/src/main.rs:2572
 msgid "Not while the drive is being read"
 msgstr ""
 
-#: crates/gui/src/main.rs:2581
+#: crates/gui/src/main.rs:2578
 msgid "Opening the drive"
 msgstr ""
 
-#: crates/gui/src/main.rs:2584
+#: crates/gui/src/main.rs:2581
 msgid "No drive to open"
 msgstr ""
 
-#: crates/gui/src/main.rs:2614
+#: crates/gui/src/main.rs:2611
 msgid "Stopping after the current step"
 msgstr ""
 

@@ -877,7 +877,7 @@ fn warning_text(w: &Warning) -> String {
         Warning::GlyphTableMissing { path } => {
             tr_args("glyph table %1$s does not exist", &[&path.display().to_string()])
         }
-        Warning::NoGlyphTable => tr("no glyph table, so subtitles stay as bitmaps"),
+        Warning::NoGlyphTable => tr("no glyph table could be made, so subtitles stay as bitmaps"),
         // A file name and an error from elsewhere, with no sentence of ours
         // around them. There is nothing here for a translator to do.
         Warning::ItemSkipped { .. } => w.text(),
@@ -2525,9 +2525,6 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
             let disc = app.ui.disc_entry.text().trim().parse::<u32>().ok();
             let settings = app.settings();
             let rip_dir = app.prefs.prefs.borrow().rip_dir();
-            if settings.glyph_table.is_none() {
-                app.toast("No glyph table: subtitles will stay as bitmaps");
-            }
             let cancel =
                 app.start_working(&stage_label(riplika_core::job::Stage::Rip), "Ripping disc...");
             let allow = app.prefs.prefs.borrow().use_makemkv();

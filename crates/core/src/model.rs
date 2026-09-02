@@ -539,7 +539,11 @@ pub enum Warning {
     GlyphTableUnreadable { path: PathBuf, why: String },
     /// A glyph table was named and is not there.
     GlyphTableMissing { path: PathBuf },
-    /// No glyph table at all, so subtitles cannot be recognised.
+    /// No glyph table could be made, so subtitles cannot be recognised.
+    ///
+    /// Not "none is installed": one is learned from the disc itself, and this
+    /// says that learning it did not work - there was nowhere to keep it, or
+    /// what came back would not have read a word.
     NoGlyphTable,
     /// One file could not be produced. The others still were.
     ItemSkipped { name: String, why: String },
@@ -619,7 +623,9 @@ impl Warning {
             Warning::GlyphTableMissing { path } => {
                 format!("glyph table {} does not exist", path.display())
             }
-            Warning::NoGlyphTable => "no glyph table, so subtitles stay as bitmaps".to_string(),
+            Warning::NoGlyphTable => {
+                "no glyph table could be made, so subtitles stay as bitmaps".to_string()
+            }
             Warning::ItemSkipped { name, why } => format!("{name}: {why}"),
             Warning::UnrecognisedGlyphs { language, glyphs } => format!(
                 "{language}: {} - the table may not cover {language}",
