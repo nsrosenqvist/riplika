@@ -507,6 +507,20 @@ pub fn run_game(
                     .as_ref()
                     .map(|(_, game)| game.name.clone())
                     .unwrap_or_else(|| disc.describe());
+                // How the checking went, for the page that lists what was
+                // made. It said "Done" whether the disc was recognised,
+                // nearly recognised, or never compared with anything.
+                let note = if let Some((dat, _)) = &matched {
+                    crate::i18n::tr_args("verified against the %1$s datfile", &[&dat.name])
+                } else if dats.is_empty() {
+                    crate::i18n::tr("not checked: no datfiles are installed to check it against")
+                } else if !dumped.is_complete() {
+                    crate::i18n::tr(
+                        "the disc did not read cleanly, so it will not match the database",
+                    )
+                } else {
+                    crate::i18n::tr("not in the preservation database")
+                };
                 let filed = gamejob::file_away(
                     &real.fs,
                     &dumped,
@@ -537,6 +551,7 @@ pub fn run_game(
                     destination: dest,
                     bytes: filed.bytes(),
                     subtitles: Vec::new(),
+                    note: Some(note),
                 });
                 let _ = tx.send(Msg::Finished(Box::new(report)));
                 Ok(())

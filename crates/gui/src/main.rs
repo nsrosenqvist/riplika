@@ -1828,9 +1828,18 @@ impl App {
                     tr_args("%1$s   subtitles: %2$s", &[&mib(p.bytes), &langs.join(", ")])
                 }
             };
+            // On its own line: it is a sentence, not a field, and it is the
+            // one thing on this page somebody may need to act on.
+            let detail = match &p.note {
+                Some(note) => format!("{detail}\n{note}"),
+                None => detail,
+            };
             let row = rows::action()
                 .title(p.destination.file_name().unwrap_or_default().to_string_lossy().to_string())
                 .subtitle(detail)
+                // Two lines where there is a note, and a row that shows one of
+                // them is a row that hides the thing worth reading.
+                .subtitle_lines(2)
                 .build();
             self.ui.results.add(&row);
             self.ui.result_rows.borrow_mut().push(row);

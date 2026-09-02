@@ -111,6 +111,14 @@ pub struct Produced {
     pub destination: PathBuf,
     pub bytes: u64,
     pub subtitles: Vec<RecognisedSubtitle>,
+    /// Anything else the results page should say about this file.
+    ///
+    /// A game dump is checked against the preservation database and the page
+    /// said nothing about how that went - the same "Done" whether the disc was
+    /// recognised, nearly recognised, or never compared with anything because
+    /// its datfile was not installed. The words are the front end's, so this
+    /// is filled in by whoever knows what happened.
+    pub note: Option<String>,
 }
 
 /// What a run did, for the results screen.
@@ -983,6 +991,8 @@ impl<'a> Pipeline<'a> {
             destination: dest.to_path_buf(),
             bytes,
             subtitles: recognised,
+            // Video says what it has to say through its subtitle list.
+            note: None,
         })
     }
 

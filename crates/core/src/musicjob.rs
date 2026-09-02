@@ -257,6 +257,7 @@ pub fn rip(
             destination: dest,
             bytes,
             subtitles: Vec::new(),
+            note: None,
         });
     }
     keep_cover_beside_the_tracks(ports, cover.as_deref(), &report);
