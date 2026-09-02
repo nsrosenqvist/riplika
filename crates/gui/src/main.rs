@@ -512,22 +512,24 @@ fn build_ui() -> Ui {
     music.add(&music_format);
     music.add(&music_quality);
 
-    let containers = gtk::StringList::new(&["MP4", "Matroska"]);
+    // MKV, not Matroska. Nobody who needs this row explained knows the format
+    // by its name, and the choice beside it is called MP4 rather than MPEG-4
+    // Part 14 - so one of the two was asking to be recognised by the letters
+    // on a file and the other by the name of a specification.
+    let containers = gtk::StringList::new(&["MP4", "MKV"]);
     let container = rows::combo()
         .title(tr("Container"))
         // The one row on this page that said only its own name. Both carry
         // the show and episode tags - MP4 gets them from ffmpeg directly,
-        // Matroska has them written in afterwards - so what actually differs
-        // is what else fits: MP4 has no room for the disc's own bitmap
-        // subtitles, and Matroska does.
+        // MKV has them written in afterwards - so what actually differs is
+        // what else fits: MP4 has no room for the disc's own bitmap
+        // subtitles, and MKV does.
         // What somebody choosing for the first time needs is which one plays
         // where, not which subtitle codecs each admits. MP4 is written with
         // the index at the front - HandBrake calls the same thing "web
         // optimized" - so a server can start sending it before the whole file
         // has arrived.
-        .subtitle(tr(
-            "MP4 plays and streams almost anywhere; Matroska holds more, on fewer players",
-        ))
+        .subtitle(tr("MP4 plays and streams almost anywhere; MKV holds more, on fewer players"))
         .model(&containers)
         .selected(0)
         .build();
