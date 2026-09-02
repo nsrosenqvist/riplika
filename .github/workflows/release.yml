@@ -176,6 +176,16 @@ jobs:
           aws s3 sync "s3://$BUCKET/repo/" published/ \
             --endpoint-url "$ENDPOINT" --no-progress
           test -f published/config || ostree --repo=published init --mode=archive-z2
+          # The directories an object store cannot hand back.
+          #
+          # S3 has no empty directories - only keys - so a repository fetched
+          # from one arrives without refs/remotes, refs/mirrors, state or tmp,
+          # all of which are empty here and none of which ostree creates on
+          # demand. It gets as far as "Generating static deltas" and stops on
+          # "opendir(refs/remotes): No such file or directory", which reads
+          # like a corrupt repository and is nothing of the kind.
+          mkdir -p published/refs/heads published/refs/mirrors \
+                   published/refs/remotes published/state published/tmp
 
           # This application's ref, and nothing else. The build repository has
           # an appstream branch of its own listing one application, and
