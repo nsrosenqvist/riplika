@@ -139,6 +139,92 @@ jobs:
             com.nsrosenqvist.Riplika.yml
             cargo-sources.json
 
+      # Publishing the remote, from the repository this job already has.
+      #
+      # Here rather than in a job of its own because that job would begin by
+      # moving 240 MB through the artifact store to get back what is sitting
+      # in this working directory. It is skipped when the credentials are
+      # absent, so a fork tagging a release builds everything and publishes
+      # nothing rather than failing on a secret it was never going to have.
+      - name: Publish to the remote
+        if: env.AWS_ACCESS_KEY_ID != ''
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          BUCKET: ${{ secrets.R2_BUCKET }}
+          BASE_URL: ${{ vars.REPO_BASE_URL }}
+          GPG_KEY: ${{ secrets.FLATPAK_GPG_KEY }}
+        run: |
+          set -eu
+          sudo apt-get install -y --no-install-recommends ostree
+
+          # A keyring of its own, thrown away with the runner. Importing into
+          # the default one would leave the key in a directory later steps
+          # share.
+          GNUPGHOME=$(mktemp -d); export GNUPGHOME
+          chmod 700 "$GNUPGHOME"
+          printf '%s' "$GPG_KEY" | base64 -d | gpg --batch --quiet --import
+          KEYID=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
+          echo "signing as $KEYID"
+
+          # What is already published. The new build is another commit on the
+          # ref every previous release used, and a repository built from
+          # scratch here would drop the history `flatpak update` walks.
+          mkdir -p published
+          aws s3 sync "s3://$BUCKET/repo/" published/ \
+            --endpoint-url "$ENDPOINT" --no-progress
+          test -f published/config || ostree --repo=published init --mode=archive-z2
+
+          ostree --repo=published pull-local repo \
+            app/com.nsrosenqvist.Riplika/x86_64/master
+          # The appstream branch too, or a software centre lists the remote
+          # with nothing in it: no name, no description, no screenshots.
+          ostree --repo=published pull-local repo appstream2/x86_64
+
+          flatpak build-sign published com.nsrosenqvist.Riplika \
+            --gpg-sign="$KEYID" --gpg-homedir="$GNUPGHOME"
+          # Static deltas are what make an update a diff rather than the whole
+          # application again. Two releases of history is enough to roll back
+          # to; the rest is pruned and stops being paid for.
+          flatpak build-update-repo published \
+            --generate-static-deltas --prune --prune-depth=2 \
+            --gpg-sign="$KEYID" --gpg-homedir="$GNUPGHOME"
+
+          # Objects are named after their own hashes and never change, so they
+          # are cached for a year. Everything else is how a client finds them.
+          aws s3 sync published/objects/ "s3://$BUCKET/repo/objects/" \
+            --endpoint-url "$ENDPOINT" --no-progress \
+            --cache-control 'public, max-age=31536000, immutable'
+          if [ -d published/deltas ]; then
+            aws s3 sync published/deltas/ "s3://$BUCKET/repo/deltas/" \
+              --endpoint-url "$ENDPOINT" --no-progress \
+              --cache-control 'public, max-age=31536000, immutable'
+          fi
+          # The summary last, and only once everything it names is up. A
+          # client that reads a summary listing objects that have not arrived
+          # gets an install that fails halfway through.
+          aws s3 sync published/ "s3://$BUCKET/repo/" \
+            --endpoint-url "$ENDPOINT" --no-progress \
+            --exclude 'objects/*' --exclude 'deltas/*' --exclude 'summary*' \
+            --cache-control 'no-cache'
+          for f in summary summary.sig summary.idx; do
+            test -f "published/$f" || continue
+            aws s3 cp "published/$f" "s3://$BUCKET/repo/$f" \
+              --endpoint-url "$ENDPOINT" --no-progress --cache-control 'no-cache'
+          done
+          # What pruning removed, once nothing refers to it any more.
+          aws s3 sync published/ "s3://$BUCKET/repo/" \
+            --endpoint-url "$ENDPOINT" --no-progress --delete --size-only
+
+          # Regenerated every release from the key that just signed it, so the
+          # two cannot come apart.
+          ./packaging/flatpakrepo.sh "$BASE_URL" "$KEYID" > riplika.flatpakrepo
+          aws s3 cp riplika.flatpakrepo "s3://$BUCKET/riplika.flatpakrepo" \
+            --endpoint-url "$ENDPOINT" --no-progress --cache-control 'no-cache' \
+            --content-type 'application/vnd.flatpak.repo'
+
   release:
     name: Publish
     needs: [version, binaries, flatpak]

@@ -65,7 +65,7 @@ riplika-gui                             # or the window
 | [Subtitles](docs/subtitles.md) | deterministic recognition, and how well it works |
 | [Configuration](docs/configuration.md) | where things live, preferences |
 | [AGENTS.md](AGENTS.md) | architecture, for anyone changing the code |
-| [RELEASE.md](RELEASE.md) | cutting a release, and submitting to Flathub |
+| [RELEASE.md](RELEASE.md) | cutting a release, and the remote it is published to |
 
 ## Status
 

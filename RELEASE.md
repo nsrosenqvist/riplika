@@ -46,10 +46,49 @@ flatpak install ./riplika-1.0.0.flatpak
 
 That runtime comes from Flathub, so a machine with no remotes configured has to add Flathub once first.
 
-## Submitting to Flathub
+## Where it is published
 
-Push the tag first. The AppStream screenshots are served from this repository at that tag, and Flathub's linter fetches them, so a submission before the tag exists fails on four missing images.
+Riplika is distributed from its own Flatpak remote rather than from Flathub. Flathub's [requirements](https://docs.flathub.org/docs/for-app-authors/requirements) say that "applications containing AI-generated or AI-assisted code, documentation, or any other content are not allowed", and that the prohibition covers the submission as well as the application - manifest, metadata, patches, build scripts and the pull request itself. This is written with an AI assistant and says so in every commit trailer, so the answer is no, and pretending otherwise by rewriting the history that says so would be lying to reviewers rather than complying with them.
 
-The manifest in `packaging/` builds from the working tree, which Flathub does not allow. `packaging/flathub-manifest.py` takes that manifest and swaps the source for a git one pinned to the tag, with the commit alongside it because a tag can be moved. The release attaches the result, so the submission is that file plus the `cargo-sources.json` next to it.
+The wording was made absolute deliberately. It used to turn on quality and on whether there was meaningful human review; the rewording in May 2026 dropped both conditions. Exceptions "may be granted for mature, well-maintained projects", with no published criteria and no process, and the one public case of somebody asking was turned down first on development history rather than on the AI. That is a door worth knocking on again after a year of releases and answered issues, not now.
 
-The application id is `com.nsrosenqvist.Riplika`, which Flathub allows on the basis that `nsrosenqvist.com` is reachable over HTTPS and belongs to the author.
+Nothing else about the build changes. The manifest, the linter run, the AppStream metadata and the screenshots all still have to be right, because a software centre reads them from the remote exactly as it would from Flathub. `packaging/flathub-manifest.py` and the manifest it produces are still built and still attached to the release: it is the only description of the build that does not depend on this working tree, and it is what any redistributor - Flathub included, one day - would need.
+
+### The remote
+
+The remote is an OSTree repository served as static files over HTTPS. There is no server: `flatpak build-update-repo` writes a directory, that directory is uploaded, and `flatpak install` fetches paths out of it.
+
+It is stored in a Cloudflare R2 bucket published at `dl.nsrosenqvist.com`, not in a Cloudflare Pages project. One release fits in Pages comfortably - measured at 50 MB across 214 files with the largest at 6.7 MiB, against caps of 20,000 files and 25 MiB each - so the reason is not size today. It is that a Pages deployment is a whole immutable site: the repository only ever grows, every release would re-upload all of the history along with the new commit, and there would be no way to put the objects up before the summary that names them. R2 is S3-compatible and incremental, so `aws s3 sync` uploads the few thousand objects that are new, in an order this chooses, with a cache header per object. It charges nothing for egress and the whole thing sits inside the free tier.
+
+Two things sit at the root:
+
+| | |
+|---|---|
+| `riplika.flatpakrepo` | the ini file a person adds; it names the repository URL and carries the signing key inline |
+| `repo/` | the OSTree repository itself - `config`, `summary`, `summary.sig`, `objects/`, `refs/`, `deltas/` |
+
+Adding it is one command, and installing is the next:
+
+```sh
+flatpak remote-add --if-not-exists riplika https://dl.nsrosenqvist.com/riplika.flatpakrepo
+flatpak install riplika com.nsrosenqvist.Riplika
+```
+
+The GNOME runtime still comes from Flathub, which is where `org.gnome.Platform` lives, so a machine with no remotes configured adds that one too. Only the application is served from here.
+
+### Signing
+
+The repository is signed with a GPG key made for this and used for nothing else. A remote served over HTTPS is not thereby trustworthy: the summary and the objects are what flatpak verifies, and `--no-gpg-verify` is not something to ask people to type.
+
+The public key is exported, base64-encoded onto one line, and written into `riplika.flatpakrepo` as `GPGKey=`, which is how it reaches everyone who adds the remote. Changing it after that means everyone re-adds the remote, so it is a key to keep.
+
+The secret key is base64-encoded into the `FLATPAK_GPG_KEY` repository secret. It has no passphrase, because a passphrase stored in the secret beside it protects against nothing.
+
+### What publishing does
+
+The `Flatpak` job in `.github/workflows/release.yml` builds the repository already. Publishing continues from there rather than downloading a 240 MB artifact into a second job.
+
+1. **Fetch what is published.** The new commit goes onto the same ref every release did, and a repository built from scratch each time would drop the history that `flatpak update` walks.
+2. **Pull the new build into it**, sign it, and regenerate the summary with `flatpak build-update-repo --generate-static-deltas --prune --prune-depth=2`. The deltas are what make an update download a diff instead of the whole thing; the prune keeps two releases of history and lets the rest go.
+3. **Upload the objects first and the summary last.** A client that reads a summary naming objects that are not there yet gets an install that fails halfway. Deleting what pruning removed happens last of all, after nothing refers to it.
+4. **Cache accordingly.** Objects are content-addressed and never change, so they go up with a year of `max-age` and `immutable`. `summary` and `summary.sig` change every release and are the whole point of the fetch, so they go up as `no-cache`. Getting this backwards is the failure where a release is published and nobody sees it for hours.

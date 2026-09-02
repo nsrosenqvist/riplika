@@ -191,6 +191,8 @@ A finished dump is filed under the system its datfile names - "Sony - PlayStatio
 
 `packaging/com.nsrosenqvist.Riplika.yml` builds the window against `org.gnome.Platform`, bundling libdvdcss, libdvdread, libdvdnav, ffmpeg, cdparanoia and Tesseract.
 
+The development side of the ten libraries built here is thrown away at the end: headers, pkg-config files, static archives. Nothing in the sandbox ever compiles anything, and `libtesseract.a` alone was 117 MB - the application was 228 MB installed before that list existed and is 106 MB after it.
+
 Three things about it are worth knowing before you rely on it.
 
 **It is DVD-only.** MakeMKV cannot be bundled - it is proprietary, so redistributing it is not ours to do - and reaching the host's copy would need `--talk-name=org.freedesktop.Flatpak`, which lets the application run anything at all on the host. Claiming to be sandboxed after that would be a lie. The Flatpak is coherent precisely because the DVD path needs nothing proprietary; for Blu-ray, use the native build.

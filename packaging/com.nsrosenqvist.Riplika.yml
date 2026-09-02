@@ -94,6 +94,27 @@ finish-args:
   - --filesystem=~/Games
   - --filesystem=xdg-download
 
+# What the builds leave behind that nobody installing this needs.
+#
+# Ten libraries are built from source here, and each installs its development
+# side along with itself: headers, pkg-config files, and static archives beside
+# the shared ones. Nothing in the sandbox ever compiles anything, so all of it
+# is dead weight - libtesseract.a alone is 117 MB, more than half of what the
+# application came to before this list existed. Applied after every module has
+# been built, so the headers are still there while riplika is compiled against
+# them.
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /lib/cmake
+  - /share/aclocal
+  - /share/man
+  - /share/doc
+  - /share/gtk-doc
+  - /bin/*-config
+  - '*.a'
+  - '*.la'
+
 modules:
   # --- disc reading -------------------------------------------------------
   # VideoLAN moved these three to meson; flatpak-builder assumes autotools.
