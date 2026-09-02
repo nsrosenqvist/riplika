@@ -275,7 +275,8 @@ mod tests {
 
     #[test]
     fn a_language_the_table_lacks_the_accents_for_is_not_a_fit() {
-        // The shipped table knows one Spanish accent, é, which turns up in
+        // A table hand-labelled from English tracks knows one Spanish
+        // accent, é, which turns up in
         // English loanwords. Missing á í ó ú ñ ¿ ¡ is 1.4% of the Spanish on
         // the disc, and at the old bar of ninety per cent that passed - so
         // every episode carried about 180 placeholders.

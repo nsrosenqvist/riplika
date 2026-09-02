@@ -475,9 +475,9 @@ mod settling_tests {
 
     #[test]
     fn a_trusted_reference_still_takes_a_clear_majority_as_the_label() {
-        // The shipped table was built this way and is the best there is. A
-        // reference is exact: 95% for l means l, and the ten readings of I are
-        // ten places the reference itself says I.
+        // A table built from trusted subtitles was settled this way and is
+        // the best kind there is. A reference is exact: 95% for l means l, and
+        // the ten readings of I are ten places the reference itself says I.
         let mut t = mostly_l_with_some_i();
         let (labelled, ambiguous, _) = t.settle_votes(Settling::from_a_reference(0.9));
         assert_eq!((labelled, ambiguous), (1, 0));

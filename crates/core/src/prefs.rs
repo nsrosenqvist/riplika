@@ -334,9 +334,11 @@ impl Preferences {
 
     /// `$XDG_DATA_HOME/riplika/tables` - a glyph table per release.
     ///
-    /// Beside the shipped one rather than replacing it: that one was built and
-    /// checked by hand and is the best table there is for the discs it covers.
-    /// These are the ones the application labelled for itself.
+    /// Beside `glyphs.json` rather than replacing it. Nothing ships a glyph
+    /// table - there is none in the package and none in the repository - so
+    /// that file exists only where somebody ran `riplika build`, and where it
+    /// does it was checked by hand and is worth keeping. These are the ones
+    /// the application labelled for itself.
     pub fn tables_dir() -> PathBuf {
         Self::data_dir().join("tables")
     }

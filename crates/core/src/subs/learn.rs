@@ -1,7 +1,7 @@
 //! Teaching a glyph table what its shapes say.
 //!
 //! Two things can tell it. A set of subtitles already trusted for this disc,
-//! which is how the shipped table was built and is exact. Or a reader looking
+//! which is how a hand-built table is made and is exact. Or a reader looking
 //! at the shapes, which is how a disc nobody has a table for gets one, and is
 //! not. The difference is only where the text comes from. Everything past that
 //! is the same machinery - the structural check, the votes, the per-glyph

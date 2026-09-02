@@ -758,8 +758,8 @@ impl<'a> Pipeline<'a> {
     /// When none fits, the disc is read and labelled into a table of its own.
     /// That is the only way this can work for somebody who is not going to
     /// label a few hundred shapes by hand, and before it existed a disc from a
-    /// studio the shipped table did not cover produced subtitles that were
-    /// nothing but placeholders.
+    /// studio no table covered produced subtitles that were nothing but
+    /// placeholders.
     fn lettering(
         &self,
         outputs: &[&Item],
