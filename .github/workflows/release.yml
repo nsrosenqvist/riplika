@@ -177,11 +177,13 @@ jobs:
             --endpoint-url "$ENDPOINT" --no-progress
           test -f published/config || ostree --repo=published init --mode=archive-z2
 
+          # This application's ref, and nothing else. The build repository has
+          # an appstream branch of its own listing one application, and
+          # pulling that across would replace a catalogue of everything on the
+          # remote with a catalogue of this. build-update-repo regenerates it
+          # below from every app ref that is actually there.
           ostree --repo=published pull-local repo \
             app/com.nsrosenqvist.Riplika/x86_64/master
-          # The appstream branch too, or a software centre lists the remote
-          # with nothing in it: no name, no description, no screenshots.
-          ostree --repo=published pull-local repo appstream2/x86_64
 
           flatpak build-sign published com.nsrosenqvist.Riplika \
             --gpg-sign="$KEYID" --gpg-homedir="$GNUPGHOME"
@@ -219,16 +221,12 @@ jobs:
             --endpoint-url "$ENDPOINT" --no-progress --delete --size-only
 
           # Regenerated every release from the key that just signed it, so the
-          # two cannot come apart.
-          ./packaging/flatpakrepo.sh "$BASE_URL" "$KEYID" > riplika.flatpakrepo
-          aws s3 cp riplika.flatpakrepo "s3://$BUCKET/riplika.flatpakrepo" \
+          # two cannot come apart. It describes the remote rather than this
+          # application, and is written by whichever project publishes last.
+          ./packaging/flatpakrepo.sh "$BASE_URL" "$KEYID" > nsrosenqvist.flatpakrepo
+          aws s3 cp nsrosenqvist.flatpakrepo "s3://$BUCKET/nsrosenqvist.flatpakrepo" \
             --endpoint-url "$ENDPOINT" --no-progress --cache-control 'no-cache' \
             --content-type 'application/vnd.flatpak.repo'
-          # The icon that file points at, or a software centre offers the
-          # remote with a blank square where the application should be.
-          aws s3 cp data/icons/hicolor/scalable/apps/com.nsrosenqvist.Riplika.svg \
-            "s3://$BUCKET/riplika.svg" --endpoint-url "$ENDPOINT" --no-progress \
-            --content-type 'image/svg+xml' --cache-control 'public, max-age=86400'
 
   release:
     name: Publish

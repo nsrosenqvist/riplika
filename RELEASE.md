@@ -64,23 +64,27 @@ Two things sit at the root:
 
 | | |
 |---|---|
-| `riplika.flatpakrepo` | the ini file a person adds; it names the repository URL and carries the signing key inline |
+| `nsrosenqvist.flatpakrepo` | the ini file a person adds; it names the repository URL and carries the signing key inline |
 | `repo/` | the OSTree repository itself - `config`, `summary`, `summary.sig`, `objects/`, `refs/`, `deltas/` |
+
+It is one remote for everything published this way, not one per application. An OSTree repository holds any number of refs and one summary over all of them - that is what Flathub is - so a second application is another ref in the same repository rather than another hostname, another key, another cache rule and another thing for somebody to add. Which is why nothing here is called Riplika: the bucket is `flatpak`, the file is `nsrosenqvist.flatpakrepo`, and the remote calls itself a person rather than a program. A remote named after the first application to need one is a name that stops being true and cannot be changed, because it is already in everybody's `flatpak remotes`.
 
 Adding it is one command, and installing is the next:
 
 ```sh
-flatpak remote-add --if-not-exists riplika https://flatpak.nsrosenqvist.com/riplika.flatpakrepo
-flatpak install riplika com.nsrosenqvist.Riplika
+flatpak remote-add --if-not-exists nsrosenqvist https://flatpak.nsrosenqvist.com/nsrosenqvist.flatpakrepo
+flatpak install nsrosenqvist com.nsrosenqvist.Riplika
 ```
 
-The GNOME runtime still comes from Flathub, which is where `org.gnome.Platform` lives, so a machine with no remotes configured adds that one too. Only the application is served from here.
+The GNOME runtime still comes from Flathub, which is where `org.gnome.Platform` lives, so a machine with no remotes configured adds that one too. Only the applications are served from here.
+
+Sharing one repository has one edge worth knowing. Each project's release workflow fetches the repository, adds its commit, and writes the summary back, so two projects tagging a release within the same few minutes can have the second write a summary that predates the first. Nothing is lost - the objects are all there - but one of the two is invisible until something publishes again, and re-running the job fixes it. This is not worth designing around at two applications; it is worth recognising rather than debugging.
 
 ### Signing
 
 The repository is signed with a GPG key made for this and used for nothing else. A remote served over HTTPS is not thereby trustworthy: the summary and the objects are what flatpak verifies, and `--no-gpg-verify` is not something to ask people to type.
 
-The public key is exported, base64-encoded onto one line, and written into `riplika.flatpakrepo` as `GPGKey=`, which is how it reaches everyone who adds the remote. Changing it after that means everyone re-adds the remote, so it is a key to keep.
+The public key is exported, base64-encoded onto one line, and written into `nsrosenqvist.flatpakrepo` as `GPGKey=`, which is how it reaches everyone who adds the remote. Changing it after that means everyone re-adds the remote, so it is a key to keep.
 
 The secret key is base64-encoded into the `FLATPAK_GPG_KEY` repository secret. It has no passphrase, because a passphrase stored in the secret beside it protects against nothing.
 
@@ -88,7 +92,7 @@ The secret key is base64-encoded into the `FLATPAK_GPG_KEY` repository secret. I
 
 Nine steps, all of them undoable except the fourth, and the whole thing sits inside Cloudflare's free tier. `nsrosenqvist.com` has to be a zone on Cloudflare already, because that is what a custom domain on a bucket needs.
 
-**1. Make the bucket.** Cloudflare dashboard, R2, *Create bucket*. Call it `riplika`; pick a location hint near where most of it will be fetched from. Nothing else on the page matters.
+**1. Make the bucket.** Cloudflare dashboard, R2, *Create bucket*. Call it `flatpak`, not `riplika` - it holds the remote, and the remote holds whatever gets published to it. Pick a location hint near where most of it will be fetched from. Nothing else on the page matters.
 
 **2. Give it the hostname.** The bucket's *Settings*, then *Public access*, then *Custom Domains*, then *Connect Domain*, and enter `flatpak.nsrosenqvist.com`. Cloudflare writes the DNS record itself and the certificate follows a minute later. The object key becomes the path, so `repo/summary` in the bucket is `https://flatpak.nsrosenqvist.com/repo/summary` on the web, which is what the URL in the `.flatpakrepo` file is pointing at.
 
@@ -113,7 +117,7 @@ gpg --export-secret-keys "$KEYID" | base64 -w0 | gh secret set FLATPAK_GPG_KEY
 gh secret set R2_ACCESS_KEY_ID
 gh secret set R2_SECRET_ACCESS_KEY
 gh secret set R2_ENDPOINT      # https://<account-id>.r2.cloudflarestorage.com
-gh secret set R2_BUCKET        # riplika
+gh secret set R2_BUCKET        # flatpak
 gh variable set REPO_BASE_URL --body https://flatpak.nsrosenqvist.com
 ```
 
@@ -127,21 +131,19 @@ gh variable set REPO_BASE_URL --body https://flatpak.nsrosenqvist.com
 flatpak run org.flatpak.Builder --user --force-clean --repo=repo build packaging/com.nsrosenqvist.Riplika.yml
 flatpak build-sign repo com.nsrosenqvist.Riplika --gpg-sign=$KEYID
 flatpak build-update-repo repo --generate-static-deltas --gpg-sign=$KEYID
-./packaging/flatpakrepo.sh https://flatpak.nsrosenqvist.com $KEYID > riplika.flatpakrepo
+./packaging/flatpakrepo.sh https://flatpak.nsrosenqvist.com $KEYID > nsrosenqvist.flatpakrepo
 
 export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_DEFAULT_REGION=auto
 E=https://<account-id>.r2.cloudflarestorage.com
-aws s3 sync repo/ s3://riplika/repo/ --endpoint-url $E
-aws s3 cp riplika.flatpakrepo s3://riplika/riplika.flatpakrepo --endpoint-url $E
-aws s3 cp data/icons/hicolor/scalable/apps/com.nsrosenqvist.Riplika.svg \
-          s3://riplika/riplika.svg --endpoint-url $E --content-type image/svg+xml
+aws s3 sync repo/ s3://flatpak/repo/ --endpoint-url $E
+aws s3 cp nsrosenqvist.flatpakrepo s3://flatpak/nsrosenqvist.flatpakrepo --endpoint-url $E
 ```
 
 **8. Add it the way a stranger would**, on a machine that has never seen this working tree:
 
 ```sh
-flatpak remote-add --if-not-exists riplika https://flatpak.nsrosenqvist.com/riplika.flatpakrepo
-flatpak install riplika com.nsrosenqvist.Riplika
+flatpak remote-add --if-not-exists nsrosenqvist https://flatpak.nsrosenqvist.com/nsrosenqvist.flatpakrepo
+flatpak install nsrosenqvist com.nsrosenqvist.Riplika
 ```
 
 If it installs without `--no-gpg-verify` then the signature, the summary, the objects and the key in the `.flatpakrepo` all agree, which is the only test of this that means anything.
@@ -153,6 +155,6 @@ If it installs without `--no-gpg-verify` then the signature, the summary, the ob
 The `Flatpak` job in `.github/workflows/release.yml` builds the repository already. Publishing continues from there rather than downloading a 240 MB artifact into a second job.
 
 1. **Fetch what is published.** The new commit goes onto the same ref every release did, and a repository built from scratch each time would drop the history that `flatpak update` walks.
-2. **Pull the new build into it**, sign it, and regenerate the summary with `flatpak build-update-repo --generate-static-deltas --prune --prune-depth=2`. The deltas are what make an update download a diff instead of the whole thing; the prune keeps two releases of history and lets the rest go.
+2. **Pull the new build into it**, sign it, and regenerate the summary with `flatpak build-update-repo --generate-static-deltas --prune --prune-depth=2`. The deltas are what make an update download a diff instead of the whole thing; the prune keeps two releases of history and lets the rest go. Only this application's ref is pulled across: the build repository carries an appstream branch listing one application, and copying that over would replace the remote's catalogue of everything with a catalogue of this. `build-update-repo` writes that branch itself, from whatever is actually in the repository.
 3. **Upload the objects first and the summary last.** A client that reads a summary naming objects that are not there yet gets an install that fails halfway. Deleting what pruning removed happens last of all, after nothing refers to it.
 4. **Cache accordingly.** Objects are content-addressed and never change, so they go up with a year of `max-age` and `immutable`. `summary` and `summary.sig` change every release and are the whole point of the fetch, so they go up as `no-cache`. Getting this backwards is the failure where a release is published and nobody sees it for hours.

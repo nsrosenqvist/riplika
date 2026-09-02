@@ -1,5 +1,5 @@
 #!/bin/bash
-# Write the .flatpakrepo file people add to install Riplika.
+# Write the .flatpakrepo file people add to install from this remote.
 #
 # One ini file that names the repository and carries the signing key inline, so
 # adding the remote is one command with one URL in it and nothing to import by
@@ -8,7 +8,13 @@
 # place the key lives, and the failure it causes - a remote everybody has added
 # that no longer verifies - is one nobody can fix from their end.
 #
-#     packaging/flatpakrepo.sh https://flatpak.nsrosenqvist.com > riplika.flatpakrepo
+#     packaging/flatpakrepo.sh https://flatpak.nsrosenqvist.com > nsrosenqvist.flatpakrepo
+#
+# It describes the remote, not Riplika. One OSTree repository can hold any
+# number of applications, which is what Flathub is, and this one is expected to
+# hold more than this one eventually - so what somebody adds is a person's
+# remote that Riplika happens to be in, and adding it again for the next
+# application is not something they should have to do.
 #
 # Reads the public half of whatever key GNUPGHOME holds.
 set -eu
@@ -25,13 +31,15 @@ if [ -z "$GPG" ]; then
   exit 1
 fi
 
+# No Icon. There is no icon for the remote itself, and pointing it at one
+# application's icon would be wrong the moment there are two. A software centre
+# falls back to a generic source icon, which is the truth.
 cat <<EOF
 [Flatpak Repo]
-Title=Riplika
+Title=Niklas Rosenqvist
 Url=$BASE/repo/
-Homepage=https://github.com/nsrosenqvist/riplika
-Comment=Rip discs into a library
-Description=Films, television, music CDs and game discs, read and filed the way a media library expects them.
-Icon=$BASE/riplika.svg
+Homepage=https://github.com/nsrosenqvist
+Comment=Applications by Niklas Rosenqvist
+Description=A small remote for applications that are not on Flathub.
 GPGKey=$GPG
 EOF
