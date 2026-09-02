@@ -184,11 +184,19 @@ pub struct Stream<'a> {
     pub opts: &'a segment::SegOpts,
 }
 
+/// How many cues to hand the reader at a time.
+///
+/// The cost of reading is almost entirely the process, so this is what turns
+/// a couple of minutes into a few seconds. Not the whole stream at once: what
+/// is worth reading is decided from what the table already knows, and a table
+/// that only learns at the very end reads hundreds of cues it did not need.
+const BATCH: usize = 48;
+
 /// Build or extend a table by reading the stream's own lines.
 ///
 /// Only cues holding a shape that is still thin are read: a film has a
 /// thousand cues and the alphabet is done with in the first few dozen, so
-/// reading all of them would spend an hour of processes to learn nothing.
+/// reading all of them would spend an age to learn nothing.
 pub fn from_reader(
     reader: &dyn crate::subs::ocr::Reader,
     stream: Stream<'_>,
@@ -200,7 +208,9 @@ pub fn from_reader(
     let (effort, min_agreement) = (how, how.agreement);
     let mut teacher = Teacher::new();
     let mut read = 0usize;
-    for (n, ev) in events.iter().enumerate() {
+    let mut batch: Vec<Vec<Line>> = Vec::new();
+
+    for ev in events.iter() {
         let lines = segment::segment(&ev.spu, palette, opts);
         if lines.iter().all(|l| l.glyphs.is_empty()) {
             continue;
@@ -212,20 +222,67 @@ pub fn from_reader(
             teacher.read(table, &lines, None);
             continue;
         }
-        let mut text = String::new();
-        for (i, line) in lines.iter().enumerate() {
-            if i > 0 {
-                text.push('\n');
-            }
-            text.push_str(&crate::subs::ocr::read(reader, line)?);
-        }
-        teacher.read(table, &lines, Some(&text));
+        batch.push(lines);
         read += 1;
-        progress((read as f32 / effort.cues as f32).min(1.0));
-        let _ = n;
+        if batch.len() >= BATCH {
+            teach_batch(reader, table, &mut teacher, &mut batch)?;
+            progress((read as f32 / effort.cues as f32).min(1.0));
+        }
     }
+    teach_batch(reader, table, &mut teacher, &mut batch)?;
     progress(1.0);
     Ok(teacher.settle(table, min_agreement))
+}
+
+/// Read one batch of cues and teach the table from what came back.
+///
+/// A line with nothing on it is not sent - there is no picture to send - but
+/// it keeps its place in the answer, because what the table learns depends on
+/// the text and the shapes agreeing line for line.
+fn teach_batch(
+    reader: &dyn crate::subs::ocr::Reader,
+    table: &mut Table,
+    teacher: &mut Teacher,
+    batch: &mut Vec<Vec<Line>>,
+) -> crate::Result<()> {
+    if batch.is_empty() {
+        return Ok(());
+    }
+    let mut pictures = Vec::new();
+    // Where each drawn line sits in the flat list handed to the reader.
+    let mut places: Vec<Vec<Option<usize>>> = Vec::with_capacity(batch.len());
+    for lines in batch.iter() {
+        let mut here = Vec::with_capacity(lines.len());
+        for line in lines {
+            let png = crate::subs::picture::line_png(line, crate::subs::ocr::ZOOM);
+            if png.is_empty() {
+                here.push(None);
+            } else {
+                here.push(Some(pictures.len()));
+                pictures.push(png);
+            }
+        }
+        places.push(here);
+    }
+
+    let answers = reader.read_lines(&pictures)?;
+    if answers.len() != pictures.len() {
+        return Err(crate::Error(format!(
+            "asked for {} lines and got {} back",
+            pictures.len(),
+            answers.len()
+        )));
+    }
+    for (lines, here) in batch.iter().zip(&places) {
+        let text = here
+            .iter()
+            .map(|slot| slot.map(|i| answers[i].as_str()).unwrap_or(""))
+            .collect::<Vec<&str>>()
+            .join("\n");
+        teacher.read(table, lines, Some(&text));
+    }
+    batch.clear();
+    Ok(())
 }
 
 #[cfg(test)]
@@ -311,6 +368,79 @@ mod tests {
         assert_eq!(t.glyphs.len(), 2);
         assert_eq!(teacher.lesson.instances, 2);
         assert_eq!(teacher.lesson.votes, 0);
+    }
+
+    /// Counts how many times a reader was asked, and for how many pictures.
+    #[derive(Default)]
+    struct Counting {
+        calls: std::sync::Mutex<Vec<usize>>,
+    }
+
+    impl crate::subs::ocr::Reader for Counting {
+        fn read_line(&self, _png: &[u8]) -> crate::Result<String> {
+            self.calls.lock().unwrap().push(1);
+            Ok("a".into())
+        }
+        fn read_lines(&self, pngs: &[Vec<u8>]) -> crate::Result<Vec<String>> {
+            self.calls.lock().unwrap().push(pngs.len());
+            Ok(vec!["a".to_string(); pngs.len()])
+        }
+    }
+
+    #[test]
+    fn a_line_with_nothing_on_it_keeps_its_place_in_the_answer() {
+        // The text and the shapes have to agree line for line. Dropping an
+        // empty line from what is sent, without leaving a gap for it, shifts
+        // every answer after it onto the wrong line - and a wrong label is
+        // wrong for every disc that reuses the table.
+        let mut t = Table::default();
+        let mut teacher = Teacher::new();
+        let reader = crate::subs::ocr::tests::FakeReader::new(&["ab", "cd"]);
+        let empty = Line { glyphs: Vec::new(), top: 0, bottom: 0 };
+        let mut batch = vec![vec![line(&[(1, 0), (2, 4)]), empty, line(&[(3, 0), (4, 4)])]];
+        teach_batch(&reader, &mut t, &mut teacher, &mut batch).unwrap();
+        assert_eq!(teacher.lesson.aligned, 1, "the cue should have lined up");
+        assert_eq!(teacher.lesson.votes, 4);
+        teacher.settle(&mut t, 0.9);
+        let labels: Vec<Option<&str>> = t.glyphs.iter().map(|g| g.text.as_deref()).collect();
+        assert_eq!(labels, [Some("a"), Some("b"), Some("c"), Some("d")]);
+    }
+
+    #[test]
+    fn a_whole_batch_is_one_ask_rather_than_one_an_image() {
+        // The cost of reading is the process, not the reading. This is the
+        // difference between a couple of minutes for a disc and a few seconds.
+        let reader = Counting::default();
+        let mut t = Table::default();
+        let mut teacher = Teacher::new();
+        let mut batch: Vec<Vec<Line>> =
+            (0..40).map(|i| vec![line(&[(1, 0), (i as u8 % 9 + 2, 4)])]).collect();
+        teach_batch(&reader, &mut t, &mut teacher, &mut batch).unwrap();
+        assert_eq!(reader.calls.lock().unwrap().as_slice(), [40], "40 pictures, asked once");
+        assert!(batch.is_empty(), "a taught batch is emptied, or it is taught twice");
+    }
+
+    #[test]
+    fn a_reader_that_answers_the_wrong_number_of_lines_is_refused() {
+        // Rather than lining the answers up against whatever shapes happen to
+        // be there, which is how a table gets labels that are wrong for good.
+        struct Short;
+        impl crate::subs::ocr::Reader for Short {
+            fn read_line(&self, _png: &[u8]) -> crate::Result<String> {
+                Ok("a".into())
+            }
+            fn read_lines(&self, _pngs: &[Vec<u8>]) -> crate::Result<Vec<String>> {
+                Ok(vec!["a".into()])
+            }
+        }
+        let mut t = Table::default();
+        let mut teacher = Teacher::new();
+        let mut batch: Vec<Vec<Line>> = (0..3).map(|i| vec![line(&[(i as u8 + 1, 0)])]).collect();
+        assert!(teach_batch(&Short, &mut t, &mut teacher, &mut batch).is_err());
+        assert_eq!(
+            teacher.lesson.votes, 0,
+            "nothing may be learned from a batch that did not line up"
+        );
     }
 
     #[test]

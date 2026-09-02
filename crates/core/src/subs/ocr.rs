@@ -26,6 +26,35 @@ pub trait Reader: Send + Sync {
     /// An empty answer is not an error: a line it cannot read simply casts no
     /// votes, and the shapes on it wait for a line that can.
     fn read_line(&self, png: &[u8]) -> Result<String>;
+
+    /// The same for many images at once, answered in the order given.
+    ///
+    /// Worth having separately because the cost here is almost entirely the
+    /// process, not the reading: a table for a disc took a couple of minutes
+    /// as eight hundred runs of Tesseract and takes a few seconds as a dozen.
+    ///
+    /// The default is the honest one-at-a-time loop, so a reader only
+    /// implements this if it can actually do better.
+    fn read_lines(&self, pngs: &[Vec<u8>]) -> Result<Vec<String>> {
+        pngs.iter().map(|p| self.read_line(p)).collect()
+    }
+}
+
+/// Split what a reader answered for several images back into one each.
+///
+/// Tesseract ends every page with a form feed except, sometimes, the last.
+/// Anything other than exactly one page per image means the pages cannot be
+/// matched to the images that produced them - and a page matched to the wrong
+/// image votes the wrong labels onto the wrong shapes, into a table that is
+/// then reused by every disc of that release. So this refuses rather than
+/// guesses, and the caller falls back to reading them one at a time.
+fn pages(out: &str, wanted: usize) -> Option<Vec<String>> {
+    let mut parts: Vec<&str> = out.split('\u{c}').collect();
+    if parts.len() == wanted + 1 && parts.last().is_some_and(|p| p.trim().is_empty()) {
+        parts.pop();
+    }
+    (parts.len() == wanted)
+        .then(|| parts.into_iter().map(|p| plausible(p.trim_matches('\n').trim())).collect())
 }
 
 /// How much bigger to draw a line before reading it.
@@ -69,6 +98,18 @@ pub struct Tesseract<'a> {
 }
 
 impl Reader for Tesseract<'_> {
+    fn read_lines(&self, pngs: &[Vec<u8>]) -> Result<Vec<String>> {
+        if pngs.is_empty() {
+            return Ok(Vec::new());
+        }
+        match self.read_together(pngs) {
+            Ok(text) => Ok(text),
+            // One at a time still works and is only slow. Falling back beats
+            // losing the disc's lettering over a batch that would not line up.
+            Err(_) => pngs.iter().map(|p| self.read_line(p)).collect(),
+        }
+    }
+
     fn read_line(&self, png: &[u8]) -> Result<String> {
         if png.is_empty() {
             return Ok(String::new());
@@ -92,6 +133,41 @@ impl Reader for Tesseract<'_> {
         let _ = std::fs::remove_file(&name);
         let out = out?;
         Ok(plausible(out.stdout.lines().next().unwrap_or_default().trim()))
+    }
+}
+
+impl Tesseract<'_> {
+    /// Everything in one run, which is where the time goes.
+    fn read_together(&self, pngs: &[Vec<u8>]) -> Result<Vec<String>> {
+        let mut written = Vec::with_capacity(pngs.len());
+        let mut list = String::new();
+        for (i, png) in pngs.iter().enumerate() {
+            let name = self.scratch.join(format!("batch-{i:05}.png"));
+            std::fs::write(&name, png)
+                .map_err(|e| crate::Error(format!("{}: {e}", name.display())))?;
+            list.push_str(&name.to_string_lossy());
+            list.push('\n');
+            written.push(name);
+        }
+        let list_path = self.scratch.join("batch.txt");
+        let outcome = std::fs::write(&list_path, list.as_bytes())
+            .map_err(|e| crate::Error(format!("{}: {e}", list_path.display())))
+            .and_then(|()| {
+                self.runner.run(
+                    &Command::new("tesseract")
+                        .arg(list_path.to_string_lossy().into_owned())
+                        .args(["-", "--psm", "7", "-l", &self.language]),
+                )
+            });
+        for p in written.iter().chain(std::iter::once(&list_path)) {
+            let _ = std::fs::remove_file(p);
+        }
+        let out = outcome?;
+        // A page it could not read stops the whole run rather than being
+        // skipped, so this is where that shows up.
+        pages(&out.stdout, pngs.len()).ok_or_else(|| {
+            crate::Error("the reader answered with the wrong number of pages".into())
+        })
     }
 }
 
@@ -224,6 +300,52 @@ pub mod tests {
             .filter(|l| !l.is_empty() && !l.contains(' ') && !l.ends_with(':'))
             .collect();
         assert_eq!(langs, ["eng", "osd", "swe"]);
+    }
+
+    #[test]
+    fn pages_come_back_one_per_image() {
+        // Tesseract ends every page with a form feed, except sometimes the
+        // last one, so both shapes have to be read the same way.
+        let with = "one\n\u{c}two\n\u{c}three\n\u{c}";
+        let without = "one\n\u{c}two\n\u{c}three\n";
+        for out in [with, without] {
+            assert_eq!(
+                pages(out, 3).as_deref(),
+                Some(&["one".to_string(), "two".into(), "three".into()][..])
+            );
+        }
+    }
+
+    #[test]
+    fn a_page_that_read_as_nothing_still_holds_its_place() {
+        // A blank line in the middle must not shift every answer after it onto
+        // the wrong image.
+        let out = "one\n\u{c}\n\u{c}three\n";
+        assert_eq!(
+            pages(out, 3).as_deref(),
+            Some(&["one".to_string(), String::new(), "three".into()][..])
+        );
+    }
+
+    #[test]
+    fn the_wrong_number_of_pages_is_refused_rather_than_lined_up_anyway() {
+        // The failure this prevents is silent and permanent: a page matched to
+        // the wrong image votes the wrong labels onto the wrong shapes, into a
+        // table every later disc of that release is then decoded with.
+        assert_eq!(pages("one\n\u{c}two\n", 3), None);
+        assert_eq!(pages("", 2), None);
+    }
+
+    #[test]
+    fn a_batch_is_read_with_the_same_rewrites_as_a_single_line() {
+        assert_eq!(pages("| mean\n\u{c}", 1).as_deref(), Some(&["I mean".to_string()][..]));
+    }
+
+    #[test]
+    fn a_reader_with_no_batching_of_its_own_still_answers_in_order() {
+        let r = FakeReader::new(&["first", "second", "third"]);
+        let pngs = vec![vec![1u8], vec![2], vec![3]];
+        assert_eq!(r.read_lines(&pngs).unwrap(), ["first", "second", "third"]);
     }
 
     #[test]
