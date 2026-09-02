@@ -58,7 +58,7 @@ Nothing else about the build changes. The manifest, the linter run, the AppStrea
 
 The remote is an OSTree repository served as static files over HTTPS. There is no server: `flatpak build-update-repo` writes a directory, that directory is uploaded, and `flatpak install` fetches paths out of it.
 
-It is stored in a Cloudflare R2 bucket published at `dl.nsrosenqvist.com`, not in a Cloudflare Pages project. One release fits in Pages comfortably - measured at 50 MB across 214 files with the largest at 6.7 MiB, against caps of 20,000 files and 25 MiB each - so the reason is not size today. It is that a Pages deployment is a whole immutable site: the repository only ever grows, every release would re-upload all of the history along with the new commit, and there would be no way to put the objects up before the summary that names them. R2 is S3-compatible and incremental, so `aws s3 sync` uploads the few thousand objects that are new, in an order this chooses, with a cache header per object. It charges nothing for egress and the whole thing sits inside the free tier.
+It is stored in a Cloudflare R2 bucket published at `flatpak.nsrosenqvist.com`, not in a Cloudflare Pages project. One release fits in Pages comfortably - measured at 50 MB across 214 files with the largest at 6.7 MiB, against caps of 20,000 files and 25 MiB each - so the reason is not size today. It is that a Pages deployment is a whole immutable site: the repository only ever grows, every release would re-upload all of the history along with the new commit, and there would be no way to put the objects up before the summary that names them. R2 is S3-compatible and incremental, so `aws s3 sync` uploads the few thousand objects that are new, in an order this chooses, with a cache header per object. It charges nothing for egress and the whole thing sits inside the free tier.
 
 Two things sit at the root:
 
@@ -70,7 +70,7 @@ Two things sit at the root:
 Adding it is one command, and installing is the next:
 
 ```sh
-flatpak remote-add --if-not-exists riplika https://dl.nsrosenqvist.com/riplika.flatpakrepo
+flatpak remote-add --if-not-exists riplika https://flatpak.nsrosenqvist.com/riplika.flatpakrepo
 flatpak install riplika com.nsrosenqvist.Riplika
 ```
 
@@ -83,6 +83,70 @@ The repository is signed with a GPG key made for this and used for nothing else.
 The public key is exported, base64-encoded onto one line, and written into `riplika.flatpakrepo` as `GPGKey=`, which is how it reaches everyone who adds the remote. Changing it after that means everyone re-adds the remote, so it is a key to keep.
 
 The secret key is base64-encoded into the `FLATPAK_GPG_KEY` repository secret. It has no passphrase, because a passphrase stored in the secret beside it protects against nothing.
+
+### Setting it up, once
+
+Nine steps, all of them undoable except the fourth, and the whole thing sits inside Cloudflare's free tier. `nsrosenqvist.com` has to be a zone on Cloudflare already, because that is what a custom domain on a bucket needs.
+
+**1. Make the bucket.** Cloudflare dashboard, R2, *Create bucket*. Call it `riplika`; pick a location hint near where most of it will be fetched from. Nothing else on the page matters.
+
+**2. Give it the hostname.** The bucket's *Settings*, then *Public access*, then *Custom Domains*, then *Connect Domain*, and enter `flatpak.nsrosenqvist.com`. Cloudflare writes the DNS record itself and the certificate follows a minute later. The object key becomes the path, so `repo/summary` in the bucket is `https://flatpak.nsrosenqvist.com/repo/summary` on the web, which is what the URL in the `.flatpakrepo` file is pointing at.
+
+Do not enable the `r2.dev` development URL. It is rate-limited and it is a second address for the same files, which is a second address people can end up with in a remote that then behaves differently.
+
+**3. Make a token for the workflow.** R2's *API* menu, *Manage API tokens*, *Create token*. Permission is *Object Read & Write*, scoped to this one bucket - not to the account. It is shown once and gives three things: an access key id, a secret access key, and an S3 endpoint that looks like `https://<account-id>.r2.cloudflarestorage.com`.
+
+**4. Make a signing key.** Not your own key. This one signs one repository, lives in a GitHub secret, and is worth nothing else:
+
+```sh
+gpg --batch --passphrase '' --quick-generate-key \
+    "Riplika <riplika@nsrosenqvist.com>" default default never
+gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}'
+```
+
+Keep a copy of the secret key somewhere you will still have it in three years. Losing it means everybody who added the remote has to remove it and add it again, and there is nothing you can publish that would fix it for them, because the thing they would need to trust the fix is the key you lost.
+
+**5. Hand it to the workflow.**
+
+```sh
+gpg --export-secret-keys "$KEYID" | base64 -w0 | gh secret set FLATPAK_GPG_KEY
+gh secret set R2_ACCESS_KEY_ID
+gh secret set R2_SECRET_ACCESS_KEY
+gh secret set R2_ENDPOINT      # https://<account-id>.r2.cloudflarestorage.com
+gh secret set R2_BUCKET        # riplika
+gh variable set REPO_BASE_URL --body https://flatpak.nsrosenqvist.com
+```
+
+`REPO_BASE_URL` is a variable rather than a secret because it is the address printed in the install instructions, and a secret it cannot print is a secret that gets hard-coded somewhere else instead.
+
+**6. Tell the cache what changes.** R2 through a custom domain is served by the CDN, which honours the `Cache-Control` the upload sets, and the upload sets `no-cache` on the summary for exactly this reason. Add a cache rule anyway - *Rules*, *Cache Rules*, matching `http.host eq "flatpak.nsrosenqvist.com" and starts_with(http.request.uri.path, "/repo/summary")`, action *Bypass cache*. It costs nothing and it is the difference between a release being visible in a minute and being visible when a cache somewhere decides it is.
+
+**7. Publish once by hand**, so that the first release is not also the first test:
+
+```sh
+flatpak run org.flatpak.Builder --user --force-clean --repo=repo build packaging/com.nsrosenqvist.Riplika.yml
+flatpak build-sign repo com.nsrosenqvist.Riplika --gpg-sign=$KEYID
+flatpak build-update-repo repo --generate-static-deltas --gpg-sign=$KEYID
+./packaging/flatpakrepo.sh https://flatpak.nsrosenqvist.com $KEYID > riplika.flatpakrepo
+
+export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_DEFAULT_REGION=auto
+E=https://<account-id>.r2.cloudflarestorage.com
+aws s3 sync repo/ s3://riplika/repo/ --endpoint-url $E
+aws s3 cp riplika.flatpakrepo s3://riplika/riplika.flatpakrepo --endpoint-url $E
+aws s3 cp data/icons/hicolor/scalable/apps/com.nsrosenqvist.Riplika.svg \
+          s3://riplika/riplika.svg --endpoint-url $E --content-type image/svg+xml
+```
+
+**8. Add it the way a stranger would**, on a machine that has never seen this working tree:
+
+```sh
+flatpak remote-add --if-not-exists riplika https://flatpak.nsrosenqvist.com/riplika.flatpakrepo
+flatpak install riplika com.nsrosenqvist.Riplika
+```
+
+If it installs without `--no-gpg-verify` then the signature, the summary, the objects and the key in the `.flatpakrepo` all agree, which is the only test of this that means anything.
+
+**9. Tag a release** and watch the `Flatpak` job. From here on the workflow does steps 7 and 8's upload for you, and the only thing that changes by hand is the key, which should be never.
 
 ### What publishing does
 

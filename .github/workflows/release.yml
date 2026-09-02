@@ -224,6 +224,11 @@ jobs:
           aws s3 cp riplika.flatpakrepo "s3://$BUCKET/riplika.flatpakrepo" \
             --endpoint-url "$ENDPOINT" --no-progress --cache-control 'no-cache' \
             --content-type 'application/vnd.flatpak.repo'
+          # The icon that file points at, or a software centre offers the
+          # remote with a blank square where the application should be.
+          aws s3 cp data/icons/hicolor/scalable/apps/com.nsrosenqvist.Riplika.svg \
+            "s3://$BUCKET/riplika.svg" --endpoint-url "$ENDPOINT" --no-progress \
+            --content-type 'image/svg+xml' --cache-control 'public, max-age=86400'
 
   release:
     name: Publish

@@ -8,7 +8,7 @@
 # place the key lives, and the failure it causes - a remote everybody has added
 # that no longer verifies - is one nobody can fix from their end.
 #
-#     packaging/flatpakrepo.sh https://dl.nsrosenqvist.com > riplika.flatpakrepo
+#     packaging/flatpakrepo.sh https://flatpak.nsrosenqvist.com > riplika.flatpakrepo
 #
 # Reads the public half of whatever key GNUPGHOME holds.
 set -eu
