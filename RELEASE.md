@@ -104,9 +104,11 @@ Do not enable the `r2.dev` development URL. It is rate-limited and it is a secon
 
 ```sh
 gpg --batch --passphrase '' --quick-generate-key \
-    "Riplika <riplika@nsrosenqvist.com>" default default never
-gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}'
+    "Niklas Rosenqvist <flatpak@nsrosenqvist.com>" default default never
+KEYID=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
 ```
+
+It signs the remote rather than any one application on it, so it is named after the remote. The identity is what everybody sees in `flatpak remotes`, and it is baked into every copy of the `.flatpakrepo` file, so it is not a thing to reword later.
 
 Keep a copy of the secret key somewhere you will still have it in three years. Losing it means everybody who added the remote has to remove it and add it again, and there is nothing you can publish that would fix it for them, because the thing they would need to trust the fix is the key you lost.
 
@@ -128,6 +130,9 @@ gh variable set REPO_BASE_URL --body https://flatpak.nsrosenqvist.com
 **7. Publish once by hand**, so that the first release is not also the first test:
 
 ```sh
+# A repository nobody has published from, so its history starts here rather
+# than carrying whatever local builds left behind.
+rm -rf repo
 flatpak run org.flatpak.Builder --user --force-clean --repo=repo build packaging/com.nsrosenqvist.Riplika.yml
 flatpak build-sign repo com.nsrosenqvist.Riplika --gpg-sign=$KEYID
 flatpak build-update-repo repo --generate-static-deltas --gpg-sign=$KEYID
@@ -135,9 +140,20 @@ flatpak build-update-repo repo --generate-static-deltas --gpg-sign=$KEYID
 
 export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_DEFAULT_REGION=auto
 E=https://<account-id>.r2.cloudflarestorage.com
-aws s3 sync repo/ s3://flatpak/repo/ --endpoint-url $E
-aws s3 cp nsrosenqvist.flatpakrepo s3://flatpak/nsrosenqvist.flatpakrepo --endpoint-url $E
+
+# The same cache headers the workflow uses, from the first upload. An object
+# that goes up without one is cached on whatever the CDN decides, and the
+# summary is the one file where that decision is wrong.
+aws s3 sync repo/ s3://flatpak/repo/ --endpoint-url $E \
+  --exclude 'summary*' --cache-control 'public, max-age=31536000, immutable'
+aws s3 sync repo/ s3://flatpak/repo/ --endpoint-url $E \
+  --exclude 'objects/*' --exclude 'deltas/*' --cache-control 'no-cache'
+aws s3 cp nsrosenqvist.flatpakrepo s3://flatpak/nsrosenqvist.flatpakrepo \
+  --endpoint-url $E --cache-control 'no-cache' \
+  --content-type 'application/vnd.flatpak.repo'
 ```
+
+`aws` is `aws-cli-v2` here. The bucket name appears in two places - `s3://` above and the `R2_BUCKET` secret - and nowhere else, so a bucket called something other than `flatpak` costs those two lines and nothing more.
 
 **8. Add it the way a stranger would**, on a machine that has never seen this working tree:
 
