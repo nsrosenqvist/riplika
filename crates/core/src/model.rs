@@ -50,6 +50,15 @@ pub struct Track {
     pub channels: u32,
     pub title: Option<String>,
     pub default: bool,
+    /// Shown even when subtitles are switched off.
+    ///
+    /// A disc uses one for the things a viewer has to read whether or not they
+    /// wanted subtitles: a sign, a letter, a line of dialogue in another
+    /// language, the title card. Carrying it as an ordinary track puts an
+    /// entry in the player's menu that turns out to show almost nothing, and
+    /// loses the one thing it is for - a player will not raise it over
+    /// untranslated speech unless it is told what it is.
+    pub forced: bool,
 }
 
 impl Track {
@@ -899,6 +908,7 @@ mod tests {
             channels: 0,
             title: None,
             default: false,
+            forced: false,
         };
         assert!(sub("dvd_subtitle").is_bitmap_subtitle());
         assert!(sub("hdmv_pgs_subtitle").is_bitmap_subtitle());
@@ -916,6 +926,7 @@ mod tests {
             channels: 2,
             title: Some(t.into()),
             default: false,
+            forced: false,
         };
         assert!(named("Commentary").is_commentary());
         assert!(named("Feature Commentary with the cast").is_commentary());

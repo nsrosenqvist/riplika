@@ -35,6 +35,8 @@ pub struct SubtitleInput {
     pub path: PathBuf,
     /// ISO 639-2 code written into the output track.
     pub language: String,
+    /// The track it was recognised from is shown with subtitles switched off.
+    pub forced: bool,
 }
 
 /// Which of the source's tracks survive.
@@ -57,6 +59,8 @@ pub struct TranscodePlan {
     pub container: Container,
     pub selection: TrackSelection,
     pub subtitles: Vec<SubtitleInput>,
+    /// Of the bitmaps carried through, which are forced. As `0:s:N` indices.
+    pub forced_bitmaps: Vec<usize>,
     /// Video filter chain, already ordered.
     pub filters: Vec<String>,
     pub frame_rate: Option<String>,
@@ -160,14 +164,34 @@ impl TranscodePlan {
                 if i == 0 { "default" } else { "0" }.to_string(),
             ]);
         }
+        // Which output subtitle tracks are forced, in output order: the
+        // recognised ones first, then the bitmaps carried through.
+        let forced: Vec<bool> = self
+            .subtitles
+            .iter()
+            .map(|s| s.forced)
+            .chain(self.selection.bitmaps.iter().map(|i| self.forced_bitmaps.contains(i)))
+            .collect();
+        // A forced track is not a subtitle somebody chooses. It carries what
+        // has to be read with subtitles switched off - a sign, a letter, a
+        // line spoken in another language - so a player raises it by itself
+        // and only for those moments. Unmarked it is an ordinary entry in the
+        // menu that turns out to show almost nothing.
+        let first_ordinary = (0..text).find(|i| !forced.get(*i).copied().unwrap_or(false));
         for i in 0..(text + self.selection.bitmaps.len()) {
             // Only a *text* track is ever made default. Defaulting to a bitmap
             // makes the server burn it into the picture and re-encode, which is
             // the problem subtitle recognition exists to avoid.
-            let on = i == 0 && text > 0;
+            let mut how = Vec::new();
+            if Some(i) == first_ordinary {
+                how.push("default");
+            }
+            if forced.get(i).copied().unwrap_or(false) {
+                how.push("forced");
+            }
             c = c.args([
                 format!("-disposition:s:{i}"),
-                if on { "default" } else { "0" }.to_string(),
+                if how.is_empty() { "0".to_string() } else { how.join("+") },
             ]);
         }
 
@@ -291,6 +315,15 @@ pub fn plan(
         }
     }
     selection.bitmaps.sort_unstable();
+    // Kept as pictures or not, a forced track is still a forced track, and a
+    // player has to be told so before it will raise one over speech nobody
+    // translated.
+    let forced_bitmaps: Vec<usize> = selection
+        .bitmaps
+        .iter()
+        .filter(|i| sub_tracks.iter().any(|t| t.index == **i && t.forced))
+        .copied()
+        .collect();
 
     let mut filters = Vec::new();
     if analysis.telecined {
@@ -310,6 +343,7 @@ pub fn plan(
         container: settings.container,
         selection,
         subtitles,
+        forced_bitmaps,
         filters,
         frame_rate: analyze::pick_frame_rate(analysis.decoded_fps).map(str::to_string),
         // Re-encoding audio and then adding a second lossy copy of it would be
@@ -334,6 +368,7 @@ mod tests {
             channels: if kind == TrackKind::Audio { 6 } else { 0 },
             title: title.map(str::to_string),
             default: index == 0,
+            forced: false,
         }
     }
 
@@ -404,7 +439,11 @@ mod tests {
     }
 
     fn srt(lang: &str) -> SubtitleInput {
-        SubtitleInput { path: PathBuf::from(format!("/tmp/{lang}.srt")), language: lang.into() }
+        SubtitleInput {
+            path: PathBuf::from(format!("/tmp/{lang}.srt")),
+            language: lang.into(),
+            forced: false,
+        }
     }
 
     #[test]
@@ -506,6 +545,51 @@ mod tests {
             Tags::default(),
         );
         assert!(p.command().has("-progress"), "{}", p.command().display());
+    }
+
+    #[test]
+    fn a_forced_track_is_marked_forced_and_is_not_the_default() {
+        // A forced track carries what has to be read with subtitles switched
+        // off - a sign, a letter, a line in another language. Unmarked it is
+        // an ordinary entry in the menu that shows almost nothing, and the
+        // player will not raise it over untranslated speech. The Lion King's
+        // Swedish forced track holds one cue: the title card.
+        let mut s = settings();
+        s.keep_bitmap_subs = false;
+        let forced = SubtitleInput {
+            path: PathBuf::from("/tmp/f.srt"),
+            language: "swe".into(),
+            forced: true,
+        };
+        let p = plan(
+            Path::new("/i.mkv"),
+            Path::new("/o.mkv"),
+            &disc(),
+            &analysis(),
+            &s,
+            vec![forced, srt("eng")],
+            &[],
+            Tags::default(),
+        );
+        let c = p.command();
+        assert_eq!(c.value_of("-disposition:s:0"), Some("forced"));
+        // the ordinary track is the one somebody chooses, so it is the default
+        assert_eq!(c.value_of("-disposition:s:1"), Some("default"));
+    }
+
+    #[test]
+    fn an_ordinary_track_is_still_the_default_when_it_comes_first() {
+        let p = plan(
+            Path::new("/i.mkv"),
+            Path::new("/o.mkv"),
+            &disc(),
+            &analysis(),
+            &settings(),
+            vec![srt("eng")],
+            &[],
+            Tags::default(),
+        );
+        assert_eq!(p.command().value_of("-disposition:s:0"), Some("default"));
     }
 
     #[test]

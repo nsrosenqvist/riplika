@@ -72,6 +72,14 @@ Two characters are rewritten before the vote. A bar is read as a capital `I` - n
 
 Only cues holding a shape that is still thin get read. The alphabet is done with in the first few dozen of a thousand, and reading them all would spend an hour of processes to learn nothing.
 
+## Forced tracks
+
+A disc carries these for what has to be read with subtitles switched off: a sign, a letter, a location caption, a line of dialogue in a language the film is not in - and the title card. They are not "the title track": The Lion King's Swedish forced track happens to hold one cue, and a film with untranslated dialogue in it has a great many.
+
+They are kept, and marked. Unmarked, a forced track is an ordinary entry in the player's menu that turns out to show almost nothing, and the one thing it is for is lost, since a player will not raise it over untranslated speech unless it is told what it is. It is never made the default either - the default is the first track somebody would actually choose.
+
+The flag is read from the source and carried whether the track was recognised into text or kept as pictures.
+
 ## Which table a disc is decoded with
 
 Every table is tried against the shapes actually on the disc, and the one that explains most of them wins. Nothing is keyed or remembered: a second disc of a season reuses the first's table because it fits, not because anything recorded that they are related, and a disc from a new release fails the test and gets a table of its own.

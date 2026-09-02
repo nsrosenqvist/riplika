@@ -141,6 +141,9 @@ pub fn parse_probe(json: &str) -> Result<MediaInfo> {
         let tags = s.get("tags");
         let tag =
             |k: &str| tags.and_then(|t| t.get(k)).and_then(|x| x.as_str()).map(str::to_string);
+        let disposition = s.get("disposition");
+        let flag =
+            |k: &str| disposition.and_then(|d| d.get(k)).and_then(|x| x.as_u64()).unwrap_or(0) == 1;
 
         if kind == TrackKind::Video && index == 0 {
             info.width = s.get("width").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
@@ -163,12 +166,8 @@ pub fn parse_probe(json: &str) -> Result<MediaInfo> {
             language: tag("language").unwrap_or_else(|| "und".into()),
             channels: s.get("channels").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
             title: tag("title"),
-            default: s
-                .get("disposition")
-                .and_then(|d| d.get("default"))
-                .and_then(|x| x.as_u64())
-                .unwrap_or(0)
-                == 1,
+            default: flag("default"),
+            forced: flag("forced"),
         });
     }
 

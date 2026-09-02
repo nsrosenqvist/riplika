@@ -1047,6 +1047,7 @@ impl<'a> Pipeline<'a> {
                     inputs.push(SubtitleInput {
                         path: r.srt_path.clone(),
                         language: language.code.clone(),
+                        forced: subs_tracks.get(stream).is_some_and(|t| t.forced),
                     });
                     recognised.push(r);
                 }
@@ -1217,6 +1218,7 @@ mod tests {
             channels: 6,
             title: None,
             default: index == 0,
+            forced: false,
         }
     }
 

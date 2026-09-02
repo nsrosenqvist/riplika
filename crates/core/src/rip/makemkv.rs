@@ -199,7 +199,10 @@ pub fn parse_scan(output: &str, drive: Drive) -> Result<DiscScan> {
                     .and_then(|c| c.parse().ok())
                     .unwrap_or(0),
                 title: props.get(&attr::NAME).filter(|n| !n.is_empty()).cloned(),
+                // Neither is known from a scan. What the ripped file says is
+                // what counts, and it is probed before anything is decided.
                 default: false,
+                forced: false,
             });
         }
         out.push(DiscTitle {
