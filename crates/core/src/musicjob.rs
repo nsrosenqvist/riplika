@@ -259,7 +259,31 @@ pub fn rip(
             subtitles: Vec::new(),
         });
     }
+    keep_cover_beside_the_tracks(ports, cover.as_deref(), &report);
     Ok(report)
+}
+
+/// Leave the front cover in the album's folder as well as inside every track.
+///
+/// The tracks carry it already, which is what a media server reads, so this is
+/// for everything that does not: the convention is old and widely followed,
+/// and the picture has been fetched and paid for either way.
+///
+/// Beside the tracks that were actually written, rather than at a path worked
+/// out separately - an album whose every track failed should not leave a folder
+/// containing nothing but a picture of it.
+fn keep_cover_beside_the_tracks(ports: &Ports, cover: Option<&Path>, report: &Report) {
+    let (Some(cover), Some(first)) = (cover, report.produced.first()) else {
+        return;
+    };
+    let Some(folder) = first.destination.parent() else {
+        return;
+    };
+    let Ok(bytes) = ports.fs.read(cover) else {
+        return;
+    };
+    // Not worth failing a finished album over, and nothing else depends on it.
+    let _ = ports.fs.write(&folder.join("cover.jpg"), &bytes);
 }
 
 fn read_one(cd: &CdAudio, ports: &Ports, disc: &Disc, number: u8, wav: &Path) -> Result<()> {
@@ -347,17 +371,57 @@ mod tests {
     }
 
     fn run(fs: &FakeFs, runner: &FakeRunner) -> Result<Report> {
-        let http = FakeHttp::new();
+        run_album(fs, runner, album())
+    }
+
+    fn run_album(fs: &FakeFs, runner: &FakeRunner, album: Album) -> Result<Report> {
+        let http = FakeHttp::new().on("coverartarchive", "a picture, honestly");
         let ports = Ports { runner, fs, http: &http, cancel: Cancel::new() };
         let mut events = |_: Event| {};
         rip(
             &ports,
             &Disc::whole(Path::new("/dev/riplika-no-such-device"), &toc()),
-            &album(),
+            &album,
             &settings("/music"),
             Path::new("/scratch"),
             &mut events,
         )
+    }
+
+    #[test]
+    fn the_cover_is_left_in_the_album_folder_as_well_as_in_the_tracks() {
+        // The tracks carry it, which is what a media server reads. This is for
+        // everything that does not, and the picture is fetched either way.
+        let fs = FakeFs::new()
+            .with_file("/scratch/track01.wav", &whole_track())
+            .with_file("/scratch/track02.wav", &whole_track());
+        let runner = FakeRunner::new();
+        let report = run_album(&fs, &runner, Album { has_cover_art: true, ..album() }).unwrap();
+        assert_eq!(report.produced.len(), 2);
+        let beside = Path::new("/music/Shawn McDonald/Roots (2008)/cover.jpg");
+        assert!(fs.exists(beside), "no cover beside the tracks");
+    }
+
+    #[test]
+    fn an_album_with_no_cover_leaves_no_picture_behind() {
+        let fs = FakeFs::new()
+            .with_file("/scratch/track01.wav", &whole_track())
+            .with_file("/scratch/track02.wav", &whole_track());
+        let runner = FakeRunner::new();
+        run_album(&fs, &runner, Album { has_cover_art: false, ..album() }).unwrap();
+        assert!(!fs.exists(Path::new("/music/Shawn McDonald/Roots (2008)/cover.jpg")));
+    }
+
+    #[test]
+    fn nothing_written_means_no_folder_with_only_a_picture_in_it() {
+        // Every track failing should not leave a directory containing one
+        // picture of an album that is not there.
+        let fs = FakeFs::new();
+        let runner = FakeRunner::new();
+        let report = run_album(&fs, &runner, Album { has_cover_art: true, ..album() });
+        let produced = report.map(|r| r.produced.len()).unwrap_or(0);
+        assert_eq!(produced, 0);
+        assert!(!fs.exists(Path::new("/music/Shawn McDonald/Roots (2008)/cover.jpg")));
     }
 
     #[test]
