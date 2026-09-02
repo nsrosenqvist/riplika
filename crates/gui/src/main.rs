@@ -1795,14 +1795,20 @@ impl App {
             self.ui.results.remove(&row);
         }
         for p in &r.produced {
-            let langs: Vec<&str> = p.subtitles.iter().map(|s| s.language.name.as_str()).collect();
+            let langs: Vec<String> = p.subtitles.iter().map(|s| s.language.name.clone()).collect();
+            // "subtitles: none" against a track of an album, which cannot have
+            // any. Where they are possible their absence is worth saying, and
+            // where they are not the words are noise.
+            let detail = match (carries_subtitles(&p.destination), langs.is_empty()) {
+                (false, _) => mib(p.bytes),
+                (true, true) => format!("{}   {}", mib(p.bytes), tr("subtitles: none")),
+                (true, false) => {
+                    tr_args("%1$s   subtitles: %2$s", &[&mib(p.bytes), &langs.join(", ")])
+                }
+            };
             let row = rows::action()
                 .title(p.destination.file_name().unwrap_or_default().to_string_lossy().to_string())
-                .subtitle(format!(
-                    "{}   subtitles: {}",
-                    mib(p.bytes),
-                    if langs.is_empty() { "none".into() } else { langs.join(", ") }
-                ))
+                .subtitle(detail)
                 .build();
             self.ui.results.add(&row);
             self.ui.result_rows.borrow_mut().push(row);
@@ -2583,6 +2589,19 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
     }
 }
 
+/// Can a file of this kind hold a subtitle track at all?
+///
+/// A track of an album cannot, and saying "subtitles: none" underneath one is
+/// answering a question nobody asked. Decided from what was written rather
+/// than from what the drive currently holds, because the results page outlives
+/// the disc: it is still on screen after the tray is opened.
+fn carries_subtitles(path: &Path) -> bool {
+    !matches!(
+        path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
+        Some("mp3" | "flac" | "m4a" | "ogg" | "opus" | "wav")
+    )
+}
+
 /// Keep a switch on the rip page, so the next disc starts where this one left.
 ///
 /// Seeding the page calls `set_active`, which fires this handler too, so a
@@ -2663,6 +2682,29 @@ fn find_button(anchor: &impl IsA<gtk::Widget>, name: &str) -> Option<gtk::Button
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_track_of_an_album_is_not_asked_about_its_subtitles() {
+        // "subtitles: none" under 01 - The Great Awakening.mp3, eleven times.
+        assert!(!carries_subtitles(Path::new("/m/01 - The Great Awakening.mp3")));
+        assert!(!carries_subtitles(Path::new("/m/02 - All Over the Earth.flac")));
+        // where they are possible, their absence is still worth saying
+        assert!(carries_subtitles(Path::new("/v/Parks and Recreation - S04E07.mp4")));
+        assert!(carries_subtitles(Path::new("/v/Frozen (2013).mkv")));
+    }
+
+    #[test]
+    fn the_extension_is_read_whatever_case_it_is_written_in() {
+        assert!(!carries_subtitles(Path::new("/m/track.MP3")));
+        assert!(!carries_subtitles(Path::new("/m/track.FLAC")));
+    }
+
+    #[test]
+    fn a_file_with_no_extension_is_assumed_to_be_video() {
+        // Everything this produces has one; guessing "no subtitles" for
+        // something unexpected would hide them where they exist.
+        assert!(carries_subtitles(Path::new("/v/whatever")));
+    }
 
     #[test]
     fn sizes_render_in_whole_megabytes() {
