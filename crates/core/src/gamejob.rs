@@ -95,6 +95,21 @@ impl Dumped {
     }
 }
 
+/// What to call the part of the disc being read.
+///
+/// "Track 1" is the vocabulary of a mixed-mode disc, where a data track sits
+/// beside the audio ones and which of them is being copied is worth saying. A
+/// PC disc has exactly one, and numbering it explains nothing to somebody
+/// watching a single bar move.
+fn what_is_being_read(span: &crate::cue::TrackSpan, several: bool, again: u32) -> Option<String> {
+    match (several, again) {
+        (false, 0) => None,
+        (false, n) => Some(format!("reading again ({n})")),
+        (true, 0) => Some(format!("track {}", span.number)),
+        (true, n) => Some(format!("track {} again ({n})", span.number)),
+    }
+}
+
 /// Read the whole disc into `stem`.
 ///
 /// A data disc becomes one file. A disc with audio beside the data becomes one
@@ -165,7 +180,7 @@ pub fn dump(
         events(Event::Progress {
             stage: Stage::Rip,
             fraction: u64::from(span.start) as f32 / sectors.max(1) as f32,
-            message: Some(format!("track {}", span.number)),
+            message: what_is_being_read(span, several, 0),
         });
 
         match (&toc, span.is_data) {
@@ -174,7 +189,7 @@ pub fn dump(
             // drive's own C2 account is the only thing that knows, and it is
             // asked for every sector.
             (Some(_), false) => {
-                let reading = Reading { fs, sectors: sectors.max(1) as f32 };
+                let reading = Reading { fs, sectors: sectors.max(1) as f32, several };
                 let mut read = |into: &Path, progress: &mut dyn FnMut(f32)| {
                     read_span(device, into, medium, sector, span, cancel, progress)
                 };
@@ -469,6 +484,9 @@ struct Reading<'a> {
     fs: &'a dyn Fs,
     /// Sectors on the whole disc, for reporting how far along this one is.
     sectors: f32,
+    /// Whether the disc has more than one track, which decides whether saying
+    /// which one is worth anything.
+    several: bool,
 }
 
 /// Reading one span into one file: how far it got, and what it had to guess at.
@@ -520,10 +538,7 @@ fn read_span_twice(
             events(Event::Progress {
                 stage: Stage::Rip,
                 fraction: (u64::from(span.start) as f32 + fraction * span.sectors() as f32) / whole,
-                message: Some(match attempt {
-                    0 => format!("track {}", span.number),
-                    n => format!("track {} again ({n})", span.number),
-                }),
+                message: what_is_being_read(span, reading.several, attempt),
             });
         };
         let damaged;
@@ -718,6 +733,25 @@ pub fn shortfall(dumped: &Dumped) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_disc_of_one_track_is_not_told_which_track_it_is_on() {
+        // "track 1" is the vocabulary of a mixed-mode disc, where a data track
+        // sits beside the audio ones. A PC disc has exactly one, and numbering
+        // it explains nothing to somebody watching a single bar move.
+        let only = span();
+        assert_eq!(what_is_being_read(&only, false, 0), None);
+        assert_eq!(what_is_being_read(&only, true, 0).as_deref(), Some("track 2"));
+    }
+
+    #[test]
+    fn a_second_reading_is_worth_saying_however_many_tracks_there_are() {
+        // This is the disc being read again because the drive admitted to
+        // guessing, which is worth knowing whether or not it has a number.
+        let only = span();
+        assert_eq!(what_is_being_read(&only, false, 2).as_deref(), Some("reading again (2)"));
+        assert_eq!(what_is_being_read(&only, true, 2).as_deref(), Some("track 2 again (2)"));
+    }
     use super::*;
     use crate::game::GameDisc;
     use crate::redump::{Found, Game, Rom};
@@ -1127,7 +1161,7 @@ mod tests {
         let fs = crate::host::FakeFs::new();
         let at = std::cell::Cell::new(0);
         let mut read = scripted(&fs, vec![("good", vec![])], &at);
-        let reading = Reading { fs: &fs, sectors: 1000.0 };
+        let reading = Reading { fs: &fs, sectors: 1000.0, several: true };
         let (_, _, damaged) =
             read_span_twice(&reading, Path::new("/x.bin"), &span(), &mut read, &mut |_| {})
                 .expect("a clean reading is not an error");
@@ -1143,7 +1177,7 @@ mod tests {
         let fs = crate::host::FakeFs::new();
         let at = std::cell::Cell::new(0);
         let mut read = scripted(&fs, vec![("guessed", vec![7]), ("clean", vec![])], &at);
-        let reading = Reading { fs: &fs, sectors: 1000.0 };
+        let reading = Reading { fs: &fs, sectors: 1000.0, several: true };
         let (digests, _, damaged) =
             read_span_twice(&reading, Path::new("/x.bin"), &span(), &mut read, &mut |_| {})
                 .expect("the retry read it");
@@ -1158,7 +1192,7 @@ mod tests {
         let fs = crate::host::FakeFs::new();
         let at = std::cell::Cell::new(0);
         let mut read = scripted(&fs, vec![("same", vec![7, 8])], &at);
-        let reading = Reading { fs: &fs, sectors: 1000.0 };
+        let reading = Reading { fs: &fs, sectors: 1000.0, several: true };
         let mut warnings = Vec::new();
         let (_, _, damaged) =
             read_span_twice(&reading, Path::new("/x.bin"), &span(), &mut read, &mut |e| {
@@ -1181,7 +1215,7 @@ mod tests {
         let at = std::cell::Cell::new(0);
         let mut read =
             scripted(&fs, vec![("one", vec![7]), ("two", vec![7]), ("three", vec![7])], &at);
-        let reading = Reading { fs: &fs, sectors: 1000.0 };
+        let reading = Reading { fs: &fs, sectors: 1000.0, several: true };
         let (_, _, damaged) =
             read_span_twice(&reading, Path::new("/x.bin"), &span(), &mut read, &mut |_| {})
                 .expect("a damaged track is a result, not an error");
