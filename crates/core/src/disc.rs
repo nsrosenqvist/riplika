@@ -440,12 +440,22 @@ pub fn identify(device: &Path) -> DiscKind {
     {
         return DiscKind::Audio(toc.clone());
     }
-    let Some(pvd) = read_at(&mut f, PVD_OFFSET, SECTOR) else {
-        return DiscKind::Empty;
+    let (pvd, udf) = volume_descriptors(&mut f);
+    let Some(pvd) = pvd else {
+        // No ISO 9660 at all. A pressed PC-DVD is often pure UDF - The Sims 3
+        // expansion opens with BEA01 where CD001 was being looked for - and
+        // reading that as an empty drive left the window saying "no disc" with
+        // a disc in it. There is a filesystem here; it is simply not one this
+        // reads, which is all a data disc needs to be.
+        return if udf {
+            match medium(device) {
+                Some(Medium::BluRay) => DiscKind::BluRay,
+                _ => DiscKind::Data(toc),
+            }
+        } else {
+            DiscKind::Empty
+        };
     };
-    if !is_pvd(&pvd) {
-        return DiscKind::Empty;
-    }
     let names = root_names(&mut f, &pvd);
     let has = |want: &str| names.iter().any(|n| n == want);
     if has("VIDEO_TS") {
@@ -488,6 +498,40 @@ fn read_entry(fd: RawFd, track: u8) -> Option<(u32, bool)> {
     }
     let ctrl = e.adr_ctrl >> 4;
     Some((e.lba.max(0) as u32, ctrl & CTRL_DATA != 0))
+}
+
+/// How many descriptors to read before giving up on the sequence.
+///
+/// A conforming disc terminates within a handful; the bound is against a
+/// scratched or lying one, not against a real layout.
+const VOLUME_DESCRIPTORS: u64 = 16;
+
+/// Walk the volume recognition sequence: the ISO 9660 primary descriptor if
+/// there is one, and whether anything here says UDF.
+///
+/// The sequence begins at sector 16 and runs until a terminator. Reading only
+/// the first sector of it finds a bridge disc, which puts CD001 there, and
+/// misses a pure UDF one, which puts BEA01 there and CD001 nowhere.
+fn volume_descriptors(f: &mut File) -> (Option<Vec<u8>>, bool) {
+    let mut pvd = None;
+    let mut udf = false;
+    for n in 0..VOLUME_DESCRIPTORS {
+        let Some(d) = read_at(f, PVD_OFFSET + n * SECTOR as u64, SECTOR) else {
+            break;
+        };
+        if d.len() < 6 {
+            break;
+        }
+        match &d[1..6] {
+            b"CD001" if is_pvd(&d) => pvd = Some(d),
+            b"BEA01" | b"NSR02" | b"NSR03" => udf = true,
+            // The end of the sequence, whichever kind it belongs to.
+            b"TEA01" => break,
+            b"CD001" => {}
+            _ => break,
+        }
+    }
+    (pvd, udf)
 }
 
 fn read_at(f: &mut File, offset: u64, len: usize) -> Option<Vec<u8>> {
@@ -825,6 +869,48 @@ mod tests {
         let kind = identify(&path);
         let _ = std::fs::remove_file(&path);
         kind
+    }
+
+    /// A pressed PC-DVD: pure UDF, with no ISO 9660 anywhere on it.
+    ///
+    /// The bytes are the ones The Sims 3 expansion actually carries - BEA01 at
+    /// sector 16 and NSR02 at 17, where CD001 was being looked for.
+    fn pure_udf() -> Vec<u8> {
+        let mut img = vec![0u8; 40 * SECTOR];
+        for (n, id) in [(16, b"BEA01"), (17, b"NSR02"), (18, b"TEA01")] {
+            let at = n * SECTOR;
+            img[at] = 0;
+            img[at + 1..at + 6].copy_from_slice(id);
+            img[at + 6] = 1;
+        }
+        img
+    }
+
+    #[test]
+    fn a_disc_with_only_udf_on_it_is_a_disc() {
+        // It was read as an empty drive, so the window said "no disc" with a
+        // disc in it and there was no way forward from the landing page.
+        assert_eq!(probe(&pure_udf(), "udf"), DiscKind::Data(None));
+    }
+
+    #[test]
+    fn the_whole_recognition_sequence_is_read_not_only_its_first_sector() {
+        // A bridge disc may open with the UDF marker and put CD001 behind it.
+        // Reading one sector finds whichever happens to be first.
+        let mut img = iso_with(&["VIDEO_TS"], "A FILM");
+        let at = 17 * SECTOR;
+        let pvd: Vec<u8> = img[16 * SECTOR..17 * SECTOR].to_vec();
+        img[at..at + SECTOR].copy_from_slice(&pvd);
+        img[16 * SECTOR] = 0;
+        img[16 * SECTOR + 1..16 * SECTOR + 6].copy_from_slice(b"BEA01");
+        assert_eq!(probe(&img, "bridge"), DiscKind::DvdVideo);
+    }
+
+    #[test]
+    fn a_disc_with_no_filesystem_at_all_is_still_an_empty_drive() {
+        // The point of the change is not to call every unreadable disc a data
+        // disc: there has to be something here saying a filesystem exists.
+        assert_eq!(probe(&vec![0u8; 40 * SECTOR], "nothing"), DiscKind::Empty);
     }
 
     #[test]

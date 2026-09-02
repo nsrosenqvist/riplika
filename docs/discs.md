@@ -136,6 +136,12 @@ number of titles: 58
 That table also carries chapter counts, and the demuxer reports chapter *durations* - which MakeMKV's scan does not. Those are what decompose a play-all, so a disc can in principle be sorted out before anything is read, and the play-all title never ripped at all. On this disc that is two and a half hours of redundant reading.
 
 
+## Telling what is in the drive
+
+The volume recognition sequence starts at sector 16 and runs until a terminator. A disc with an ISO 9660 bridge puts `CD001` in the first of those sectors, which is where a DVD-Video's `VIDEO_TS` directory is found; a pressed PC-DVD often has no ISO 9660 at all and puts UDF's `BEA01` there instead. Reading only sector 16 and requiring `CD001` therefore called The Sims 3 expansion an empty drive - the window said "no disc" with a disc in it, and there was no way off the landing page.
+
+The whole sequence is read now. An ISO descriptor anywhere in it is used as before; failing that, a UDF marker means there is a filesystem here, and one this does not read is exactly what a data disc is. A disc with neither is still an empty drive, which is the distinction worth keeping: the point is not to call every unreadable disc a data disc.
+
 ## Opening automatically when a disc goes in
 
 A desktop can offer an application when a disc is inserted, and the mechanism is the same one that opens a file: the volume is mounted and matched to a content type, and applications that declare it are offered.
