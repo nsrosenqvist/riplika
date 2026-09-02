@@ -2613,14 +2613,19 @@ fn wire(app: &Rc<App>, window: &adw::ApplicationWindow) {
 
 /// Can a file of this kind hold a subtitle track at all?
 ///
-/// A track of an album cannot, and saying "subtitles: none" underneath one is
-/// answering a question nobody asked. Decided from what was written rather
-/// than from what the drive currently holds, because the results page outlives
-/// the disc: it is still on screen after the tray is opened.
+/// Named for what can, not for what cannot. Listing the audio extensions
+/// answered this for an album and then said "subtitles: none" under a 4.6 GB
+/// disc image, because an .iso was not on the list of things that have no
+/// subtitles - a list that can only ever be as complete as the last thing
+/// somebody thought of.
+///
+/// Decided from what was written rather than from what the drive currently
+/// holds, because the results page outlives the disc: it is still on screen
+/// after the tray is opened.
 fn carries_subtitles(path: &Path) -> bool {
-    !matches!(
+    matches!(
         path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
-        Some("mp3" | "flac" | "m4a" | "ogg" | "opus" | "wav")
+        Some("mkv" | "mp4" | "m4v" | "webm" | "mov" | "avi" | "ts")
     )
 }
 
@@ -2722,10 +2727,20 @@ mod tests {
     }
 
     #[test]
-    fn a_file_with_no_extension_is_assumed_to_be_video() {
-        // Everything this produces has one; guessing "no subtitles" for
-        // something unexpected would hide them where they exist.
-        assert!(carries_subtitles(Path::new("/v/whatever")));
+    fn a_disc_image_is_not_asked_about_its_subtitles_either() {
+        // "subtitles: none" under Sims3SP01.iso, 4.6 GB of it. The first
+        // version of this listed the audio extensions, so anything nobody had
+        // thought of came out as video.
+        assert!(!carries_subtitles(Path::new("/g/Sims3SP01.iso")));
+        assert!(!carries_subtitles(Path::new("/g/A Game (Europe).cue")));
+        assert!(!carries_subtitles(Path::new("/g/A Game (Europe) (Track 1).bin")));
+    }
+
+    #[test]
+    fn something_with_no_extension_is_not_claimed_to_have_subtitles() {
+        // Asked as "can this hold one", the answer for something unrecognised
+        // is no, and the row says nothing rather than something wrong.
+        assert!(!carries_subtitles(Path::new("/v/whatever")));
     }
 
     #[test]
