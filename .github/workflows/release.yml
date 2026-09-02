@@ -210,15 +210,19 @@ jobs:
           aws s3 sync published/ "s3://$BUCKET/repo/" \
             --endpoint-url "$ENDPOINT" --no-progress \
             --exclude 'objects/*' --exclude 'deltas/*' --exclude 'summary*' \
+            --exclude 'tmp/*' --exclude '.lock' \
             --cache-control 'no-cache'
-          for f in summary summary.sig summary.idx; do
-            test -f "published/$f" || continue
-            aws s3 cp "published/$f" "s3://$BUCKET/repo/$f" \
+          # Whatever summary files this version of ostree wrote, rather than
+          # the three that were named here: it also writes summary.idx.sig,
+          # which a named list quietly left behind while looking complete.
+          for f in published/summary*; do
+            aws s3 cp "$f" "s3://$BUCKET/repo/$(basename "$f")" \
               --endpoint-url "$ENDPOINT" --no-progress --cache-control 'no-cache'
           done
           # What pruning removed, once nothing refers to it any more.
           aws s3 sync published/ "s3://$BUCKET/repo/" \
-            --endpoint-url "$ENDPOINT" --no-progress --delete --size-only
+            --endpoint-url "$ENDPOINT" --no-progress --delete --size-only \
+            --exclude 'tmp/*' --exclude '.lock'
 
           # Regenerated every release from the key that just signed it, so the
           # two cannot come apart. It describes the remote rather than this

@@ -4,3 +4,5 @@ work/
 build/
 repo/
 po/*.mo
+published/
+nsrosenqvist.flatpakrepo

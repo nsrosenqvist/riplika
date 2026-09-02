@@ -131,28 +131,36 @@ gh variable set REPO_BASE_URL --body https://flatpak.nsrosenqvist.com
 
 **7. Publish once by hand**, so that the first release is not also the first test:
 
+It is the same sequence the workflow runs, and worth keeping that way: a first publish that did something else would not be a test of anything. Credentials come from `aws configure --profile r2`, which also holds the endpoint, so nothing below has to name it.
+
 ```sh
-# A repository nobody has published from, so its history starts here rather
-# than carrying whatever local builds left behind.
-rm -rf repo
+# Built into a repository of its own, then the one ref that gets published
+# pulled across into another. Not the whole build: it also holds the debug
+# symbols, which are their own extension and are not served from here.
+rm -rf repo published
 flatpak run org.flatpak.Builder --user --force-clean --repo=repo build packaging/com.nsrosenqvist.Riplika.yml
-flatpak build-sign repo com.nsrosenqvist.Riplika --gpg-sign=$KEYID
-flatpak build-update-repo repo --generate-static-deltas --gpg-sign=$KEYID
+ostree --repo=published init --mode=archive-z2
+ostree --repo=published pull-local repo app/com.nsrosenqvist.Riplika/x86_64/master
+flatpak build-sign published com.nsrosenqvist.Riplika --gpg-sign=$KEYID
+flatpak build-update-repo published --generate-static-deltas --prune --prune-depth=2 --gpg-sign=$KEYID
 ./packaging/flatpakrepo.sh https://flatpak.nsrosenqvist.com $KEYID > nsrosenqvist.flatpakrepo
 
-export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_DEFAULT_REGION=auto
-E=https://<account-id>.r2.cloudflarestorage.com
-
-# The same cache headers the workflow uses, from the first upload. An object
+# The same cache headers the workflow uses, from the first upload: an object
 # that goes up without one is cached on whatever the CDN decides, and the
-# summary is the one file where that decision is wrong.
-aws s3 sync repo/ s3://flatpak/repo/ --endpoint-url $E \
-  --exclude 'summary*' --cache-control 'public, max-age=31536000, immutable'
-aws s3 sync repo/ s3://flatpak/repo/ --endpoint-url $E \
-  --exclude 'objects/*' --exclude 'deltas/*' --cache-control 'no-cache'
-aws s3 cp nsrosenqvist.flatpakrepo s3://flatpak/nsrosenqvist.flatpakrepo \
-  --endpoint-url $E --cache-control 'no-cache' \
-  --content-type 'application/vnd.flatpak.repo'
+# summary is the one file where that decision is wrong. Objects first and the
+# summary last, for the same reason the workflow does it in that order.
+aws --profile r2 s3 sync published/objects/ s3://flatpak/repo/objects/ \
+  --cache-control 'public, max-age=31536000, immutable'
+aws --profile r2 s3 sync published/deltas/ s3://flatpak/repo/deltas/ \
+  --cache-control 'public, max-age=31536000, immutable'
+aws --profile r2 s3 sync published/ s3://flatpak/repo/ --cache-control 'no-cache' \
+  --exclude 'objects/*' --exclude 'deltas/*' --exclude 'summary*' \
+  --exclude 'tmp/*' --exclude '.lock'
+for f in published/summary*; do
+  aws --profile r2 s3 cp "$f" "s3://flatpak/repo/$(basename "$f")" --cache-control 'no-cache'
+done
+aws --profile r2 s3 cp nsrosenqvist.flatpakrepo s3://flatpak/nsrosenqvist.flatpakrepo \
+  --cache-control 'no-cache' --content-type 'application/vnd.flatpak.repo'
 ```
 
 `aws` is `aws-cli-v2` here. The bucket name appears in two places - `s3://` above and the `R2_BUCKET` secret - and nowhere else, so a bucket called something other than `flatpak` costs those two lines and nothing more.
@@ -165,6 +173,20 @@ flatpak install nsrosenqvist com.nsrosenqvist.Riplika
 ```
 
 If it installs without `--no-gpg-verify` then the signature, the summary, the objects and the key in the `.flatpakrepo` all agree, which is the only test of this that means anything.
+
+Without a spare machine, this asks the same question for the price of the application alone. It takes the key out of the published file rather than from the keyring, so a key that never made it into that file fails here rather than on somebody else's computer:
+
+```sh
+curl -sS https://flatpak.nsrosenqvist.com/nsrosenqvist.flatpakrepo \
+  | grep '^GPGKey=' | cut -d= -f2- | base64 -d > pub.gpg
+ostree --repo=r init --mode=archive-z2
+ostree --repo=r remote add --set=gpg-verify=true --gpg-import=pub.gpg \
+  riplika https://flatpak.nsrosenqvist.com/repo/
+ostree --repo=r pull riplika app/com.nsrosenqvist.Riplika/x86_64/master
+ostree --repo=r show riplika:app/com.nsrosenqvist.Riplika/x86_64/master
+```
+
+"Good signature from" in the last line is the answer. `FLATPAK_USER_DIR` is not a way to do this: flatpak honours it, but `--user` on the same command line does not see the remote that `remote-add` just put there, and the install fails with "No remote refs found" as though the remote were broken.
 
 **9. Tag a release** and watch the `Flatpak` job. From here on the workflow does steps 7 and 8's upload for you, and the only thing that changes by hand is the key, which should be never.
 
