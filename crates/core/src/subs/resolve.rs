@@ -52,6 +52,16 @@ impl Resolver {
     /// whether something is a word: `colour` and `color` are both answers we
     /// want yes to, and a dialect that lacks one is not evidence against it.
     pub fn wordlists(path: Option<&Path>, code: &str) -> Vec<PathBuf> {
+        Self::wordlists_in(path, code, &DICTIONARIES)
+    }
+
+    /// The same, told where the desktop keeps its dictionaries.
+    ///
+    /// Which is a fixed pair of paths everywhere except a test, where it has
+    /// to be neither of them. `/usr/share/hunspell` is real on the machine
+    /// running the suite, and a test that asserts what happens when there are
+    /// no dictionaries passed here and failed on a builder that had one.
+    pub fn wordlists_in(path: Option<&Path>, code: &str, dictionaries: &[&str]) -> Vec<PathBuf> {
         if let Some(p) = path {
             if p.is_dir() {
                 let named = p.join(format!("{code}.txt"));
@@ -62,7 +72,7 @@ impl Resolver {
                 return vec![p.to_path_buf()];
             }
         }
-        Self::installed_for(&DICTIONARIES, code)
+        Self::installed_for(dictionaries, code)
     }
 
     /// The desktop's own dictionaries for this language, if it has any.
@@ -115,13 +125,18 @@ impl Resolver {
     }
 
     pub fn load_lang(path: Option<&Path>, lang: &str) -> Resolver {
+        Self::load_lang_in(path, lang, &DICTIONARIES)
+    }
+
+    /// The same, told where the desktop keeps its dictionaries.
+    pub fn load_lang_in(path: Option<&Path>, lang: &str, dictionaries: &[&str]) -> Resolver {
         let english = lang.is_empty() || lang.to_lowercase().starts_with("en");
         // Fall back to the built-in list only for English. A mismatched wordlist
         // is worse than none: "vii" and "alia" are English words while "vil" and
         // "alla" are not, so scoring Icelandic against English turns "ég vil"
         // into "ég viI".
         let code = crate::lang::parse(lang).code;
-        let mut files = Self::wordlists(path, &code);
+        let mut files = Self::wordlists_in(path, &code, dictionaries);
         if files.is_empty() && english {
             files.push(DEFAULT_WORDLIST.into());
         }
@@ -494,9 +509,24 @@ mod wordlist_tests {
         assert!(got[0].ends_with("swe.txt"));
     }
 
+    /// The other half of the seam: with a dictionary there, it is found. Both
+    /// tests together say that the argument is what decides, and that nothing
+    /// reaches past it to the machine underneath.
+    #[test]
+    fn a_dictionary_the_desktop_has_is_used_when_nothing_was_named() {
+        let dir = crate::subs::source::temp_dir("dicts").expect("a temp dir");
+        std::fs::write(dir.0.join("sv_SE.dic"), "3\ninte\nchans\nvill\n").unwrap();
+        let d = dir.0.to_string_lossy().into_owned();
+        let got = Resolver::wordlists_in(None, "swe", &[&d]);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].ends_with("sv_SE.dic"), "{got:?}");
+    }
+
+    /// With no dictionaries installed - which is what the empty list says, and
+    /// what this test used to assume of whatever machine it ran on.
     #[test]
     fn nothing_in_means_nothing_out() {
-        assert_eq!(Resolver::wordlist(None, "eng"), None);
-        assert_eq!(Resolver::wordlist(Some(Path::new("/nope/eng.txt")), "eng"), None);
+        assert!(Resolver::wordlists_in(None, "eng", &[]).is_empty());
+        assert!(Resolver::wordlists_in(Some(Path::new("/nope/eng.txt")), "eng", &[]).is_empty());
     }
 }

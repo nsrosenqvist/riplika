@@ -43,6 +43,7 @@ Offline and fast. `cargo test` is the whole story, and the suite passes with not
 - When a test exists because something broke, say what broke in a comment
 - Never touch the real drive. Use `/dev/riplika-no-such-device` so the code takes its no-hardware path
 - Do not read process-global state in a testable function. Environment variables are shared and a test that sets one races every other test; take the value as an argument, as `prefs::xdg_dir` does
+- The machine outside the repository is process-global too. `/usr/share/hunspell` exists on a CI runner and not on an Arch box with no dictionaries installed, and two tests that asserted what happens without them passed here and failed there. Pass the search path in, as `Resolver::wordlists_in` does
 
 ## Strings people read
 
