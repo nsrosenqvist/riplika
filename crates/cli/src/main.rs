@@ -256,7 +256,10 @@ enum Cmd {
         /// Tesseract traineddata, e.g. eng or swe.
         #[arg(long, default_value = "eng")]
         lang: String,
-        #[arg(long, default_value_t = 0.90)]
+        /// Lower than for a trusted reference, on purpose: a reader is right
+        /// about 99 characters in 100 and wrong in a scatter, so demanding
+        /// near-unanimity throws away shapes it was overwhelmingly right about.
+        #[arg(long, default_value_t = 0.60)]
         min_agreement: f32,
         /// The most cues to read.
         #[arg(long, default_value_t = 400)]

@@ -69,7 +69,9 @@ pub fn build(
     }
 
     let lesson = teacher.lesson;
-    let settled = teacher.settle(&mut t, min_agreement);
+    // A trusted reference is exact, so anything short of near-unanimity is a
+    // genuine collision rather than a misreading.
+    let settled = teacher.settle(&mut t, table::Settling::from_a_reference(min_agreement));
     t.save(table_path).map_err(|e| e.to_string())?;
 
     println!();
@@ -127,7 +129,8 @@ pub fn learn(
         scratch: &scratch.0,
         language: lang.to_string(),
     };
-    let effort = learn::Effort { cues, agreement: min_agreement, ..learn::Effort::default() };
+    let settling = table::Settling { agreement: min_agreement, ..table::Settling::from_a_reader() };
+    let effort = learn::Effort { cues, settling, ..learn::Effort::default() };
     let opts = SegOpts::default();
     let events = src.events();
     let stream = learn::Stream { events: &events, palette: &src.idx.palette, opts: &opts };

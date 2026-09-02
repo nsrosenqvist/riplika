@@ -72,7 +72,18 @@ impl TranscodePlan {
 
     /// The ffmpeg invocation. Pure - this is the thing tests assert on.
     pub fn command(&self) -> Command {
-        let mut c = Command::new("ffmpeg").args(["-nostdin", "-v", "error", "-y", "-i"]);
+        // -progress, because -v error means it says nothing at all otherwise.
+        // An episode is a minute and a film a good deal more, and the window
+        // sat at 0% for the whole of it with nothing to move the bar with.
+        let mut c = Command::new("ffmpeg").args([
+            "-nostdin",
+            "-v",
+            "error",
+            "-progress",
+            "pipe:1",
+            "-y",
+            "-i",
+        ]);
         c = c.path(&self.input);
 
         // Recognised subtitles are extra inputs, so input N+1 is subtitle N.
@@ -477,6 +488,24 @@ mod tests {
         s.keep_bitmap_subs = true;
         let c = build(&s, vec![], &[]);
         assert_eq!(c.value_of("-disposition:s:0"), Some("0"));
+    }
+
+    #[test]
+    fn the_encode_asks_ffmpeg_to_report_where_it_has_got_to() {
+        // -v error silences ffmpeg completely, so without this there is nothing
+        // to move a progress bar with, and a film - which is one title, so
+        // counting finished titles says nothing - sat at 0% for the whole hour.
+        let p = plan(
+            Path::new("/i.mkv"),
+            Path::new("/o.mp4"),
+            &disc(),
+            &analysis(),
+            &settings(),
+            vec![],
+            &[],
+            Tags::default(),
+        );
+        assert!(p.command().has("-progress"), "{}", p.command().display());
     }
 
     #[test]

@@ -127,7 +127,7 @@ impl Teacher {
     }
 
     /// Turn the observations into thresholds and settle the votes.
-    pub fn settle(self, table: &mut Table, min_agreement: f32) -> Settled {
+    pub fn settle(self, table: &mut Table, how: crate::subs::table::Settling) -> Settled {
         // Midway between the typical within-word gap and the typical gap that
         // carried a space. Per glyph, because the tail of an f or a y eats into
         // the gap after it and one global number turns "if you" into "ifyou".
@@ -147,7 +147,7 @@ impl Teacher {
                 spacing += 1;
             }
         }
-        let (labelled, ambiguous, undecided) = table.apply_votes(min_agreement);
+        let (labelled, ambiguous, undecided) = table.settle_votes(how);
         table.reindex();
         Settled { labelled, ambiguous, undecided, spacing }
     }
@@ -167,13 +167,18 @@ pub struct Effort {
     /// shapes only appear in the last reel is not worth another ten minutes of
     /// processes, and what stays unlabelled is reported rather than guessed.
     pub cues: usize,
-    /// The share of votes a shape needs before it is called labelled.
-    pub agreement: f32,
+    /// How sure the votes have to be before a shape is called labelled.
+    pub settling: crate::subs::table::Settling,
 }
 
 impl Default for Effort {
     fn default() -> Self {
-        Effort { enough: 24, cues: 400, agreement: 0.9 }
+        // Reading is cheap enough now to keep going until the shapes are
+        // covered rather than until a budget runs out. What actually stops it
+        // is every shape on the cue being well attested already, so a disc
+        // that is quickly understood still reads only a few dozen cues; the
+        // cap is a bound on the pathological case, not the usual one.
+        Effort { enough: 24, cues: 1500, settling: crate::subs::table::Settling::from_a_reader() }
     }
 }
 
@@ -205,7 +210,7 @@ pub fn from_reader(
     progress: &mut dyn FnMut(f32),
 ) -> crate::Result<Settled> {
     let Stream { events, palette, opts } = stream;
-    let (effort, min_agreement) = (how, how.agreement);
+    let (effort, settling) = (how, how.settling);
     let mut teacher = Teacher::new();
     let mut read = 0usize;
     let mut batch: Vec<Vec<Line>> = Vec::new();
@@ -231,7 +236,7 @@ pub fn from_reader(
     }
     teach_batch(reader, table, &mut teacher, &mut batch)?;
     progress(1.0);
-    Ok(teacher.settle(table, min_agreement))
+    Ok(teacher.settle(table, settling))
 }
 
 /// Read one batch of cues and teach the table from what came back.
@@ -307,7 +312,7 @@ mod tests {
         teacher.read(&mut t, &[line(&[(1, 0), (2, 4), (3, 8)])], Some("cat"));
         assert_eq!(teacher.lesson.aligned, 1);
         assert_eq!(teacher.lesson.votes, 3);
-        let settled = teacher.settle(&mut t, 0.9);
+        let settled = teacher.settle(&mut t, crate::subs::table::Settling::from_a_reference(0.9));
         assert_eq!(settled.labelled, 3);
     }
 
@@ -337,7 +342,7 @@ mod tests {
             let text = if i % 2 == 0 { "I" } else { "l" };
             teacher.read(&mut t, &[line(&[(7, 0)])], Some(text));
         }
-        let settled = teacher.settle(&mut t, 0.9);
+        let settled = teacher.settle(&mut t, crate::subs::table::Settling::from_a_reference(0.9));
         assert_eq!(settled.labelled, 0);
         assert_eq!(settled.ambiguous, 1);
         assert_eq!(t.glyphs[0].text.as_deref(), Some("I|l"));
@@ -353,7 +358,7 @@ mod tests {
             let text = if i % 30 == 0 { "e" } else { "a" };
             teacher.read(&mut t, &[line(&[(9, 0)])], Some(text));
         }
-        let settled = teacher.settle(&mut t, 0.9);
+        let settled = teacher.settle(&mut t, crate::subs::table::Settling::from_a_reference(0.9));
         assert_eq!(settled.labelled, 1);
         assert_eq!(t.glyphs[0].text.as_deref(), Some("a"));
     }
@@ -401,7 +406,7 @@ mod tests {
         teach_batch(&reader, &mut t, &mut teacher, &mut batch).unwrap();
         assert_eq!(teacher.lesson.aligned, 1, "the cue should have lined up");
         assert_eq!(teacher.lesson.votes, 4);
-        teacher.settle(&mut t, 0.9);
+        teacher.settle(&mut t, crate::subs::table::Settling::from_a_reference(0.9));
         let labels: Vec<Option<&str>> = t.glyphs.iter().map(|g| g.text.as_deref()).collect();
         assert_eq!(labels, [Some("a"), Some("b"), Some("c"), Some("d")]);
     }

@@ -64,6 +64,10 @@ Lines are read a batch at a time rather than one process each, which is where th
 
 The second disc of the same release costs nothing at all: it finds the table, reports `lettering: the-lion-king.json (100% of this disc)`, and reads nothing.
 
+**A shape two letters share is decided by what the runner-up is, not by how big it is.** The Lion King's English `l` took 85% of its votes with `/` behind it, and its Swedish vertical stroke took 86% with `I` behind it. Identical shares, opposite answers: a face does not draw `l` and a solidus alike, so the first is one letter read badly and keeps its label, while the second is two letters drawn identically and is recorded as `l|I` for the resolver to settle from context. Deciding both on share alone wrote `BIOGRAFI` as `BlOGRAFl`.
+
+Only the vertical strokes are treated this way - `l`, `I`, `i`, `1` - because that is the collision this project has actually met, and it is the one the resolver's structural rules are written for. Every pair added to that list is a shape that stops being decided by its votes, so a wrong entry costs a letter on every disc.
+
 Two characters are rewritten before the vote. A bar is read as a capital `I` - no subtitle font contains a pipe, and it is three quarters of the reader's mistakes. Typographic quotes become the straight ones subtitles are written with, not because either is wrong but because the reader picks between them line to line, the votes split, and the shape then settles on nothing and comes out blank.
 
 Only cues holding a shape that is still thin get read. The alphabet is done with in the first few dozen of a thousand, and reading them all would spend an hour of processes to learn nothing.

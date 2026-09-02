@@ -885,9 +885,36 @@ impl<'a> Pipeline<'a> {
             &failed,
             naming::tags(media, item),
         );
-        if let Err(e) = self.ports.runner.require(&plan.command()) {
-            let _ = self.ports.fs.remove_file(&partial);
-            return Err(e);
+        // Streamed rather than run, so the bar moves within a title as well as
+        // between them. A film is one title, so between them says nothing at
+        // all: the whole encode showed 0%.
+        let encode = plan.command();
+        let length = info.duration.max(1) as f32;
+        let out = {
+            let mut watch = |line: &str| {
+                if let Some(us) = line.strip_prefix("out_time_us=")
+                    && let Ok(us) = us.trim().parse::<u64>()
+                {
+                    let within = ((us / 1000) as f32 / length).clamp(0.0, 1.0);
+                    events(Event::Progress {
+                        stage: Stage::Transcode,
+                        fraction: done + within / at.total.max(1) as f32,
+                        message: Some(name.clone()),
+                    });
+                }
+            };
+            self.ports.runner.stream(&encode, &mut watch)
+        };
+        match out {
+            Ok(o) if !o.ok() => {
+                let _ = self.ports.fs.remove_file(&partial);
+                return Err(Error(format!("ffmpeg failed ({}): {}", o.status, o.last_error())));
+            }
+            Err(e) => {
+                let _ = self.ports.fs.remove_file(&partial);
+                return Err(e);
+            }
+            Ok(_) => {}
         }
         // Whatever this format still needs of the finished file - the tags
         // Matroska wants targets for, the chapter reference MP4 leaves behind.
@@ -1604,6 +1631,30 @@ mod tests {
         assert_eq!(
             p.play_alls_skipped(plan.as_deref()),
             Some(Warning::PlayAllsSkipped { titles: play_alls })
+        );
+    }
+
+    #[test]
+    fn the_bar_moves_inside_a_title_and_not_only_between_them() {
+        // A film is one title, so "how many titles are done" is 0% for the
+        // whole encode and 100% at the end. ffmpeg is told -progress because
+        // -v error means it otherwise says nothing at all.
+        let mut h = harness();
+        h.runner = h.runner.on("libx264", "out_time_us=300000000\nout_time_us=600000000\n");
+        let (_, _, events) = run_all(&h, settings());
+
+        let inside: Vec<f32> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Progress { stage: Stage::Transcode, fraction, .. } => Some(*fraction),
+                _ => None,
+            })
+            .filter(|f| *f > 0.0 && *f < 1.0)
+            .collect();
+        assert!(inside.len() >= 2, "the encode reported {inside:?}, so the bar cannot move");
+        assert!(
+            inside.windows(2).any(|w| w[1] > w[0]),
+            "the encode never reported going forwards: {inside:?}"
         );
     }
 
