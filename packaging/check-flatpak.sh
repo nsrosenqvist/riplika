@@ -45,6 +45,11 @@ check "it can find its language data"  bash -c \
   "flatpak run --command=tesseract $APP --list-langs 2>&1 | grep -qx eng"
 check "and the languages discs use"    bash -c \
   "flatpak run --command=tesseract $APP --list-langs 2>&1 | grep -qx swe"
+# Icelandic is the one that was missed, and missing it is not a small thing: a
+# track with no reader of its own is not read at all, because reading it with
+# another language's alphabet teaches the shared table nonsense.
+check "including the Nordic set"       bash -c \
+  "for l in dan fin isl nor swe; do flatpak run --command=tesseract $APP --list-langs 2>&1 | grep -qx \$l || exit 1; done"
 echo "--- the application ---"
 check "the CLI runs"                   bash -c \
   "flatpak run --command=riplika $APP --version | grep -q riplika"

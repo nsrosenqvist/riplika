@@ -197,7 +197,11 @@ fn the_same_letter(a: &str, b: &str) -> bool {
     let strip = |s: &str| -> Option<char> {
         let mut it = s.chars();
         let c = it.next()?;
-        it.next().is_none().then(|| bare(c.to_ascii_lowercase()))
+        // Unicode lowercasing, not ASCII: to_ascii_lowercase leaves Ä as Ä, so
+        // Ä and Å compared as different letters and Frozen's shape for them
+        // came out blank rather than as a class.
+        let lower = c.to_lowercase().next()?;
+        it.next().is_none().then(|| bare(lower))
     };
     a != b && strip(a).is_some() && strip(a) == strip(b)
 }
@@ -387,6 +391,23 @@ mod settling_tests {
         let (labelled, ambiguous, _) = t.settle_votes(Settling::from_a_reader());
         assert_eq!((labelled, ambiguous), (0, 1));
         assert_eq!(t.glyphs[0].text.as_deref(), Some("é|e"));
+    }
+
+    #[test]
+    fn capitals_wearing_accents_are_compared_like_the_small_letters() {
+        // Frozen: a shape read as Ä four times and Å twice. to_ascii_lowercase
+        // leaves both alone, so they compared as different letters and the
+        // shape came out blank.
+        let mut t = Table::default();
+        let i = t.observe(&shape(9));
+        for (label, n) in [("Ä", 4), ("Å", 2)] {
+            for _ in 0..n {
+                t.vote(i, label);
+            }
+        }
+        let (labelled, ambiguous, _) = t.settle_votes(Settling::from_a_reader());
+        assert_eq!((labelled, ambiguous), (0, 1));
+        assert_eq!(t.glyphs[0].text.as_deref(), Some("Ä|Å"));
     }
 
     #[test]

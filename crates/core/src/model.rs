@@ -551,6 +551,11 @@ pub enum Warning {
     /// Recreation table. Said once for the disc, since every language track on
     /// a disc is set in the same font.
     GlyphTableIsForAnotherFont { shapes: usize },
+    /// A track's language has no reader installed, so it was not read.
+    ///
+    /// Not read with another language's, which is what it used to do: that
+    /// votes nonsense into a table every track on the disc shares.
+    CannotReadLanguage { language: String },
     /// No table fits this disc and nothing on this machine can label one.
     ///
     /// The subtitles are kept as pictures, which is a real answer - they are
@@ -624,6 +629,10 @@ impl Warning {
                 "the glyph table was built for another release and does not fit this disc \
                  ({} on it are not in it); subtitles kept as pictures",
                 plural(*shapes, "shape")
+            ),
+            Warning::CannotReadLanguage { language } => format!(
+                "no {language} reader is installed, so those subtitles were kept as pictures \
+                 rather than read with another language's alphabet"
             ),
             Warning::CannotLearnLettering { shapes } => format!(
                 "no glyph table fits this disc and tesseract is not installed to read its \
@@ -823,6 +832,7 @@ mod tests {
             Warning::FreeReaderFailed { why: "no drive".into() },
             Warning::GlyphTableIsForAnotherFont { shapes: 115 },
             Warning::CannotLearnLettering { shapes: 115 },
+            Warning::CannotReadLanguage { language: "Icelandic".into() },
             Warning::SubtitlesUnreadable { language: "Swedish".into(), why: "no stream".into() },
         ];
         for w in &all {

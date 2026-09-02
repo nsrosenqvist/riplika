@@ -245,6 +245,13 @@ modules:
         url: https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.0.tar.gz
         sha256: f2fb34ca035b6d087a42875a35a7a5c4155fa9979c6132365b1e5a28ebc3fc11
 
+  # A track is only ever read with its own language's data - reading Icelandic
+  # with English votes `d` and `o` for one shape and `p` and `b` for another,
+  # into the table every track on the disc shares - so a language that is not
+  # here is a language whose subtitles stay pictures. Hence the spread: the
+  # languages a Region 2 disc is actually subtitled in, at two to five
+  # megabytes each.
+  #
   # The fast models rather than the accurate ones. What they are asked to read
   # is a line this application rendered from its own segmentation - black on
   # white, no skew, no noise - and the difference between the two model sets
@@ -262,6 +269,14 @@ modules:
       - install -Dm644 dan.traineddata /app/share/tessdata/dan.traineddata
       - install -Dm644 nor.traineddata /app/share/tessdata/nor.traineddata
       - install -Dm644 fin.traineddata /app/share/tessdata/fin.traineddata
+      - install -Dm644 isl.traineddata /app/share/tessdata/isl.traineddata
+      - install -Dm644 por.traineddata /app/share/tessdata/por.traineddata
+      - install -Dm644 pol.traineddata /app/share/tessdata/pol.traineddata
+      - install -Dm644 ces.traineddata /app/share/tessdata/ces.traineddata
+      - install -Dm644 hun.traineddata /app/share/tessdata/hun.traineddata
+      - install -Dm644 ell.traineddata /app/share/tessdata/ell.traineddata
+      - install -Dm644 rus.traineddata /app/share/tessdata/rus.traineddata
+      - install -Dm644 tur.traineddata /app/share/tessdata/tur.traineddata
     sources:
       - type: file
         url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/eng.traineddata
@@ -293,6 +308,30 @@ modules:
       - type: file
         url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/fin.traineddata
         sha256: 61a04cd62b507c3d9ae0e1cda399e6715ebf49dea9df47897c8acdcd3bd3e13c
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/isl.traineddata
+        sha256: 5ec828c363f3f0062c3caf08216677cf5f3c0c981b05fab445123a16b98f10a9
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/por.traineddata
+        sha256: c4932b937207a9514b7514d518b931a99938c02a28a5a5a553f8599ed58b7deb
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/pol.traineddata
+        sha256: c4476cdbc0e33d898d32345122b7be1cbf85ace15f920f06c7714756e1ef79b2
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/ces.traineddata
+        sha256: 934bcaf97ef3348413263331131c9fa7f55f30db333c711929c124fb635f7e1b
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/hun.traineddata
+        sha256: 35067e7cfe102dcdc953f9a758fdfaa6296b17a1ee6d874ee780fa306430b9fb
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/ell.traineddata
+        sha256: 4fba8a0b461038d51f1c20d043d4f2ac38c4e778f1b90830847f7bd8fa3ba726
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/rus.traineddata
+        sha256: e16e5e036cce1d9ec2b00063cf8b54472625b9e14d893a169e2b0dedeb4df225
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/tur.traineddata
+        sha256: 7393381111e1152420fc4092cb44eef4237580d21b92bf30d7d221aad192c6b7
 
   # No mkvtoolnix: the VobSub track is read out of Matroska directly, because
   # MKVToolNix wants Qt for every one of its tools and bundling Qt to obtain

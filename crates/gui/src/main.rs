@@ -889,6 +889,10 @@ fn warning_text(w: &Warning) -> String {
             "%1$s on this disc are not in the glyph table, which was built for another release; subtitles kept as pictures",
             &[&tr_n("%d shape", "%d shapes", *shapes as u32)],
         ),
+        Warning::CannotReadLanguage { language } => tr_args(
+            "no %1$s reader is installed, so those subtitles were kept as pictures rather than read with another language's alphabet",
+            &[language],
+        ),
         Warning::CannotLearnLettering { shapes } => tr_args(
             "no glyph table fits this disc and there is nothing installed to read its %1$s; subtitles kept as pictures",
             &[&tr_n("%d shape", "%d shapes", *shapes as u32)],
@@ -3212,6 +3216,7 @@ mod warning_text_tests {
             Warning::CacheNotCleared { path: "/c/title_t01.mkv".into(), why: "in use".into() },
             Warning::GlyphTableIsForAnotherFont { shapes: 115 },
             Warning::CannotLearnLettering { shapes: 115 },
+            Warning::CannotReadLanguage { language: "Icelandic".into() },
             Warning::SubtitlesUnreadable {
                 language: "Swedish".into(),
                 why: "no such stream".into(),

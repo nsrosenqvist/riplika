@@ -194,9 +194,11 @@ A wordlist named by hand still wins, and the search order is: the file given, th
 
 ### Which languages a disc can be read in
 
-Labelling a table needs a reader, and a reader needs data for the language it is looking at. The Flatpak carries ten: Danish, Dutch, English, Finnish, French, German, Italian, Norwegian, Spanish and Swedish.
+Labelling a table needs a reader, and a reader needs data for the language it is looking at. The Flatpak carries eighteen: Czech, Danish, Dutch, English, Finnish, French, German, Greek, Hungarian, Icelandic, Italian, Norwegian, Polish, Portuguese, Russian, Spanish, Swedish and Turkish.
 
-A track in any other language is read with the English data rather than refused. For a language written in the same alphabet that mostly works - the letters English shares come out right - but a letter it does not have comes out as the nearest one it does, so Portuguese `não` is labelled `nao` and stays that way in every disc of that release, since the table is reused. For a script English does not share it does not work at all.
+Icelandic was missing from the first ten, which is how the fallback above came to be tested.
+
+**A track is only read with its own language's data.** Falling back to English looked generous and was not. Frozen's Icelandic track, read that way, voted `d` and `o` for one shape and `p` and `b` for another - and those votes went into the table its English and Swedish tracks share, so a language nobody could read did not merely fail, it took down the two that had worked. A track whose language is not installed keeps its bitmaps and says so, which is a subtitle, where a table taught nonsense is wrong for every disc of the release.
 
 **The limit is on labelling a new table, not on using one.** A table that fits the disc is used whatever the language is written in, so a second disc of a release costs nothing and a table built or corrected by hand works anywhere.
 

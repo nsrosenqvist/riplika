@@ -687,6 +687,9 @@ impl<'a> Pipeline<'a> {
             }
             let code = lang::parse(language).code;
             let Some(data) = subs::ocr::data_for(&installed, &code) else {
+                // Not read at all rather than read with somebody else's
+                // alphabet. The track keeps its pictures and says why.
+                note(Warning::CannotReadLanguage { language: language.clone() }, report, events);
                 continue;
             };
             let Ok(src) = subs::source::load(self.ports.runner, &wanted.source, *stream) else {
@@ -1042,7 +1045,11 @@ impl<'a> Pipeline<'a> {
                         unknown: r.unknown_glyphs,
                         recognised: true,
                     });
-                    if r.unknown_glyphs > 0 {
+                    // Only when it is worth acting on. Three placeholders in
+                    // 1,998 cues is a fleck on a page and read as "the table
+                    // may not cover English", which is alarming and wrong;
+                    // 231 in 1,506 is a language nobody could read.
+                    if r.unknown_glyphs * 50 > r.cues {
                         events(Event::Warning(Warning::UnrecognisedGlyphs {
                             language: language.name.to_string(),
                             glyphs: r.unknown_glyphs,
@@ -1512,6 +1519,19 @@ mod tests {
         assert!(meta.contains(&"show=Parks and Recreation"), "{:?}", meta);
         assert!(meta.contains(&"season_number=7"));
         assert!(meta.contains(&"media_type=10"));
+    }
+
+    #[test]
+    fn a_handful_of_placeholders_is_not_worth_a_warning() {
+        // "English: 3 unrecognised glyphs - the table may not cover English"
+        // over 1,998 cues reads as a failure and is a fleck on a page. The
+        // threshold is one in fifty cues, which keeps Icelandic's 231 in 1,506.
+        let trivial = |unknown: usize, cues: usize| unknown * 50 > cues;
+        assert!(!trivial(3, 1998));
+        assert!(trivial(231, 1506));
+        assert!(!trivial(0, 100));
+        // a short track that is mostly placeholders still says so
+        assert!(trivial(20, 40));
     }
 
     #[test]

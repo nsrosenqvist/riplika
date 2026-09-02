@@ -213,12 +213,16 @@ pub fn languages(runner: &dyn Runner) -> Vec<String> {
 }
 
 /// Which traineddata to read a track of this language with.
+///
+/// Its own or none. Falling back to English looked generous and was not: read
+/// with English data, Frozen's Icelandic track voted `d` and `o` for one shape
+/// and `p` and `b` for another, and those votes went into the table the
+/// English and Swedish tracks share - so a language nobody could read did not
+/// merely fail, it took the two that had worked down with it. A track whose
+/// language is not installed keeps its bitmaps, which is a subtitle, where a
+/// table taught nonsense is wrong for every disc of the release.
 pub fn data_for(installed: &[String], language: &str) -> Option<String> {
-    let has = |c: &str| installed.iter().any(|l| l == c);
-    if has(language) {
-        return Some(language.to_string());
-    }
-    has("eng").then(|| "eng".to_string())
+    installed.iter().find(|l| *l == language).cloned()
 }
 
 /// Whether a reader is installed at all.
@@ -281,11 +285,13 @@ pub mod tests {
     }
 
     #[test]
-    fn a_track_is_read_with_its_own_language_where_that_is_installed() {
+    fn a_track_is_only_read_with_its_own_language() {
         let installed = vec!["eng".to_string(), "swe".to_string()];
         assert_eq!(data_for(&installed, "swe").as_deref(), Some("swe"));
-        // Icelandic is not installed; English still reads most of the alphabet
-        assert_eq!(data_for(&installed, "isl").as_deref(), Some("eng"));
+        // Icelandic is not installed, and English is not a substitute: read
+        // that way it votes d and o for one shape and p and b for another,
+        // into a table the English and Swedish tracks share.
+        assert_eq!(data_for(&installed, "isl"), None);
         assert_eq!(data_for(&[], "eng"), None);
     }
 
