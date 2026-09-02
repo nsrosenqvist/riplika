@@ -80,6 +80,21 @@ pub fn best(
     paths: &[PathBuf],
     shapes: &BTreeMap<String, u64>,
 ) -> Option<(PathBuf, Table, f32)> {
+    closest(fs, paths, shapes).filter(|(_, _, c)| *c >= FITS)
+}
+
+/// The best table there is, whether or not it is good enough to use.
+///
+/// Worth having separately: a table that explains most of a disc and misses
+/// the rest is the right thing to start from when the rest has to be read.
+/// Building from nothing instead would spend a second reading on shapes that
+/// were already labelled, and throw away the labels a person may have
+/// corrected by hand.
+pub fn closest(
+    fs: &dyn Fs,
+    paths: &[PathBuf],
+    shapes: &BTreeMap<String, u64>,
+) -> Option<(PathBuf, Table, f32)> {
     let mut best: Option<(PathBuf, Table, f32)> = None;
     for p in paths {
         let Ok(bytes) = fs.read(p) else { continue };
@@ -89,7 +104,7 @@ pub fn best(
             best = Some((p.clone(), t, c));
         }
     }
-    best.filter(|(_, _, c)| *c >= FITS)
+    best
 }
 
 /// Where a table built for this disc should be written.
@@ -190,6 +205,22 @@ mod tests {
         let paths = vec![PathBuf::from("/t/broken.json"), PathBuf::from("/t/good.json")];
         let (p, _, _) = best(&fs, &paths, &seen(&[(1, 5)])).expect("the good one still fits");
         assert_eq!(p, PathBuf::from("/t/good.json"));
+    }
+
+    #[test]
+    fn a_table_that_nearly_fits_is_still_offered_to_build_on() {
+        // The Lion King's own table, learned from its English tracks, covered
+        // 97% of an English sample and had never seen an a-ring. Starting the
+        // Swedish from nothing would read again for every shape it already
+        // had, and throw away any label a person had corrected.
+        let fs = FakeFs::new();
+        let t = knowing(&[1, 2, 3]);
+        fs.write(Path::new("/t/lk.json"), &serde_json::to_vec(&t).unwrap()).unwrap();
+        let disc = seen(&[(1, 100), (2, 100), (3, 100), (9, 40)]);
+        let paths = vec![PathBuf::from("/t/lk.json")];
+        assert!(best(&fs, &paths, &disc).is_none(), "it does not fit");
+        let (_, _, covered) = closest(&fs, &paths, &disc).expect("but it is still the closest");
+        assert!(covered > 0.8 && covered < FITS, "covered {covered}");
     }
 
     #[test]

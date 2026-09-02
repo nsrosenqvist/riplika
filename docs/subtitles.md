@@ -76,6 +76,10 @@ Only cues holding a shape that is still thin get read. The alphabet is done with
 
 Every table is tried against the shapes actually on the disc, and the one that explains most of them wins. Nothing is keyed or remembered: a second disc of a season reuses the first's table because it fits, not because anything recorded that they are related, and a disc from a new release fails the test and gets a table of its own.
 
+The shapes are sampled from **one track per language, not one per disc**. The face is shared across a disc's tracks, but the alphabet is not: a table learned from English has never seen `å` or `ö`, and scored against an English sample it fits at 97% and then cannot read a word of the Swedish it was about to be used on. That is what happened to The Lion King - four English tracks recognised, and the two full Swedish ones kept as pictures with "23 shapes on it are not in it".
+
+A table that nearly fits is what the reading starts from rather than being thrown away, so a disc whose earlier run wanted fewer languages only reads for the letters it is missing, and any label corrected by hand survives.
+
 "Fits" is 90% of glyph *instances*, not of distinct shapes - a table missing one shape that happens to be `e` is useless, and one missing a symbol that appears twice in a film is not. A table for the wrong release manages about 1%, so there is no ambiguity in practice.
 
 ## Building a table by hand

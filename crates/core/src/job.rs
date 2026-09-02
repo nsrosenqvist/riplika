@@ -649,6 +649,7 @@ impl<'a> Pipeline<'a> {
         wanted: &Wanted,
         media: &Media,
         shapes: &std::collections::BTreeMap<String, u64>,
+        start: Table,
         report: &mut Report,
         events: Events,
     ) -> Option<Table> {
@@ -675,7 +676,7 @@ impl<'a> Pipeline<'a> {
             }
         };
         let opts = subs::segment::SegOpts::default();
-        let mut table = Table::default();
+        let mut table = start;
         table.version = 1;
         table.source = media.title().to_string();
         let mut settled = subs::learn::Settled::default();
@@ -774,42 +775,47 @@ impl<'a> Pipeline<'a> {
         let streams = self.wanted_subtitles(outputs)?;
         let opts = subs::segment::SegOpts::default();
         let mut shapes = std::collections::BTreeMap::new();
-        // One stream is enough to tell which table fits: every language track
-        // on a disc is set in the same face.
-        let sample =
-            match subs::source::load(self.ports.runner, &streams.source, streams.streams[0]) {
+        // One track per language, not one track for the disc. The face is
+        // shared - that much was right - but the alphabet is not: a table
+        // learned from English has never seen a-ring or an umlaut, and scored
+        // against an English sample it fits at 97% and then cannot read a word
+        // of the Swedish it was about to be used on.
+        let mut sampled: Vec<&str> = Vec::new();
+        for (stream, language) in streams.streams.iter().zip(&streams.languages) {
+            if sampled.contains(&language.as_str()) {
+                continue;
+            }
+            sampled.push(language);
+            let src = match subs::source::load(self.ports.runner, &streams.source, *stream) {
                 Ok(s) => s,
                 // Silently giving up here is how this went unexplained for an
                 // afternoon: the run said "no glyph table" as though none were
-                // installed, when what had actually happened was that the track
-                // could not be opened to look at.
+                // installed, when what had actually happened was that the
+                // track could not be opened to look at.
                 Err(e) => {
                     note(
                         Warning::SubtitlesUnreadable {
-                            language: streams.languages.first().cloned().unwrap_or_default(),
+                            language: language.clone(),
                             why: e.to_string(),
                         },
                         report,
                         events,
                     );
-                    return None;
+                    continue;
                 }
             };
-        let events_on_disc = sample.events();
-        for ev in events_on_disc.iter().take(SAMPLE_CUES) {
-            subs::tables::shapes(
-                &subs::segment::segment(&ev.spu, &sample.idx.palette, &opts),
-                &mut shapes,
-            );
+            for ev in src.events().iter().take(SAMPLE_CUES) {
+                subs::tables::shapes(
+                    &subs::segment::segment(&ev.spu, &src.idx.palette, &opts),
+                    &mut shapes,
+                );
+            }
         }
         if shapes.is_empty() {
             note(
                 Warning::SubtitlesUnreadable {
                     language: streams.languages.first().cloned().unwrap_or_default(),
-                    why: format!(
-                        "no lettering found in {} cues",
-                        events_on_disc.len().min(SAMPLE_CUES)
-                    ),
+                    why: "no lettering found in any of the tracks wanted".into(),
                 },
                 report,
                 events,
@@ -822,13 +828,19 @@ impl<'a> Pipeline<'a> {
             self.settings.glyph_table.as_deref(),
             self.settings.tables_dir.as_deref(),
         );
-        if let Some((path, table, covered)) = subs::tables::best(self.ports.fs, &paths, &shapes) {
-            events(Event::TableChosen { path, covered, built: false });
-            return Some(table);
+        let closest = subs::tables::closest(self.ports.fs, &paths, &shapes);
+        if let Some((path, table, covered)) = &closest
+            && *covered >= subs::tables::FITS
+        {
+            events(Event::TableChosen { path: path.clone(), covered: *covered, built: false });
+            return Some(table.clone());
         }
-        drop(events_on_disc);
-        drop(sample);
-        self.learn_lettering(&streams, media, &shapes, report, events)
+        // Start from the best there is rather than from nothing: it may be
+        // this disc's own table from a run that wanted fewer languages, and
+        // reading again for shapes it already has is time spent to learn what
+        // is already known.
+        let start = closest.map(|(_, t, _)| t).unwrap_or_default();
+        self.learn_lettering(&streams, media, &shapes, start, report, events)
     }
 
     fn produce_one(
