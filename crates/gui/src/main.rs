@@ -1376,7 +1376,7 @@ impl App {
         // otherwise ask questions about a disc that cannot answer them.
         self.ui.language_group.set_visible(!music && !game);
         self.ui.contents_group.set_visible(!music && !game);
-        self.ui.detail_group.set_visible(!music && !game && !self.is_film());
+        self.ui.detail_group.set_visible(self.season_is_a_question());
 
         // The rest of this page was written for a box set. A film has no
         // episodes to count, no broadcast version to be an extended cut of,
@@ -1496,6 +1496,17 @@ impl App {
     /// Asked of what was chosen, not of the disc: a disc holding one long
     /// title could be either until a catalogue says which, and the pages that
     /// ask about seasons and episodes should follow the answer.
+    /// Is "which season, and which disc of it" a question this disc can answer?
+    ///
+    /// Only a television disc can. It was worked out in two places and they
+    /// disagreed: the rip page asked about music and games as well as films,
+    /// and the identification page asked only about films - so a CD was shown
+    /// a Season and a Disc field, above the words "which part of the show it
+    /// holds", while its eleven tracks sat above them.
+    fn season_is_a_question(&self) -> bool {
+        !self.is_music() && !self.is_game() && !self.is_film()
+    }
+
     fn is_film(&self) -> bool {
         let state = self.state.borrow();
         match state.chosen.as_ref().or(state.selected.as_ref().map(|c| &c.media)) {
@@ -1710,10 +1721,10 @@ impl App {
     fn show_choice(&self) {
         // Video is the one path where there is something to disagree with.
         self.set_chosen_actionable(true);
-        // A film is one thing, not part four of a season. Asking which season
-        // it is and where its episode numbering starts are questions about a
-        // disc that cannot answer them.
-        self.ui.detail_group.set_visible(!self.is_film());
+        // A film is one thing, not part four of a season, and an album is
+        // neither. Asking which season it is and where its episode numbering
+        // starts are questions about a disc that cannot answer them.
+        self.ui.detail_group.set_visible(self.season_is_a_question());
         if self.is_music() {
             return self.show_album();
         }
