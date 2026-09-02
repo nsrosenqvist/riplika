@@ -814,10 +814,63 @@ impl Wikidata<'_> {
 
     pub fn entities_url(ids: &[String]) -> String {
         format!(
-            "{WIKIDATA}?action=wbgetentities&ids={}&props=claims|labels&languages=en&format=json",
+            "{WIKIDATA}?action=wbgetentities&ids={}&props=claims|labels|sitelinks\
+             &sitefilter=enwiki&languages=en&format=json",
             ids.join("%7C")
         )
     }
+}
+
+/// The article images for several Wikipedia titles at once.
+///
+/// One request however many candidates there are, which is why the titles are
+/// collected first rather than asked for as each hit is built.
+///
+/// `pilicense=any` is the whole point. A film poster is copyrighted, so it is
+/// not on Commons and cannot be: Wikipedia hosts it under fair use instead.
+/// Left at the default this answers "no image" for every film there is.
+pub fn wikipedia_images_url(titles: &[String]) -> String {
+    format!(
+        "https://en.wikipedia.org/w/api.php?action=query&prop=pageimages\
+         &piprop=thumbnail&pithumbsize=342&pilicense=any&titles={}&format=json&redirects=1",
+        titles.iter().map(|t| encode(t)).collect::<Vec<_>>().join("%7C")
+    )
+}
+
+/// Article title to poster, from what that request answered.
+pub fn parse_wikipedia_images(json: &str) -> Vec<(String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    // A title that redirects is answered under the target's name, so the
+    // mapping back has to be followed or the picture belongs to nobody.
+    let mut redirects: Vec<(String, String)> = Vec::new();
+    if let Some(list) = v["query"]["redirects"].as_array() {
+        for r in list {
+            if let (Some(from), Some(to)) = (r["from"].as_str(), r["to"].as_str()) {
+                redirects.push((from.to_string(), to.to_string()));
+            }
+        }
+    }
+    if let Some(pages) = v["query"]["pages"].as_object() {
+        for page in pages.values() {
+            let (Some(title), Some(src)) =
+                (page["title"].as_str(), page["thumbnail"]["source"].as_str())
+            else {
+                continue;
+            };
+            // The API appends its own tracking parameters to the URL.
+            let url = src.split('?').next().unwrap_or(src).to_string();
+            out.push((title.to_string(), url.clone()));
+            for (from, to) in &redirects {
+                if to == title {
+                    out.push((from.clone(), url.clone()));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Where a file named by a Wikidata claim actually lives.
@@ -855,6 +908,40 @@ pub fn parse_wikidata_search(json: &str) -> Vec<(String, String)> {
 /// A search for a film's title also returns its soundtrack album, its
 /// characters and its novelisation. Checking `instance of` rather than reading
 /// the description keeps those out without guessing from prose.
+/// The Wikipedia article each entity is about, in the order the hits come out.
+///
+/// Taken from the item rather than searched for by name, which is the point of
+/// it: "Cloudy with a Chance of Meatballs" is a picture book, and the film is
+/// filed under "Cloudy with a Chance of Meatballs (film)". The item knows
+/// which article is its own; a title does not.
+pub fn parse_wikidata_articles(json: &str, order: &[String]) -> Vec<Option<String>> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return vec![None; order.len()];
+    };
+    order
+        .iter()
+        .map(|qid| v["entities"][qid]["sitelinks"]["enwiki"]["title"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// Each entity's logo, for when nothing better can be found.
+///
+/// Not a poster - it is the film's wordmark on a transparent background - but
+/// it is the film's own and it beats a generic icon.
+pub fn parse_wikidata_logos(json: &str, order: &[String]) -> Vec<Option<String>> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return vec![None; order.len()];
+    };
+    order
+        .iter()
+        .map(|qid| {
+            v["entities"][qid]["claims"]["P154"][0]["mainsnak"]["datavalue"]["value"]
+                .as_str()
+                .map(commons_image_url)
+        })
+        .collect()
+}
+
 pub fn parse_wikidata_entities(
     json: &str,
     order: &[String],
@@ -955,7 +1042,19 @@ pub fn parse_wikidata_entities(
             // Megabus, which is what Wikidata has on the film's item. A
             // picture that is confidently the wrong thing is worse than the
             // kind icon, so only the two that mean something are read.
-            poster: plain("P3383").or_else(|| plain("P154")).as_deref().map(commons_image_url),
+            // P3383 is "film poster" and P154 is "logo" - both say what they
+            // depict. P18 is "image of the subject" and promises nothing:
+            // asking it for Kung Fu Panda answers with a photograph of a
+            // Megabus, which is what Wikidata has on the film's item.
+            //
+            // P3383 is almost always empty, though, and for a reason that will
+            // not change: a film poster is copyrighted, so it cannot be on
+            // Commons and Wikidata cannot name it. Star Wars and The Matrix
+            // both have nothing there and a logo in P154, which is why every
+            // film came out with its logo. The poster is filled in afterwards
+            // from Wikipedia, which hosts it under fair use; the logo is what
+            // is left when even that has none.
+            poster: plain("P3383").as_deref().map(commons_image_url),
             detail,
         });
     }
@@ -988,7 +1087,36 @@ impl Catalogue for Wikidata<'_> {
         }
         let ids: Vec<String> = found.iter().map(|(id, _)| id.clone()).collect();
         let claims = self.http.get(&Self::entities_url(&ids))?;
-        Ok(parse_wikidata_entities(&claims, &ids, &found))
+        let mut hits = parse_wikidata_entities(&claims, &ids, &found);
+
+        // One request for every candidate's poster, and only when one is
+        // missing - which, for films, is nearly always.
+        let articles = parse_wikidata_articles(&claims, &ids);
+        let logos = parse_wikidata_logos(&claims, &ids);
+        let wanted: Vec<String> = hits
+            .iter()
+            .zip(&articles)
+            .filter(|(h, _)| h.poster.is_none())
+            .filter_map(|(_, a)| a.clone())
+            .collect();
+        if !wanted.is_empty()
+            && let Ok(body) = self.http.get(&wikipedia_images_url(&wanted))
+        {
+            let images = parse_wikipedia_images(&body);
+            for ((hit, article), logo) in hits.iter_mut().zip(&articles).zip(&logos) {
+                if hit.poster.is_some() {
+                    continue;
+                }
+                let from_wikipedia = article
+                    .as_ref()
+                    .and_then(|a| images.iter().find(|(t, _)| t == a))
+                    .map(|(_, url)| url.clone());
+                // A logo is not a poster, but it is the film's own mark and
+                // beats a generic icon when there is nothing else.
+                hit.poster = from_wikipedia.or_else(|| logo.clone());
+            }
+        }
+        Ok(hits)
     }
 
     fn episodes(&self, _provider_id: &str, _season: u32) -> Result<Vec<Episode>> {
@@ -1047,16 +1175,105 @@ mod wikidata_tests {
         assert!(!url.contains("bus"), "P18 promises nothing about what it depicts");
     }
 
+    /// Entities with no poster claim, an article each, and a logo on one.
+    const NO_POSTER: &str = r#"{"entities":{
+      "Q337078":{"claims":{
+        "P31":[{"mainsnak":{"datavalue":{"value":{"id":"Q11424"}}}}],
+        "P577":[{"mainsnak":{"datavalue":{"value":{"time":"+1998-03-06T00:00:00Z"}}}}],
+        "P154":[{"mainsnak":{"datavalue":{"value":"Lebowski logo.svg"}}}]},
+        "sitelinks":{"enwiki":{"title":"The Big Lebowski"}},
+        "labels":{"en":{"value":"The Big Lebowski"}}},
+      "Q2409741":{"claims":{
+        "P31":[{"mainsnak":{"datavalue":{"value":{"id":"Q11424"}}}}],
+        "P577":[{"mainsnak":{"datavalue":{"value":{"time":"+2001-01-01T00:00:00Z"}}}}]},
+        "sitelinks":{"enwiki":{"title":"The Big Lebowski: A XXX Parody"}},
+        "labels":{"en":{"value":"The Big Lebowski: A XXX Parody"}}}}}"#;
+
+    const IMAGES: &str = r#"{"query":{"pages":{"1":{"title":"The Big Lebowski",
+      "thumbnail":{"source":"https://upload.wikimedia.org/wikipedia/en/3/35/Biglebowskiposter.jpg?utm_source=x"}}}}}"#;
+
     #[test]
-    fn a_logo_stands_in_when_there_is_no_poster() {
-        // Sparse data is the normal case here: of three films in this fixture
-        // only one has a picture of any kind.
-        let entities = ENTITIES.replace("P3383", "P154");
-        let found = parse_wikidata_search(SEARCH);
-        let ids: Vec<String> = found.iter().map(|(i, _)| i.clone()).collect();
-        let h = parse_wikidata_entities(&entities, &ids, &found);
-        let big = h.iter().find(|h| h.media.title() == "The Big Lebowski").expect("it is there");
-        assert!(big.poster.is_some(), "a logo is of the film, which a bus is not");
+    fn a_poster_comes_from_wikipedia_when_wikidata_has_none() {
+        // P3383 is empty for practically every film - a poster is copyrighted,
+        // so Commons cannot hold it and Wikidata cannot name it. Wikipedia
+        // hosts it under fair use, which is why every film used to come back
+        // wearing its logo.
+        let http = FakeHttp::new()
+            .on("wbsearchentities", SEARCH)
+            .on("wbgetentities", NO_POSTER)
+            .on("prop=pageimages", IMAGES);
+        let w = Wikidata { http: &http };
+        let found = w.search("The Big Lebowski", MediaKind::Movie, None).unwrap();
+        let big = found.iter().find(|h| h.media.title() == "The Big Lebowski").expect("there");
+        let url = big.poster.as_deref().expect("a poster");
+        assert!(url.contains("Biglebowskiposter"), "{url}");
+        assert!(!url.contains("utm_"), "the API's own tracking is not part of the picture: {url}");
+    }
+
+    #[test]
+    fn the_article_is_asked_for_with_the_licence_a_poster_needs() {
+        // Left at the default, the images request answers "no image" for every
+        // film there is, because a poster is never freely licensed.
+        let http = FakeHttp::new()
+            .on("wbsearchentities", SEARCH)
+            .on("wbgetentities", NO_POSTER)
+            .on("prop=pageimages", IMAGES);
+        Wikidata { http: &http }.search("The Big Lebowski", MediaKind::Movie, None).unwrap();
+        let asked = http.requested();
+        let images = asked.iter().find(|u| u.contains("pageimages")).expect("it asked");
+        assert!(images.contains("pilicense=any"), "{images}");
+    }
+
+    #[test]
+    fn a_logo_stands_in_when_even_wikipedia_has_no_picture() {
+        // Not a poster - a wordmark on a transparent background - but it is
+        // the film's own and it beats a generic icon.
+        let http = FakeHttp::new()
+            .on("wbsearchentities", SEARCH)
+            .on("wbgetentities", NO_POSTER)
+            .on("prop=pageimages", r#"{"query":{"pages":{}}}"#);
+        let w = Wikidata { http: &http };
+        let found = w.search("The Big Lebowski", MediaKind::Movie, None).unwrap();
+        let big = found.iter().find(|h| h.media.title() == "The Big Lebowski").expect("there");
+        assert!(big.poster.as_deref().is_some_and(|u| u.contains("logo")), "{:?}", big.poster);
+    }
+
+    #[test]
+    fn a_film_with_no_picture_anywhere_still_says_nothing_rather_than_guessing() {
+        let http = FakeHttp::new()
+            .on("wbsearchentities", SEARCH)
+            .on("wbgetentities", NO_POSTER)
+            .on("prop=pageimages", r#"{"query":{"pages":{}}}"#);
+        let w = Wikidata { http: &http };
+        let found = w.search("The Big Lebowski", MediaKind::Movie, None).unwrap();
+        let parody = found.iter().find(|h| h.media.title().contains("Parody")).expect("there");
+        assert_eq!(parody.poster, None);
+    }
+
+    #[test]
+    fn the_urls_are_built_without_a_space_in_them() {
+        // These are written across two lines with a continuation, and a
+        // continuation that loses its backslash puts a space and an indent
+        // into the middle of a query string.
+        let e = Wikidata::entities_url(&["Q337078".into()]);
+        assert!(!e.contains(' '), "{e}");
+        assert!(e.contains("props=claims|labels|sitelinks"), "{e}");
+        assert!(e.contains("sitefilter=enwiki"), "{e}");
+
+        let i = wikipedia_images_url(&["The Big Lebowski".into(), "Blade Runner".into()]);
+        assert!(!i.contains(' '), "{i}");
+        assert!(i.contains("pilicense=any") && i.contains("redirects=1"), "{i}");
+        // one request for all of them, not one each
+        assert_eq!(i.matches("titles=").count(), 1, "{i}");
+        assert!(i.contains("%7C"), "the titles are joined into one request: {i}");
+    }
+
+    #[test]
+    fn the_article_is_taken_from_the_item_and_not_from_the_title() {
+        // "Cloudy with a Chance of Meatballs" is a picture book; the film is
+        // filed under "(film)". Searching Wikipedia by name gets the book.
+        let articles = parse_wikidata_articles(NO_POSTER, &["Q337078".into(), "Q2409741".into()]);
+        assert_eq!(articles[0].as_deref(), Some("The Big Lebowski"));
     }
 
     #[test]

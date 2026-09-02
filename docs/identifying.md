@@ -16,6 +16,10 @@ TMDB goes first when `TMDB_API_KEY` is set: it is the better data, it covers bot
 
 Ids carry their origin - `tvmaze:1633`, `wikidata:Q337078` - and are handed back to whoever minted them, never to another catalogue. TVmaze's 1633 and TMDB's 1633 are different shows, and before this the episode list for one could be fetched for the other.
 
+**The poster comes from Wikipedia, not from Wikidata.** Wikidata names images by their file on Commons, and a film poster is copyrighted, so Commons cannot hold one and Wikidata's "film poster" property is empty for practically every film there is - Star Wars and The Matrix both have nothing in it. What they do have is a logo, so every film came back wearing its wordmark. Wikipedia hosts the poster itself under fair use, and its article images can be asked for by title: one request covers every candidate, and `pilicense=any` is what makes it answer at all, since the default excludes exactly the non-free files a poster always is.
+
+Which article to ask about comes from the Wikidata item's own link to it, never from the film's name. "Cloudy with a Chance of Meatballs" is a picture book; the film is filed under "Cloudy with a Chance of Meatballs (film)", and the item knows that where a title does not. The logo is still there as a last resort - it is not a poster, but it is the film's own mark and beats a generic icon.
+
 **Wikidata is the film answer because a film needs so little.** For a series the catalogue is load-bearing: without episode titles and numbers nothing can be named. A film needs a title, a year, and - most usefully - a runtime, which Wikidata carries as P2047. That runtime is evidence rather than description: a search ranks by how well the label matches, not by how well known the work is, so `The Big Lebowski: A XXX Parody` comes back beside the film it parodies, and 117 minutes against 155 is what separates them.
 
 
