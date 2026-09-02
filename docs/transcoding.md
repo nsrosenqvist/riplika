@@ -9,9 +9,13 @@ HandBrake is a wrapper around the same libx264; encoding a title both ways with 
 | crop | detected from the middle of the film, not the opening titles |
 | inverse telecine | applied only when the duplicate frames are really there |
 | frame rate | pinned constant |
-| pixel aspect | snapped to the four ratios a DVD can have |
+| pixel aspect | snapped to the four ratios a DVD can have, then scaled away |
 | subtitles | recognised per language, bitmaps dropped once they are |
 | faststart | moov atom at the front |
+
+**The picture is written at the size it is meant to be seen at.** A DVD stores 720 across and means it to be shown at 1024, and every player scales it; what they do not agree on is where a subtitle goes. GNOME Videos lays one out in the stored width and stretches the picture underneath it, so the text sits a third of the way across instead of centred. VLC gets it right. The disagreement only exists because the file asks to be stretched, so the scaling is done once, here, and there is nothing left to disagree about.
+
+Measured over two minutes of *Cloudy with a Chance of Meatballs* at CRF 20: 14.5 MB stored anamorphic against 18.4 MB square, so about a quarter more. That buys a file that is the shape it claims to be in anything that opens it. For 4:3 material the same correction is a reduction - 720 becomes 640 - and the file gets smaller.
 
 Three tiers each for picture and sound. DVD is 720x480 MPEG-2 at 4-6 Mb/s, so the useful range is narrow: by CRF 18 the encode is transparent against the source and further bits mostly track MPEG-2's own noise, while below CRF 23 SD detail goes quickly.
 

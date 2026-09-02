@@ -293,6 +293,32 @@ pub fn subtitles_to_recognise(info: &MediaInfo, languages: &LanguageSet) -> Vec<
 /// `failed` names subtitle streams recognition could not handle. Their bitmaps
 /// are carried through whatever the settings say: dropping one loses that
 /// language entirely, which is far worse than the redundancy we are removing.
+/// What the picture measures once the black bars are off.
+fn cropped_size(info: &MediaInfo, analysis: &VideoAnalysis) -> (u32, u32) {
+    let from_crop = analysis.crop.as_ref().and_then(|c| {
+        let mut parts = c.trim_start_matches("crop=").split(':');
+        Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+    });
+    from_crop.unwrap_or((info.width, info.height))
+}
+
+/// The size this picture is meant to be seen at, when that is not the size it
+/// is stored at.
+///
+/// `None` when the pixels are already square and there is nothing to do:
+/// scaling then would resample every frame to arrive back where it started.
+/// Widths are rounded to even because H.264 chroma is subsampled and an odd
+/// one cannot be encoded.
+fn square(width: u32, height: u32, sample_aspect: &str) -> Option<(u32, u32)> {
+    let (num, den) = sample_aspect.split_once('/')?;
+    let (num, den): (u64, u64) = (num.trim().parse().ok()?, den.trim().parse().ok()?);
+    if num == 0 || den == 0 || num == den {
+        return None;
+    }
+    let scaled = (width as u64 * num).div_ceil(den) as u32;
+    Some((scaled + scaled % 2, height + height % 2))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn plan(
     input: &Path,
@@ -333,7 +359,25 @@ pub fn plan(
     if let Some(c) = &analysis.crop {
         filters.push(c.clone());
     }
-    filters.push(format!("setsar={}", analysis.sample_aspect));
+    // Square pixels, rather than a flag saying the pixels are not square.
+    //
+    // A DVD stores 720 across and means it to be shown at 1024, and every
+    // player scales it. What they do not agree on is where a subtitle goes:
+    // GNOME Videos lays it out in stored coordinates and then stretches the
+    // picture underneath it, so the text sits a third of the way in rather
+    // than centred. VLC gets it right. The disagreement only exists because
+    // the file asks to be stretched, so it is asked for at the size it is
+    // meant to be seen at and there is nothing left to disagree about.
+    //
+    // It costs about a sixth of the file, which buys a picture that is the
+    // shape it claims to be in anything that opens it.
+    let (w, h) = cropped_size(info, analysis);
+    // Nothing to do when the pixels are already square: scaling then would
+    // resample every frame to arrive back where it started.
+    if let Some((sw, sh)) = square(w, h, &analysis.sample_aspect) {
+        filters.push(format!("scale={sw}:{sh}"));
+    }
+    filters.push("setsar=1".to_string());
 
     TranscodePlan {
         input: input.to_path_buf(),
@@ -530,6 +574,54 @@ mod tests {
     }
 
     #[test]
+    fn the_picture_comes_out_at_the_size_it_is_meant_to_be_seen_at() {
+        // A DVD stores 720 across and means 1024. Left as a flag, GNOME Videos
+        // lays subtitles out in the stored width and stretches the picture
+        // underneath, putting the text a third of the way in.
+        assert_eq!(square(720, 436, "64/45"), Some((1024, 436)));
+        // 4:3, where the same correction is a reduction rather than a stretch
+        assert_eq!(square(720, 480, "8/9"), Some((640, 480)));
+    }
+
+    #[test]
+    fn a_picture_that_is_already_square_is_left_alone() {
+        // Scaling it would resample every frame to arrive back where it began.
+        assert_eq!(square(1024, 436, "1/1"), None);
+        assert_eq!(square(1024, 436, "nonsense"), None);
+        assert_eq!(square(1024, 436, "1/0"), None);
+    }
+
+    #[test]
+    fn a_scaled_size_is_even_because_h264_cannot_encode_an_odd_one() {
+        let (w, h) = square(711, 435, "3/2").expect("a stretch");
+        assert_eq!(w % 2, 0, "width {w}");
+        assert_eq!(h % 2, 0, "height {h}");
+    }
+
+    #[test]
+    fn the_scale_is_measured_after_the_black_bars_come_off() {
+        // Scaling the uncropped width would stretch the picture to a size that
+        // includes bars that are no longer there.
+        let mut a = analysis();
+        a.crop = Some("crop=720:352:0:64".into());
+        a.sample_aspect = "32/27".into();
+        let p = plan(
+            Path::new("/i.mkv"),
+            Path::new("/o.mkv"),
+            &disc(),
+            &a,
+            &settings(),
+            vec![],
+            &[],
+            Tags::default(),
+        );
+        let chain = p.filters.join(",");
+        assert!(chain.contains("crop=720:352:0:64"), "{chain}");
+        assert!(chain.contains("scale=854:352"), "{chain}");
+        assert!(chain.ends_with("setsar=1"), "{chain}");
+    }
+
+    #[test]
     fn the_encode_asks_ffmpeg_to_report_where_it_has_got_to() {
         // -v error silences ffmpeg completely, so without this there is nothing
         // to move a progress bar with, and a film - which is one title, so
@@ -673,7 +765,7 @@ mod tests {
     }
 
     #[test]
-    fn the_filter_chain_is_ordered_ivtc_then_crop_then_aspect() {
+    fn the_filter_chain_is_ordered_ivtc_then_crop_then_scale() {
         let a = VideoAnalysis {
             decoded_fps: 23.976,
             telecined: true,
@@ -690,9 +782,11 @@ mod tests {
             &[],
             Tags::default(),
         );
+        // Scaling comes after cropping, or the picture is stretched to a
+        // width that still counts black bars that are no longer there.
         assert_eq!(
             p.command().value_of("-vf"),
-            Some("fieldmatch,decimate,crop=720:352:0:64,setsar=32/27")
+            Some("fieldmatch,decimate,crop=720:352:0:64,scale=854:352,setsar=1")
         );
         // undoing telecine always lands on film rate
         assert_eq!(p.command().value_of("-r"), Some("24000/1001"));

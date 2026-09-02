@@ -172,6 +172,36 @@ fn drawn_alike(a: &str, b: &str) -> bool {
     a != b && STROKES.contains(&a) && STROKES.contains(&b)
 }
 
+/// A letter with its accent taken off, for comparing one to another.
+///
+/// The shapes are genuinely different - the accent is drawn - so this is not a
+/// collision the way `l` and `I` are, and a shape the reader is sure about
+/// keeps its label. It only settles the ones it was unsure of, where the whole
+/// disagreement was over whether there is an accent on it at all.
+fn bare(c: char) -> char {
+    match c {
+        'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' => 'a',
+        'è' | 'é' | 'ê' | 'ë' | 'ē' => 'e',
+        'ì' | 'í' | 'î' | 'ï' => 'i',
+        'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' => 'o',
+        'ù' | 'ú' | 'û' | 'ü' => 'u',
+        'ý' | 'ÿ' => 'y',
+        'ñ' => 'n',
+        'ç' => 'c',
+        other => other,
+    }
+}
+
+/// The same letter, disagreeing only about its accent.
+fn the_same_letter(a: &str, b: &str) -> bool {
+    let strip = |s: &str| -> Option<char> {
+        let mut it = s.chars();
+        let c = it.next()?;
+        it.next().is_none().then(|| bare(c.to_ascii_lowercase()))
+    };
+    a != b && strip(a).is_some() && strip(a) == strip(b)
+}
+
 impl Settling {
     /// For votes from subtitles already trusted for this disc.
     pub fn from_a_reference(agreement: f32) -> Settling {
@@ -223,6 +253,24 @@ impl Table {
             if (top as f32 / total as f32) >= min_agreement {
                 g.text = Some(ranked[0].0.clone());
                 set += 1;
+                continue;
+            }
+            // Not sure enough to call it, and the disagreement is only about
+            // whether the letter has an accent on it. Better a class context
+            // can settle than a placeholder: The Lion King's disc read é five
+            // times and e three, which is 62% and under any sensible bar, and
+            // "jättebuffé" came out as "jättebuff" and a box. Two votes is
+            // enough here where eight is demanded elsewhere, because a letter
+            // with an accent turns up a handful of times in a whole film - the
+            // shape had eight instances on that disc, and every one was read.
+            if how.collisions
+                && ranked.len() >= 2
+                && the_same_letter(ranked[0].0, ranked[1].0)
+                && *ranked[1].1 >= 2
+                && (top + *ranked[1].1) as f32 / total as f32 >= 0.9
+            {
+                g.text = Some(format!("{}|{}", ranked[0].0, ranked[1].0));
+                ambiguous += 1;
                 continue;
             }
             // Two strong candidates that between them explain the glyph. Demand
@@ -321,6 +369,57 @@ mod settling_tests {
         let (labelled, ambiguous, _) = t.settle_votes(Settling::from_a_reader());
         assert_eq!((labelled, ambiguous), (1, 0));
         assert_eq!(t.glyphs[0].text.as_deref(), Some("l"));
+    }
+
+    #[test]
+    fn an_accent_the_reader_was_unsure_of_beats_a_placeholder() {
+        // Cloudy with a Chance of Meatballs: the é shape appears eight times in
+        // the whole film and was read é five times and e three. 62% is under
+        // any sensible bar and three votes is under the runner-up floor, so it
+        // came out blank and "jättebuffé" was drawn as "jättebuff" and a box.
+        let mut t = Table::default();
+        let i = t.observe(&shape(6));
+        for (label, n) in [("é", 5), ("e", 3)] {
+            for _ in 0..n {
+                t.vote(i, label);
+            }
+        }
+        let (labelled, ambiguous, _) = t.settle_votes(Settling::from_a_reader());
+        assert_eq!((labelled, ambiguous), (0, 1));
+        assert_eq!(t.glyphs[0].text.as_deref(), Some("é|e"));
+    }
+
+    #[test]
+    fn a_letter_the_reader_was_sure_of_keeps_its_label() {
+        // An accent is drawn, so these really are different shapes. A shape
+        // read as e ninety times in a hundred is an e, and turning that into a
+        // class would hand the resolver a decision it does not need to make.
+        let mut t = Table::default();
+        let i = t.observe(&shape(7));
+        for (label, n) in [("e", 90), ("é", 10)] {
+            for _ in 0..n {
+                t.vote(i, label);
+            }
+        }
+        let (labelled, ambiguous, _) = t.settle_votes(Settling::from_a_reader());
+        assert_eq!((labelled, ambiguous), (1, 0));
+        assert_eq!(t.glyphs[0].text.as_deref(), Some("e"));
+    }
+
+    #[test]
+    fn two_different_letters_are_not_rescued_this_way() {
+        // The rule is for one letter argued about, not for a shape nobody
+        // could read: c and o are not the same letter with the accent in
+        // question, and a class of them would be a guess dressed as evidence.
+        let mut t = Table::default();
+        let i = t.observe(&shape(8));
+        for (label, n) in [("c", 5), ("o", 3)] {
+            for _ in 0..n {
+                t.vote(i, label);
+            }
+        }
+        let (labelled, ambiguous, undecided) = t.settle_votes(Settling::from_a_reader());
+        assert_eq!((labelled, ambiguous, undecided), (0, 0, 1));
     }
 
     #[test]
