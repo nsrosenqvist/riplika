@@ -396,16 +396,23 @@ pub fn ensure_datfiles(tx: Sender<Msg>) {
         let dir =
             prefs.dat_dir.clone().unwrap_or_else(riplika_core::prefs::Preferences::default_dat_dir);
         let fs = RealFs;
-        // Already have some: leave them alone. They go out of date, but
-        // re-downloading on every disc would be rude to redump.org and slow
-        // for no gain - the Download button is there for refreshing them.
-        if !riplika_core::redump::load_all(&fs, &dir).is_empty() {
+        // The ones there is no datfile for, rather than nothing at all if
+        // there is any. A fetch that got some and failed on others left the
+        // folder non-empty, and asking whether it was empty then called the
+        // job done for good: a PlayStation datfile arrived, the IBM PC one did
+        // not, and every PC disc afterwards was checked against a database of
+        // PlayStation discs. What is already here is left alone - those go out
+        // of date, but re-downloading on every disc would be rude to
+        // redump.org, and the Download button is there for refreshing them.
+        let missing = riplika_core::redump::missing_systems(&fs, &dir);
+        if missing.is_empty() {
             return;
         }
         let runner = RealRunner::new(Cancel::new());
         let http = riplika_core::identify::catalogue::UreqHttp;
         let mut got = 0;
-        for (slug, name) in riplika_core::redump::SYSTEMS {
+        for slug in missing {
+            let name = riplika_core::redump::system_name(slug).unwrap_or(slug);
             match riplika_core::redump::fetch(&fs, &runner, &http, slug, &dir) {
                 Ok(_) => got += 1,
                 Err(e) => {

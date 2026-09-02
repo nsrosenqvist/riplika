@@ -265,6 +265,40 @@ pub fn system_name(slug: &str) -> Option<&'static str> {
 /// A datfile covers one system, so a collection means several - and which
 /// systems somebody has is their business, so the directory is read rather
 /// than a list being kept.
+/// The systems there is no datfile for yet.
+///
+/// Asked rather than "is the folder empty": a fetch that got some and failed on
+/// others left the folder non-empty, and a check for emptiness then declared
+/// the job done for good. A PlayStation datfile arrived, the IBM PC one did
+/// not, and every PC disc afterwards was checked against a database of
+/// PlayStation discs and came back unknown - for a reason that had nothing to
+/// do with the disc.
+pub fn missing_systems(fs: &dyn crate::host::Fs, dir: &std::path::Path) -> Vec<&'static str> {
+    let have: Vec<String> = load_all(fs, dir).into_iter().map(|(_, d)| d.name).collect();
+    SYSTEMS
+        .iter()
+        .filter(|(_, name)| !have.iter().any(|h| same_system(h, name)))
+        .map(|(slug, _)| *slug)
+        .collect()
+}
+
+/// Do these two name the same system?
+///
+/// The names here are the ones shown to a person - "Sony PlayStation" - and a
+/// datfile's header says "Sony - PlayStation". Compared as written they never
+/// match, so every system looks absent and all eleven are downloaded again on
+/// every launch, which is worse than never downloading the missing one.
+///
+/// Compared on the letters and digits alone, which is enough to tell the
+/// systems apart and does not care where redump.org puts its punctuation. Not
+/// by prefix: "Sony PlayStation" is the start of "Sony PlayStation 2".
+fn same_system(a: &str, b: &str) -> bool {
+    let letters = |s: &str| {
+        s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>()
+    };
+    letters(a) == letters(b)
+}
+
 pub fn load_all(fs: &dyn crate::host::Fs, dir: &std::path::Path) -> Vec<(std::path::PathBuf, Dat)> {
     let mut found = Vec::new();
     let Ok(entries) = fs.list(dir) else { return found };
@@ -679,5 +713,67 @@ mod tests {
         // Left as written rather than swallowed, so a surprise is visible.
         assert_eq!(unescape("&unknown;"), "&unknown;");
         assert_eq!(unescape("100% & rising"), "100% & rising");
+    }
+
+    /// The smallest thing `parse` accepts: a header and one game.
+    fn a_datfile(system: &str) -> String {
+        format!(
+            "<datafile><header><name>{system}</name></header>\
+             <game name=\"A Game\"><rom name=\"a.bin\" size=\"1\" crc=\"0\"/></game></datafile>"
+        )
+    }
+
+    #[test]
+    fn the_systems_with_no_datfile_yet_are_the_ones_still_wanted() {
+        use crate::host::Fs;
+        // A fetch that got PlayStation and failed on the rest left the folder
+        // non-empty. Asking whether it was empty then called the job done for
+        // good, so every PC disc afterwards was checked against a database of
+        // PlayStation discs.
+        let fs = crate::host::FakeFs::new();
+        let dir = std::path::Path::new("/dats");
+        // With a game in it: a datfile of nothing but a header is refused,
+        // and rightly, so a fixture without one tests the wrong thing.
+        // The header redump.org actually writes, which is punctuated
+        // differently from the name shown to a person.
+        fs.write(&dir.join("psx.dat"), a_datfile("Sony - PlayStation").as_bytes()).unwrap();
+
+        let missing = missing_systems(&fs, dir);
+        assert!(!missing.contains(&"psx"), "it has that one: {missing:?}");
+        assert!(missing.contains(&"pc"), "and not this one: {missing:?}");
+        assert_eq!(missing.len(), SYSTEMS.len() - 1);
+    }
+
+    #[test]
+    fn nothing_is_wanted_once_every_system_is_there() {
+        use crate::host::Fs;
+        let fs = crate::host::FakeFs::new();
+        let dir = std::path::Path::new("/dats");
+        for (slug, name) in SYSTEMS {
+            // Punctuated the way redump.org punctuates it, not the way this
+            // shows it.
+            let header = name.replacen(' ', " - ", 1);
+            fs.write(&dir.join(format!("{slug}.dat")), a_datfile(&header).as_bytes()).unwrap();
+        }
+        assert!(missing_systems(&fs, dir).is_empty());
+    }
+
+    #[test]
+    fn a_system_is_recognised_however_redump_punctuates_it() {
+        // "Sony PlayStation" here, "Sony - PlayStation" in the datfile header.
+        assert!(same_system("Sony - PlayStation", "Sony PlayStation"));
+        assert!(same_system(
+            "Panasonic - 3DO Interactive Multiplayer",
+            "Panasonic 3DO Interactive Multiplayer"
+        ));
+        // but not one system for another, and not by prefix
+        assert!(!same_system("Sony - PlayStation 2", "Sony PlayStation"));
+        assert!(!same_system("Sega - Saturn", "Sega Mega CD & Sega CD"));
+    }
+
+    #[test]
+    fn an_empty_folder_wants_all_of_them() {
+        let fs = crate::host::FakeFs::new();
+        assert_eq!(missing_systems(&fs, std::path::Path::new("/dats")).len(), SYSTEMS.len());
     }
 }

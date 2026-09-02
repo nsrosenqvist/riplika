@@ -179,6 +179,12 @@ Registered applications:
 	fr.handbrake.ghb.desktop
 ```
 
+## What a datfile can and cannot answer
+
+A Redump entry carries a name, a category, a description, and one `rom` element per file with its size, CRC-32, MD5 and SHA-1. That is all of it. There is no volume label and no serial, so a disc cannot be looked up before it is read - `Sims3SP01` matches nothing, and the only question the database answers is "which disc has these hashes". That is why a game is named after the dump rather than before it, and why the identification page for one offers no search box.
+
+The datfiles for systems there is no copy of yet are fetched, rather than none at all if there is any. A fetch that got PlayStation and failed on the rest left the folder non-empty, and asking whether it was empty called the job done for good: every PC disc afterwards was checked against a database of PlayStation discs, and came back unknown for a reason that had nothing to do with the disc. Which system a datfile belongs to is read from its header and compared on the letters alone, because the name shown here is "Sony PlayStation" and the header says "Sony - PlayStation".
+
 ## Flatpak
 
 `packaging/com.nsrosenqvist.Riplika.yml` builds the window against `org.gnome.Platform`, bundling libdvdcss, libdvdread, libdvdnav, ffmpeg, cdparanoia and Tesseract.
