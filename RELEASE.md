@@ -92,6 +92,8 @@ The secret key is base64-encoded into the `FLATPAK_GPG_KEY` repository secret. I
 
 Nine steps, all of them undoable except the fourth, and the whole thing sits inside Cloudflare's free tier. `nsrosenqvist.com` has to be a zone on Cloudflare already, because that is what a custom domain on a bucket needs.
 
+The blocks below are `sh`, which is what the workflow runs. In fish, `KEYID=...` is `set KEYID ...` and `export NAME=...` is `set -x NAME ...`; nothing else in them differs.
+
 **1. Make the bucket.** Cloudflare dashboard, R2, *Create bucket*. Call it `flatpak`, not `riplika` - it holds the remote, and the remote holds whatever gets published to it. Pick a location hint near where most of it will be fetched from. Nothing else on the page matters.
 
 **2. Give it the hostname.** The bucket's *Settings*, then *Public access*, then *Custom Domains*, then *Connect Domain*, and enter `flatpak.nsrosenqvist.com`. Cloudflare writes the DNS record itself and the certificate follows a minute later. The object key becomes the path, so `repo/summary` in the bucket is `https://flatpak.nsrosenqvist.com/repo/summary` on the web, which is what the URL in the `.flatpakrepo` file is pointing at.
