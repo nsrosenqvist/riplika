@@ -969,13 +969,15 @@ impl<'a> Pipeline<'a> {
         let mut inputs = Vec::new();
         let mut failed = Vec::new();
         let mut recognised = Vec::new();
+        // What has been kept so far, to notice a track that repeats one.
+        let mut seen: Vec<Vec<u8>> = Vec::new();
 
         for stream in wanted {
             self.ports.cancel.check()?;
             let code =
                 subs_tracks.get(stream).map(|t| t.language.clone()).unwrap_or_else(|| "und".into());
             let language = lang::parse(&code);
-            let srt_path = item.source.with_extension(format!("{}.srt", language.code));
+            let srt_path = srt_for(&item.source, &language.code, stream);
 
             match subs::recognise_to_file(
                 self.ports.runner,
@@ -986,6 +988,10 @@ impl<'a> Pipeline<'a> {
                 self.settings.words_dir.as_deref(),
                 &srt_path,
             ) {
+                // is_usable() already refuses a track with no cues, so an
+                // empty one never reaches the encode - it keeps its bitmap
+                // instead, which is a subtitle where an empty text track is
+                // an entry in a menu that does nothing.
                 Ok((r, detail)) if detail.is_usable() => {
                     events(Event::Subtitle {
                         item: index,
@@ -999,6 +1005,32 @@ impl<'a> Pipeline<'a> {
                             language: language.name.to_string(),
                             glyphs: r.unknown_glyphs,
                         }));
+                    }
+                    // A disc repeats its subtitles - for a second camera
+                    // angle, or a widescreen cut of the same film - and four
+                    // copies of one track is four ways to pick the same
+                    // subtitle from a menu. Compared by what they say, since
+                    // the same words off two streams are the same subtitle
+                    // however the disc filed them.
+                    let already = self
+                        .ports
+                        .fs
+                        .read(&r.srt_path)
+                        .ok()
+                        .filter(|text| seen.iter().any(|s: &Vec<u8>| s == text));
+                    if already.is_some() {
+                        let _ = self.ports.fs.remove_file(&r.srt_path);
+                        events(Event::Subtitle {
+                            item: index,
+                            language: language.name.clone(),
+                            cues: r.cues,
+                            unknown: r.unknown_glyphs,
+                            recognised: true,
+                        });
+                        continue;
+                    }
+                    if let Ok(text) = self.ports.fs.read(&r.srt_path) {
+                        seen.push(text);
                     }
                     inputs.push(SubtitleInput {
                         path: r.srt_path.clone(),
@@ -1113,6 +1145,20 @@ struct Wanted {
 struct Position {
     index: usize,
     total: usize,
+}
+
+/// Where a recognised subtitle track is written before it is muxed.
+///
+/// The stream number is in the name, not only the language. A disc carries the
+/// same subtitle several times over - The Lion King has four English tracks
+/// and four Swedish - and naming them all `title_t02.eng.srt` meant each
+/// overwrote the last, so the encode was handed four inputs that were all the
+/// same file and the episode came out with four copies of one track. Worse, a
+/// track that failed deleted that shared path on its way out, throwing away
+/// what a track before it had recognised: two Swedish tracks arrived holding
+/// one cue between them.
+fn srt_for(source: &Path, code: &str, stream: usize) -> PathBuf {
+    source.with_extension(format!("{code}.{stream}.srt"))
 }
 
 /// Where a rip records what it put in the cache directory.
@@ -1409,6 +1455,36 @@ mod tests {
         assert!(meta.contains(&"show=Parks and Recreation"), "{:?}", meta);
         assert!(meta.contains(&"season_number=7"));
         assert!(meta.contains(&"media_type=10"));
+    }
+
+    #[test]
+    fn two_tracks_of_one_language_do_not_write_to_the_same_file() {
+        // The Lion King has four English subtitle tracks. All four were called
+        // title_t02.eng.srt, so each overwrote the last and the encode muxed
+        // four inputs that were one file - four identical tracks, 1330 cues
+        // each, where the disc held two different ones.
+        let src = Path::new("/rip/title_t02.mkv");
+        let paths: Vec<PathBuf> = [0, 1, 2, 3].iter().map(|s| srt_for(src, "eng", *s)).collect();
+        let mut unique = paths.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), paths.len(), "{paths:?}");
+    }
+
+    #[test]
+    fn a_recognised_track_is_still_filed_under_the_title_it_came_from() {
+        // The cache is emptied by taking out everything sharing a title's
+        // name, so a subtitle that does not share it is a subtitle left behind.
+        let p = srt_for(Path::new("/rip/title_t02.mkv"), "swe", 5);
+        let name = p.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.starts_with("title_t02."), "{name}");
+        assert!(name.ends_with(".srt"), "{name}");
+    }
+
+    #[test]
+    fn the_language_is_still_in_the_name_where_a_person_would_look() {
+        let p = srt_for(Path::new("/rip/title_t02.mkv"), "swe", 5);
+        assert!(p.to_string_lossy().contains("swe"), "{}", p.display());
     }
 
     #[test]
