@@ -416,7 +416,8 @@ pub fn file_away(
     system: Option<&str>,
     name: &str,
 ) -> Result<Dumped> {
-    let stem = destination(root, system, name);
+    let several = dumped.tracks.len() > 1;
+    let stem = destination(root, system, name, several);
     if stem.parent() == dumped.tracks.first().and_then(|t| t.path.parent()) {
         // Nothing learned, so nothing to move.
         return Ok(dumped.clone());
@@ -425,7 +426,6 @@ pub fn file_away(
         fs.create_dir_all(dir)?;
     }
     let stem_name = stem.file_name().unwrap_or_default().to_string_lossy().into_owned();
-    let several = dumped.tracks.len() > 1;
 
     let mut moved = dumped.clone();
     for track in &mut moved.tracks {
@@ -640,12 +640,19 @@ pub fn suggested_name(found: Option<&redump::Found<'_>>, disc: &crate::game::Gam
 /// Matched discs are filed by system, because that is the one grouping a
 /// datfile actually knows and the one an emulator's library expects. Unmatched
 /// ones go in a folder that says what they are.
-pub fn destination(root: &Path, system: Option<&str>, name: &str) -> PathBuf {
+///
+/// A disc that came to one file is that file, sitting in the system folder
+/// beside its neighbours. A disc that came to several gets a folder of its
+/// own: a PlayStation disc can run to a cue sheet and thirteen tracks, and two
+/// of those ripped one after the other leave twenty-eight files in a heap with
+/// nothing but the name at the front of each to say which disc they belong to.
+pub fn destination(root: &Path, system: Option<&str>, name: &str, several: bool) -> PathBuf {
     let folder = match system {
         Some(system) if !system.is_empty() => sanitize(system),
         _ => "Unidentified".to_string(),
     };
-    root.join(folder).join(sanitize(name))
+    let name = sanitize(name);
+    if several { root.join(folder).join(&name).join(&name) } else { root.join(folder).join(name) }
 }
 
 /// Look an image up in every datfile there is.
@@ -796,15 +803,36 @@ mod tests {
     #[test]
     fn a_matched_disc_is_filed_under_its_system() {
         assert_eq!(
-            destination(Path::new("/games"), Some("Sony - PlayStation 2"), "Half-Life (Europe)"),
+            destination(
+                Path::new("/games"),
+                Some("Sony - PlayStation 2"),
+                "Half-Life (Europe)",
+                false
+            ),
             Path::new("/games/Sony - PlayStation 2/Half-Life (Europe)")
+        );
+    }
+
+    /// A cue sheet and thirteen tracks used to land loose in the system
+    /// folder, so two PlayStation discs in a row were twenty-eight files in a
+    /// heap.
+    #[test]
+    fn a_disc_of_several_tracks_gets_a_folder_of_its_own() {
+        assert_eq!(
+            destination(
+                Path::new("/games"),
+                Some("Sony - PlayStation"),
+                "Moto Racer (Europe)",
+                true
+            ),
+            Path::new("/games/Sony - PlayStation/Moto Racer (Europe)/Moto Racer (Europe)")
         );
     }
 
     #[test]
     fn an_unmatched_disc_is_filed_where_that_is_obvious() {
         assert_eq!(
-            destination(Path::new("/games"), None, "HALFLIFE"),
+            destination(Path::new("/games"), None, "HALFLIFE", false),
             Path::new("/games/Unidentified/HALFLIFE")
         );
     }
@@ -1088,11 +1116,15 @@ mod tests {
 
         assert_eq!(
             filed.tracks[0].path,
-            Path::new("/games/Sony - PlayStation/Moto Racer (Europe) (Track 01).bin")
+            Path::new(
+                "/games/Sony - PlayStation/Moto Racer (Europe)/Moto Racer (Europe) (Track 01).bin"
+            )
         );
         assert_eq!(
             filed.cue.as_deref(),
-            Some(Path::new("/games/Sony - PlayStation/Moto Racer (Europe).cue"))
+            Some(Path::new(
+                "/games/Sony - PlayStation/Moto Racer (Europe)/Moto Racer (Europe).cue"
+            ))
         );
         let sheet = String::from_utf8(fs.read(filed.cue.as_ref().unwrap()).unwrap()).unwrap();
         assert!(sheet.contains("Moto Racer (Europe) (Track 01).bin"), "{sheet}");

@@ -185,6 +185,8 @@ A Redump entry carries a name, a category, a description, and one `rom` element 
 
 The datfiles for systems there is no copy of yet are fetched, rather than none at all if there is any. A fetch that got PlayStation and failed on the rest left the folder non-empty, and asking whether it was empty called the job done for good: every PC disc afterwards was checked against a database of PlayStation discs, and came back unknown for a reason that had nothing to do with the disc. Which system a datfile belongs to is read from its header and compared on the letters alone, because the name shown here is "Sony PlayStation" and the header says "Sony - PlayStation".
 
+A finished dump is filed under the system its datfile names - "Sony - PlayStation", "IBM - PC compatible" - because that is the one grouping the database actually knows and the one an emulator's library expects. A disc that came to a single image is that file, sitting there among its neighbours. A disc that came to several gets a folder of its own first: a PlayStation disc runs to a cue sheet and however many tracks, and two of those ripped one after the other left twenty-eight files in one folder with nothing but the name at the front of each to say which disc they belonged to.
+
 ## Flatpak
 
 `packaging/com.nsrosenqvist.Riplika.yml` builds the window against `org.gnome.Platform`, bundling libdvdcss, libdvdread, libdvdnav, ffmpeg, cdparanoia and Tesseract.
