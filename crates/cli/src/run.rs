@@ -1006,7 +1006,12 @@ pub fn ocr(
 ) -> Result<(), String> {
     let runner = RealRunner::default();
     let t = subs::table::Table::load(table).map_err(|e| e.to_string())?;
-    let r = subs::resolve::Resolver::load_lang(words, lang);
+    // `words` may be the folder of wordlists or one file. Preferences hold the
+    // folder, so the default handed in here is one, and reading it as a file
+    // meant this command never had a wordlist at all.
+    let code = riplika_core::lang::parse(lang).code;
+    let chosen = subs::resolve::Resolver::wordlist(words, &code);
+    let r = subs::resolve::Resolver::load_lang(chosen.as_deref(), lang);
     if !r.has_wordlist() {
         eprintln!(
             "note: no wordlist for '{lang}' - ambiguous glyphs will use structural \

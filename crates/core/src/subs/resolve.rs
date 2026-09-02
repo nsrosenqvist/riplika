@@ -8,7 +8,7 @@
 
 use super::recognize::Word;
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const DEFAULT_WORDLIST: &str = "/usr/share/dict/cracklib-small";
 
@@ -33,6 +33,20 @@ pub struct Resolver {
 impl Resolver {
     pub fn load(path: Option<&Path>) -> Resolver {
         Resolver::load_lang(path, "en")
+    }
+
+    /// The wordlist for this language, given either the file or the folder
+    /// they live in.
+    ///
+    /// Both are handed around: preferences hold the folder, and `--words`
+    /// takes a file. Passing the folder where a file was wanted read as "no
+    /// wordlist", and the note that followed asked the reader to pass the very
+    /// thing they had passed - while every ambiguous glyph on the disc fell
+    /// back to structural rules in silence.
+    pub fn wordlist(path: Option<&Path>, code: &str) -> Option<PathBuf> {
+        let p = path?;
+        let file = if p.is_dir() { p.join(format!("{code}.txt")) } else { p.to_path_buf() };
+        file.exists().then_some(file)
     }
 
     pub fn load_lang(path: Option<&Path>, lang: &str) -> Resolver {
@@ -321,5 +335,44 @@ impl Resolver {
             out.push(word);
         }
         out.join(" ")
+    }
+}
+
+#[cfg(test)]
+mod wordlist_tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_of_wordlists_finds_the_one_for_this_language() {
+        // Preferences hold the folder and `--words` takes a file, so both
+        // arrive here. Reading the folder as a file meant no wordlist at all,
+        // in silence, and every ambiguous glyph on the disc fell back to
+        // structural rules - "Inte" came out as "lnte" with a 119,591-word
+        // Swedish list sitting unread beside it.
+        let dir = crate::subs::source::temp_dir("words").expect("a temp dir");
+        std::fs::write(dir.0.join("swe.txt"), "inte\nchans\n").unwrap();
+
+        let from_folder = Resolver::wordlist(Some(&dir.0), "swe").expect("found in the folder");
+        assert!(from_folder.ends_with("swe.txt"));
+        let named = Resolver::wordlist(Some(&from_folder), "swe").expect("named directly");
+        assert_eq!(named, from_folder);
+
+        assert!(Resolver::load_lang(Some(&from_folder), "swe").is_word("inte"));
+    }
+
+    #[test]
+    fn a_language_with_no_list_of_its_own_gets_nothing_rather_than_the_wrong_one() {
+        // A mismatched wordlist is worse than none: "vil" and "alla" are not
+        // English words, so scoring Icelandic against English turns "ég vil"
+        // into "ég viI".
+        let dir = crate::subs::source::temp_dir("words").expect("a temp dir");
+        std::fs::write(dir.0.join("eng.txt"), "the\nand\n").unwrap();
+        assert_eq!(Resolver::wordlist(Some(&dir.0), "isl"), None);
+    }
+
+    #[test]
+    fn nothing_in_means_nothing_out() {
+        assert_eq!(Resolver::wordlist(None, "eng"), None);
+        assert_eq!(Resolver::wordlist(Some(Path::new("/nope/eng.txt")), "eng"), None);
     }
 }

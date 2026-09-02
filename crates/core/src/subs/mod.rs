@@ -126,8 +126,7 @@ pub fn recognise_to_file(
     words_dir: Option<&Path>,
     dest: &Path,
 ) -> Result<(RecognisedSubtitle, Recognition)> {
-    let wordlist = words_dir.map(|d| d.join(format!("{}.txt", language.code)));
-    let wordlist = wordlist.filter(|p| p.exists());
+    let wordlist = resolve::Resolver::wordlist(words_dir, &language.code);
     let resolver = resolve::Resolver::load_lang(wordlist.as_deref(), &language.code);
     let r = recognise(runner, input, stream, table, &resolver, PLACEHOLDER)?;
     std::fs::write(dest, &r.srt).map_err(|e| crate::Error(format!("{}: {e}", dest.display())))?;
