@@ -32,18 +32,36 @@ The window and the command line do the same things.
 
 ## Install
 
-The Flatpak carries everything it needs:
+```sh
+flatpak install https://flatpak.nsrosenqvist.com/riplika.flatpakref
+```
+
+One command on any distribution that has flatpak. It adds the remote it comes from, and fetches the GNOME runtime from Flathub if the machine has neither. Everything the three pipelines need is inside: ffmpeg with libdvdcss, cdparanoia, and Tesseract with language data for eighteen languages.
+
+Riplika is not on Flathub. [Flathub does not accept applications written with AI assistance](https://docs.flathub.org/docs/for-app-authors/requirements), and this one is, which every commit says.
+
+To build that flatpak rather than install it:
 
 ```sh
 flatpak-builder --user --install --force-clean build packaging/com.nsrosenqvist.Riplika.yml
 ```
 
-For a native build you need ffmpeg and cdparanoia:
+### Building it natively
+
+Worth doing for Blu-ray, which needs MakeMKV and so cannot work inside the sandbox.
 
 ```sh
-sudo pacman -S ffmpeg libdvdcss libdvdread libdvdnav cdparanoia
+# to build
+sudo pacman -S rust gtk4 libadwaita pkgconf gettext
+# to run
+sudo pacman -S ffmpeg cdparanoia libdvdcss libdvdread libdvdnav
+# to read subtitles, and to spell-check what was read
+sudo pacman -S tesseract tesseract-data-eng hunspell hunspell-en_us
+
 cargo build --release
 ```
+
+One `tesseract-data-*` per language you rip subtitles in - `tesseract-data-swe`, `tesseract-data-spa` - and one `hunspell-*` beside it. Without them a disc whose lettering has not been read before keeps its subtitles as pictures and says so; everything else works.
 
 ```sh
 riplika drives                          # what is connected, and what is in it

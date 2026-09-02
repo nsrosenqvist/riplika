@@ -60,12 +60,15 @@ The remote is an OSTree repository served as static files over HTTPS. There is n
 
 It is stored in a Cloudflare R2 bucket published at `flatpak.nsrosenqvist.com`, not in a Cloudflare Pages project. One release fits in Pages comfortably - measured at 50 MB across 214 files with the largest at 6.7 MiB, against caps of 20,000 files and 25 MiB each - so the reason is not size today. It is that a Pages deployment is a whole immutable site: the repository only ever grows, every release would re-upload all of the history along with the new commit, and there would be no way to put the objects up before the summary that names them. R2 is S3-compatible and incremental, so `aws s3 sync` uploads the few thousand objects that are new, in an order this chooses, with a cache header per object. It charges nothing for egress and the whole thing sits inside the free tier.
 
-Two things sit at the root:
+Three things sit at the root:
 
 | | |
 |---|---|
-| `nsrosenqvist.flatpakrepo` | the ini file a person adds; it names the repository URL and carries the signing key inline |
+| `riplika.flatpakref` | installs this application in one command, adding the remote on the way; the install line in the README points here |
+| `nsrosenqvist.flatpakrepo` | adds the remote and nothing else, for somebody who wants what is on it rather than one thing from it |
 | `repo/` | the OSTree repository itself - `config`, `summary`, `summary.sig`, `objects/`, `refs/`, `deltas/` |
+
+Both carry the signing key inline, so there is nothing to import by hand. The `.flatpakref` also names where the GNOME runtime comes from, which is Flathub and always will be, so an install on a machine with no remotes at all works rather than stopping on a runtime it cannot find.
 
 It is one remote for everything published this way, not one per application. An OSTree repository holds any number of refs and one summary over all of them - that is what Flathub is - so a second application is another ref in the same repository rather than another hostname, another key, another cache rule and another thing for somebody to add. Which is why nothing here is called Riplika: the bucket is `flatpak`, the file is `nsrosenqvist.flatpakrepo`, and the remote calls itself a person rather than a program. A remote named after the first application to need one is a name that stops being true and cannot be changed, because it is already in everybody's `flatpak remotes`.
 
@@ -144,6 +147,7 @@ ostree --repo=published pull-local repo app/com.nsrosenqvist.Riplika/x86_64/mast
 flatpak build-sign published com.nsrosenqvist.Riplika --gpg-sign=$KEYID
 flatpak build-update-repo published --generate-static-deltas --prune --prune-depth=2 --gpg-sign=$KEYID
 ./packaging/flatpakrepo.sh https://flatpak.nsrosenqvist.com $KEYID > nsrosenqvist.flatpakrepo
+./packaging/flatpakref.sh  https://flatpak.nsrosenqvist.com $KEYID > riplika.flatpakref
 
 # The same cache headers the workflow uses, from the first upload: an object
 # that goes up without one is cached on whatever the CDN decides, and the
@@ -161,6 +165,8 @@ for f in published/summary*; do
 done
 aws --profile r2 s3 cp nsrosenqvist.flatpakrepo s3://flatpak/nsrosenqvist.flatpakrepo \
   --cache-control 'no-cache' --content-type 'application/vnd.flatpak.repo'
+aws --profile r2 s3 cp riplika.flatpakref s3://flatpak/riplika.flatpakref \
+  --cache-control 'no-cache' --content-type 'application/vnd.flatpak.ref'
 ```
 
 `aws` is `aws-cli-v2` here. The bucket name appears in two places - `s3://` above and the `R2_BUCKET` secret - and nowhere else, so a bucket called something other than `flatpak` costs those two lines and nothing more.

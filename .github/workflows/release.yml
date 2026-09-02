@@ -231,6 +231,13 @@ jobs:
           aws s3 cp nsrosenqvist.flatpakrepo "s3://$BUCKET/nsrosenqvist.flatpakrepo" \
             --endpoint-url "$ENDPOINT" --no-progress --cache-control 'no-cache' \
             --content-type 'application/vnd.flatpak.repo'
+          # The one-command install: names this application rather than the
+          # remote, and says where the GNOME runtime comes from, which is the
+          # part that keeps "add Flathub first" out of the README.
+          ./packaging/flatpakref.sh "$BASE_URL" "$KEYID" > riplika.flatpakref
+          aws s3 cp riplika.flatpakref "s3://$BUCKET/riplika.flatpakref" \
+            --endpoint-url "$ENDPOINT" --no-progress --cache-control 'no-cache' \
+            --content-type 'application/vnd.flatpak.ref'
 
   release:
     name: Publish
