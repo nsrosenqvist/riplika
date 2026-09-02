@@ -173,6 +173,7 @@ struct Ui {
     quality_group: adw::PreferencesGroup,
     contents_group: adw::PreferencesGroup,
     /// Season and disc number: an episode's coordinates, and meaningless here.
+    id_group: adw::PreferencesGroup,
     detail_group: adw::PreferencesGroup,
     music_group: adw::PreferencesGroup,
     music_format: adw::ComboRow,
@@ -729,6 +730,7 @@ fn build_ui() -> Ui {
         container,
         quality_group: quality,
         contents_group,
+        id_group,
         detail_group,
         music_group: music,
         music_format,
@@ -1537,6 +1539,12 @@ impl App {
         let disc = self.state.borrow().game.clone();
         match disc {
             Some(d) => {
+                // Not "Identified as": nothing has identified it. That is
+                // the volume label, which is what the disc calls itself, and
+                // the identification happens against the database after the
+                // dump - claiming it here would be a promise the page cannot
+                // keep and there is no search box to correct it with.
+                self.ui.id_group.set_title(&tr("What the disc calls itself"));
                 self.ui.chosen_row.set_title(&d.describe());
                 // What happens next, rather than a remark about disc labels.
                 // A game is named by what its dump hashes to, so there is
@@ -1553,6 +1561,7 @@ impl App {
                 // Still worth dumping. What could not be read is the disc's
                 // own description of itself, and the dump is verified against
                 // the database by its hashes either way.
+                self.ui.id_group.set_title(&tr("What the disc calls itself"));
                 self.ui.chosen_row.set_title(&tr("A disc that does not say what it is"));
                 self.ui.chosen_row.set_subtitle(&tr(
                     "Checked against the preservation database once it is dumped",
@@ -1731,6 +1740,9 @@ impl App {
     fn show_choice(&self) {
         // Video is the one path where there is something to disagree with.
         self.set_chosen_actionable(true);
+        // A film, a show and an album are all looked up and identified. Only a
+        // game is not, and show_game says so for itself.
+        self.ui.id_group.set_title(&tr("Identified as"));
         // A film is one thing, not part four of a season, and an album is
         // neither. Asking which season it is and where its episode numbering
         // starts are questions about a disc that cannot answer them.
