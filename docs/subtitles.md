@@ -182,11 +182,21 @@ Han vill vara smart, men det är töntigt.   (sv)
 Two things to set for a non-English language:
 
 - **`--lang`.** English-only rules, such as a lone ambiguous bar being the pronoun `I`, are wrong elsewhere. Swedish `i` is a lowercase preposition, so the English rule would capitalise every one. Any `--lang` other than `en` turns those rules off.
+- **`--words`.** On Arch: `pacman -S aspell-sv`, then `aspell -d sv dump master | aspell -l sv expand | tr ' ' '\n' | sort -u > sv.txt`. Without one, ambiguous glyphs fall back to structural rules, which is fine - but a *mismatched* wordlist is worse than none, so the English default is only loaded for `--lang en`. (`vii` and `alia` are English words while `vil` and `alla` are not, which turned Icelandic `ég vil` into `ég viI` until the fallback was removed.)
+
 **The desktop's own dictionaries are used where nothing else is installed.** The GNOME runtime this is packaged against carries hunspell dictionaries for a hundred languages, so a Flatpak that shipped its own would be carrying a second copy of something already in the sandbox - and every language it did not think to bundle would be one whose ambiguous glyphs fall back to structural rules. Of the ten languages whose Tesseract data is bundled, nine have a dictionary there; Finnish does not. Matching is on the language, never the region: `sv` takes `sv.dic`, `sv_SE` and `sv_FI` together, since the only question ever asked is whether something is a word and a dialect that lacks one is not evidence against it.
 
 A wordlist named by hand still wins, and the search order is: the file given, then `<code>.txt` in the folder given, then the desktop's.
 
-- **`--words`.** On Arch: `pacman -S aspell-sv`, then `aspell -d sv dump master | aspell -l sv expand | tr ' ' '\n' | sort -u > sv.txt`. Without one, ambiguous glyphs fall back to structural rules, which is fine - but a *mismatched* wordlist is worse than none, so the English default is only loaded for `--lang en`. (`vii` and `alia` are English words while `vil` and `alla` are not, which turned Icelandic `ég vil` into `ég viI` until the fallback was removed.)
+### Which languages a disc can be read in
+
+Labelling a table needs a reader, and a reader needs data for the language it is looking at. The Flatpak carries ten: Danish, Dutch, English, Finnish, French, German, Italian, Norwegian, Spanish and Swedish.
+
+A track in any other language is read with the English data rather than refused. For a language written in the same alphabet that mostly works - the letters English shares come out right - but a letter it does not have comes out as the nearest one it does, so Portuguese `não` is labelled `nao` and stays that way in every disc of that release, since the table is reused. For a script English does not share it does not work at all.
+
+**The limit is on labelling a new table, not on using one.** A table that fits the disc is used whatever the language is written in, so a second disc of a release costs nothing and a table built or corrected by hand works anywhere.
+
+A native build reads whatever Tesseract data is installed on the machine - `pacman -S tesseract-data-por` and Portuguese works - so this is a limit of the package rather than of the method. Wordlists are not the constraint either: those come from the desktop, which has about a hundred.
 
 ## Umlauts need both dots
 

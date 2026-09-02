@@ -173,11 +173,13 @@ Registered applications:
 
 ## Flatpak
 
-`packaging/com.nsrosenqvist.Riplika.yml` builds the window against `org.gnome.Platform`, bundling libdvdcss, libdvdread, libdvdnav, ffmpeg and mkvextract.
+`packaging/com.nsrosenqvist.Riplika.yml` builds the window against `org.gnome.Platform`, bundling libdvdcss, libdvdread, libdvdnav, ffmpeg, cdparanoia and Tesseract.
 
-Two things about it are worth knowing before you rely on it.
+Three things about it are worth knowing before you rely on it.
 
 **It is DVD-only.** MakeMKV cannot be bundled - it is proprietary, so redistributing it is not ours to do - and reaching the host's copy would need `--talk-name=org.freedesktop.Flatpak`, which lets the application run anything at all on the host. Claiming to be sandboxed after that would be a lie. The Flatpak is coherent precisely because the DVD path needs nothing proprietary; for Blu-ray, use the native build.
+
+**Subtitles can be read in ten languages.** A disc whose lettering is not already in a glyph table has one built by reading it, and that needs Tesseract data for the language: Danish, Dutch, English, Finnish, French, German, Italian, Norwegian, Spanish and Swedish are bundled. Anything else falls back to the English data, which gets the letters English shares and turns the rest into the nearest one it has. Using a table that already fits is not limited this way, and a native build reads whatever Tesseract data is installed. See [subtitles](subtitles.md#which-languages-a-disc-can-be-read-in).
 
 **`--device=all` is required.** Flatpak has no narrower permission for an optical drive: `--device=dri` is the GPU and there is nothing for `/dev/sr0` alone. Reading a disc means granting access to devices generally.
 
