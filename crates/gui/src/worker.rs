@@ -458,8 +458,18 @@ pub fn run_game(
 ) {
     std::thread::spawn(move || {
         let real = Real::new(cancel.clone());
+        // A game disc gets a log like every other kind. It had none, so a
+        // damaged dump said one sentence on a page and lost it the moment that
+        // page was left - and a dump is the run most worth reading afterwards,
+        // being the one that says which sectors the drive had to guess at.
+        let mut log = riplika_core::joblog::JobLog::start(
+            &disc.describe(),
+            &[format!("disc:    {}", disc.describe()), format!("drive:   {device}")],
+            &riplika_core::joblog::now(),
+        );
         let t = tx.clone();
         let mut events = move |e: Event| {
+            log.record(&e);
             let _ = t.send(Msg::Event(e));
         };
         report(
@@ -514,10 +524,12 @@ pub fn run_game(
                     crate::i18n::tr_args("verified against the %1$s datfile", &[&dat.name])
                 } else if dats.is_empty() {
                     crate::i18n::tr("not checked: no datfiles are installed to check it against")
-                } else if !dumped.is_complete() {
-                    crate::i18n::tr(
-                        "the disc did not read cleanly, so it will not match the database",
-                    )
+                } else if let Some(why) = gamejob::shortfall(&dumped) {
+                    // The same sentence the warning above carries, which says
+                    // how many sectors and of what kind. "Did not read
+                    // cleanly" is true of three sectors and of thirty
+                    // thousand, and those want different reactions.
+                    why
                 } else {
                     crate::i18n::tr("not in the preservation database")
                 };

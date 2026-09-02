@@ -31,6 +31,8 @@ Every disc writes its own file, all in one directory, named so that sorting them
 2026-08-29T1102-PARKS_AND_RECREATION_S6D3.log
 ```
 
+A game disc writes one too, which it did not until a damaged dump had nothing to leave behind but a sentence on a page that closes. A dump is the run most worth reading afterwards: it is the one that says which sectors the drive had to guess at.
+
 A season is six or seven discs over as many evenings, and by the end there is no answering "did episode four of disc two have unrecognised glyphs?" from memory. The label is in the name so a directory listing says which disc each one was without opening it.
 
 Written as the run happens rather than assembled at the end, and flushed line by line: the runs worth reading afterwards are the interrupted ones and the failed ones, and a log built at the end would not exist for either. Progress is left out - it arrives hundreds of times a second and says nothing the lines around it do not.
