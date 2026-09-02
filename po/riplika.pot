@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Riplika 0.2.0\n"
 "Report-Msgid-Bugs-To: https://github.com/nsrosenqvist/riplika/issues\n"
-"POT-Creation-Date: 2026-09-02 15:32+0200\n"
+"POT-Creation-Date: 2026-09-02 16:12+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -533,15 +533,15 @@ msgid "Reads the disc twice. Without it, chapter marks drift a second or two"
 msgstr ""
 
 #. Not "Identified as": nothing has identified it. That is
-#. the volume label, which is what the disc calls itself, and
-#. the identification happens against the database after the
-#. dump - claiming it here would be a promise the page cannot
-#. keep and there is no search box to correct it with.
+#. the volume label, and the identification happens against the
+#. database after the dump - claiming it here would be a
+#. promise the page cannot keep, and there is no search box to
+#. correct it with.
 #. Still worth dumping. What could not be read is the disc's
 #. own description of itself, and the dump is verified against
 #. the database by its hashes either way.
 #: crates/gui/src/main.rs:1547 crates/gui/src/main.rs:1564
-msgid "What the disc calls itself"
+msgid "Labelled as"
 msgstr ""
 
 #: crates/gui/src/main.rs:1555
@@ -553,7 +553,7 @@ msgid "Checked against the preservation database once it is dumped"
 msgstr ""
 
 #: crates/gui/src/main.rs:1565
-msgid "A disc that does not say what it is"
+msgid "No label at all"
 msgstr ""
 
 #: crates/gui/src/main.rs:1610

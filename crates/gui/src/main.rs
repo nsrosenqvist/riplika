@@ -1540,11 +1540,11 @@ impl App {
         match disc {
             Some(d) => {
                 // Not "Identified as": nothing has identified it. That is
-                // the volume label, which is what the disc calls itself, and
-                // the identification happens against the database after the
-                // dump - claiming it here would be a promise the page cannot
-                // keep and there is no search box to correct it with.
-                self.ui.id_group.set_title(&tr("What the disc calls itself"));
+                // the volume label, and the identification happens against the
+                // database after the dump - claiming it here would be a
+                // promise the page cannot keep, and there is no search box to
+                // correct it with.
+                self.ui.id_group.set_title(&tr("Labelled as"));
                 self.ui.chosen_row.set_title(&d.describe());
                 // What happens next, rather than a remark about disc labels.
                 // A game is named by what its dump hashes to, so there is
@@ -1561,8 +1561,8 @@ impl App {
                 // Still worth dumping. What could not be read is the disc's
                 // own description of itself, and the dump is verified against
                 // the database by its hashes either way.
-                self.ui.id_group.set_title(&tr("What the disc calls itself"));
-                self.ui.chosen_row.set_title(&tr("A disc that does not say what it is"));
+                self.ui.id_group.set_title(&tr("Labelled as"));
+                self.ui.chosen_row.set_title(&tr("No label at all"));
                 self.ui.chosen_row.set_subtitle(&tr(
                     "Checked against the preservation database once it is dumped",
                 ));
