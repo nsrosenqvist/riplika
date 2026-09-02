@@ -230,9 +230,13 @@ jobs:
               --endpoint-url "$ENDPOINT" --no-progress --cache-control 'no-cache'
           done
           # What pruning removed, once nothing refers to it any more.
+          # Never the summary: that one is uploaded above with a cache header
+          # that says never to keep it, and a sync that decides to send it
+          # again sends it without one. Which is what happened - the summary
+          # was the one file on the remote with no Cache-Control on it.
           aws s3 sync published/ "s3://$BUCKET/repo/" \
             --endpoint-url "$ENDPOINT" --no-progress --delete --size-only \
-            --exclude 'tmp/*' --exclude '.lock'
+            --exclude 'summary*' --exclude 'tmp/*' --exclude '.lock'
 
           # Regenerated every release from the key that just signed it, so the
           # two cannot come apart. It describes the remote rather than this
@@ -275,6 +279,12 @@ jobs:
           cat SHA256SUMS
 
       - name: Generate release notes
+        # Allowed to fail. It calls a model over the network, and a release
+        # that is built, checked, signed and published should not go
+        # unannounced because that call did not come back - which is exactly
+        # what happened when GitHub Models entered its retirement brownout and
+        # started answering 410 to everything.
+        continue-on-error: true
         uses: nsrosenqvist/chronikl@v1
         with:
           output: release_notes.md
@@ -284,6 +294,18 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CHRONIKL_PROVIDER: github-models
           CHRONIKL_MODEL: openai/gpt-4o-mini
+
+      - name: Notes from the metadata, if that did not write any
+        # The notes a software centre shows are written by hand for every
+        # version that has any, so there is always something true to say.
+        run: |
+          set -eu
+          test -s release_notes.md && exit 0
+          echo "no generated notes; using the ones in the AppStream metadata"
+          ./packaging/release-notes.py \
+            data/com.nsrosenqvist.Riplika.metainfo.xml \
+            "${{ needs.version.outputs.version }}" > release_notes.md
+          cat release_notes.md
 
       - name: Create release
         uses: softprops/action-gh-release@v2

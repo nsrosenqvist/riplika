@@ -31,7 +31,9 @@ The new commits have to leave `Cargo.toml` saying the version the tag names, whi
 
 The optional second argument names a file of notes, one line per bullet, which becomes the entry a software centre shows under this version. Without it the entry carries the version and date alone, and the script prints what has landed since the last tag so there is something to write from.
 
-They are not generated from commit subjects. A changelog assembled that way tells somebody deciding whether to update that the README stopped being hard-wrapped, and choosing what matters is editorial. The GitHub release body is separate and is written by `chronikl` in the workflow.
+They are not generated from commit subjects. A changelog assembled that way tells somebody deciding whether to update that the README stopped being hard-wrapped, and choosing what matters is editorial. The GitHub release body is written by `chronikl` in the workflow, which is allowed to fail: it calls a model over the network, and v1.0.0 was built, checked, signed and published and then went unannounced because GitHub Models had entered its retirement brownout and was answering 410 to everything. When it writes nothing, `packaging/release-notes.py` reads these same notes back out of the metadata, so the release always has something true on it.
+
+That brownout is a retirement rather than an outage, so `CHRONIKL_PROVIDER` will have to name something else before long. Until it does, every release body comes from the fallback.
 
 ### Pre-releases
 
