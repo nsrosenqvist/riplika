@@ -3,17 +3,29 @@
 ## Making the tag
 
 ```sh
-./release.sh 1.0.0 [notes.txt]
+git push                          # the work, first, and wait for CI
+./release.sh 1.0.0 [notes.txt]    # local: version, notes, checks, commit, tag
 git push && git push origin v1.0.0
 ```
 
-`release.sh` writes the version into `Cargo.toml` and reconciles `Cargo.lock`, points the AppStream screenshot URLs at the tag it is about to make, adds a release entry to the AppStream metadata, runs `./check.sh`, then commits and tags.
+`release.sh` runs here, on your machine, and never in a workflow. It writes the version into `Cargo.toml` and reconciles `Cargo.lock`, points the AppStream screenshot URLs at the tag it is about to make, adds a release entry to the AppStream metadata, runs `./check.sh`, then commits and tags. Nothing leaves the machine until you push, because everything up to that point is undoable and the push is what tells GitHub to build and announce a release.
 
-The checks run before the tag rather than after it, so a failure means nothing was tagged.
+**Push the branch and let CI go green before tagging.** `./check.sh` is not the same question as CI: it asks whether this works on the machine you are sitting at, and CI asks whether it works on a machine that is not that one. v1.0.0 failed on exactly that difference - two tests read `/usr/share/hunspell`, which does not exist here and does on an Ubuntu runner - and the fix was one commit on a branch nobody had tagged yet. Had the tag gone with it, the fix would have meant moving a tag that GitHub had already built a release from.
+
+Tagging first is recoverable and unpleasant: a tag deleted and remade is a tag somebody may have fetched in between, and the release it announced has to be deleted with it.
 
 The tag has to point at a tree that already says which version it is. Writing the version in the workflow instead would build the right number and leave the tagged commit saying the old one, so anyone checking out `v1.0.0` would build something calling itself `0.2.0`. The workflow only verifies that the tree and the tag agree, and fails naming both numbers when they do not.
 
-Pushing is left to you, because everything up to that point is local and undoable and the push is what tells GitHub to build and announce a release.
+### Moving a tag that has not been pushed
+
+Work that lands after `release.sh` ran - a README fix, a test that CI found - leaves the tag one or more commits behind. While it is still local, that is two commands and no consequences:
+
+```sh
+git tag -d v1.0.0
+git tag -a v1.0.0 -m "Riplika 1.0.0"
+```
+
+The new commits have to leave `Cargo.toml` saying the version the tag names, which anything that is not a version bump does. The workflow checks it, and says both numbers when they disagree.
 
 ### Release notes
 
