@@ -774,43 +774,73 @@ impl<'a> Pipeline<'a> {
 
         let streams = self.wanted_subtitles(outputs)?;
         let opts = subs::segment::SegOpts::default();
-        let mut shapes = std::collections::BTreeMap::new();
         // One track per language, not one track for the disc. The face is
         // shared - that much was right - but the alphabet is not: a table
         // learned from English has never seen a-ring or an umlaut, and scored
         // against an English sample it fits at 97% and then cannot read a word
         // of the Swedish it was about to be used on.
-        let mut sampled: Vec<&str> = Vec::new();
-        for (stream, language) in streams.streams.iter().zip(&streams.languages) {
-            if sampled.contains(&language.as_str()) {
+        // One sample per language, from a track that actually has lettering
+        // on it. Taking the first track of each was how The Lion King's table
+        // came to be used on Frozen: Frozen's first Swedish track holds a
+        // single title card, so Swedish contributed a handful of shapes, the
+        // score came out as English's 95%, and the real Swedish subtitles -
+        // which that table cannot read a word of - were kept as pictures.
+        let mut per_language: Vec<std::collections::BTreeMap<String, u64>> = Vec::new();
+        let mut done: Vec<&str> = Vec::new();
+        for language in &streams.languages {
+            if done.contains(&language.as_str()) {
                 continue;
             }
-            sampled.push(language);
-            let src = match subs::source::load(self.ports.runner, &streams.source, *stream) {
-                Ok(s) => s,
-                // Silently giving up here is how this went unexplained for an
-                // afternoon: the run said "no glyph table" as though none were
-                // installed, when what had actually happened was that the
-                // track could not be opened to look at.
-                Err(e) => {
-                    note(
-                        Warning::SubtitlesUnreadable {
-                            language: language.clone(),
-                            why: e.to_string(),
-                        },
-                        report,
-                        events,
+            done.push(language);
+            let mut seen = std::collections::BTreeMap::new();
+            let mine = streams
+                .streams
+                .iter()
+                .zip(&streams.languages)
+                .filter(|(_, l)| *l == language)
+                .map(|(s, _)| *s);
+            for stream in mine.take(TRACKS_PER_LANGUAGE) {
+                let src = match subs::source::load(self.ports.runner, &streams.source, stream) {
+                    Ok(s) => s,
+                    // Silently giving up here is how this went unexplained for
+                    // an afternoon: the run said "no glyph table" as though
+                    // none were installed, when what had actually happened was
+                    // that the track could not be opened to look at.
+                    Err(e) => {
+                        note(
+                            Warning::SubtitlesUnreadable {
+                                language: language.clone(),
+                                why: e.to_string(),
+                            },
+                            report,
+                            events,
+                        );
+                        continue;
+                    }
+                };
+                for ev in src.events().iter().take(SAMPLE_CUES) {
+                    subs::tables::shapes(
+                        &subs::segment::segment(&ev.spu, &src.idx.palette, &opts),
+                        &mut seen,
                     );
-                    continue;
                 }
-            };
-            for ev in src.events().iter().take(SAMPLE_CUES) {
-                subs::tables::shapes(
-                    &subs::segment::segment(&ev.spu, &src.idx.palette, &opts),
-                    &mut shapes,
-                );
+                // Enough of the alphabet to judge a table by. A track holding
+                // one title card is not, and asking it whether a table fits
+                // answers about six letters.
+                if seen.values().sum::<u64>() >= ENOUGH_TO_JUDGE {
+                    break;
+                }
+            }
+            if !seen.is_empty() {
+                per_language.push(seen);
             }
         }
+        let shapes: std::collections::BTreeMap<String, u64> =
+            per_language.iter().flatten().fold(Default::default(), |mut all, (k, n)| {
+                *all.entry(k.clone()).or_insert(0) += *n;
+                all
+            });
+
         if shapes.is_empty() {
             note(
                 Warning::SubtitlesUnreadable {
@@ -828,7 +858,7 @@ impl<'a> Pipeline<'a> {
             self.settings.glyph_table.as_deref(),
             self.settings.tables_dir.as_deref(),
         );
-        let closest = subs::tables::closest(self.ports.fs, &paths, &shapes);
+        let closest = subs::tables::closest(self.ports.fs, &paths, &per_language);
         if let Some((path, table, covered)) = &closest
             && *covered >= subs::tables::FITS
         {
@@ -1145,6 +1175,19 @@ fn note(w: Warning, report: &mut Report, events: Events) {
 /// Enough to see the alphabet several times over. The question is which face
 /// the disc is set in, and that is answered by the first minute of dialogue.
 const SAMPLE_CUES: usize = 80;
+
+/// How many glyph instances make a sample worth judging a table by.
+///
+/// A track carrying one title card has about six, and answering "does this
+/// table fit" from those is how a table that cannot read Swedish was called a
+/// 95% fit for a Swedish disc.
+const ENOUGH_TO_JUDGE: u64 = 400;
+
+/// How many tracks of one language to open looking for that much.
+///
+/// Each costs a remux, so this is a bound on a disc that carries several short
+/// tracks before the real one.
+const TRACKS_PER_LANGUAGE: usize = 3;
 
 /// The subtitle streams a run wants, and where to read them from.
 struct Wanted {

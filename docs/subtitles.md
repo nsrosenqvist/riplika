@@ -84,7 +84,11 @@ The flag is read from the source and carried whether the track was recognised in
 
 Every table is tried against the shapes actually on the disc, and the one that explains most of them wins. Nothing is keyed or remembered: a second disc of a season reuses the first's table because it fits, not because anything recorded that they are related, and a disc from a new release fails the test and gets a table of its own.
 
-The shapes are sampled from **one track per language, not one per disc**. The face is shared across a disc's tracks, but the alphabet is not: a table learned from English has never seen `å` or `ö`, and scored against an English sample it fits at 97% and then cannot read a word of the Swedish it was about to be used on. That is what happened to The Lion King - four English tracks recognised, and the two full Swedish ones kept as pictures with "23 shapes on it are not in it".
+The shapes are sampled from **one track per language, not one per disc**, and from a track that actually carries lettering. Frozen's first Swedish track holds a single title card: judging Swedish by that answers about six letters, so the score came out as English's 95%, The Lion King's table was accepted, and the real Swedish subtitles - which it cannot read a word of - were kept as pictures. A sample is taken until it holds four hundred glyph instances or three tracks have been opened.
+
+**A table is judged on the language it does worst on, not on the disc as a whole.** Averaging is what let 95%-of-English and none-of-Swedish read as a fit. A subtitle track is watched in one language, so the question is asked once per language and the lowest answer is the one that counts.
+
+ The face is shared across a disc's tracks, but the alphabet is not: a table learned from English has never seen `å` or `ö`, and scored against an English sample it fits at 97% and then cannot read a word of the Swedish it was about to be used on. That is what happened to The Lion King - four English tracks recognised, and the two full Swedish ones kept as pictures with "23 shapes on it are not in it".
 
 A table that nearly fits is what the reading starts from rather than being thrown away, so a disc whose earlier run wanted fewer languages only reads for the letters it is missing, and any label corrected by hand survives.
 

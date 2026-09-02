@@ -74,13 +74,29 @@ pub fn candidates(fs: &dyn Fs, configured: Option<&Path>, dir: Option<&Path>) ->
     out
 }
 
+/// How well a table does on the language it does worst on.
+///
+/// Not the average over the disc, which is what let The Lion King's table be
+/// used on Frozen: the English there was 95% covered and the Swedish was not
+/// covered at all, and one number for the whole disc reported 95%. A subtitle
+/// track is watched in one language, so the question is whether the table can
+/// read *that* language, asked once for each.
+pub fn worst(table: &Table, languages: &[BTreeMap<String, u64>]) -> f32 {
+    languages
+        .iter()
+        .filter(|m| !m.is_empty())
+        .map(|m| coverage(table, m))
+        .fold(f32::INFINITY, f32::min)
+        .min(1.0)
+}
+
 /// The best table for these shapes, if any of them fits.
 pub fn best(
     fs: &dyn Fs,
     paths: &[PathBuf],
-    shapes: &BTreeMap<String, u64>,
+    languages: &[BTreeMap<String, u64>],
 ) -> Option<(PathBuf, Table, f32)> {
-    closest(fs, paths, shapes).filter(|(_, _, c)| *c >= FITS)
+    closest(fs, paths, languages).filter(|(_, _, c)| *c >= FITS)
 }
 
 /// The best table there is, whether or not it is good enough to use.
@@ -93,13 +109,13 @@ pub fn best(
 pub fn closest(
     fs: &dyn Fs,
     paths: &[PathBuf],
-    shapes: &BTreeMap<String, u64>,
+    languages: &[BTreeMap<String, u64>],
 ) -> Option<(PathBuf, Table, f32)> {
     let mut best: Option<(PathBuf, Table, f32)> = None;
     for p in paths {
         let Ok(bytes) = fs.read(p) else { continue };
         let Ok(t) = Table::from_bytes(&bytes) else { continue };
-        let c = coverage(&t, shapes);
+        let c = worst(&t, languages);
         if best.as_ref().is_none_or(|(_, _, b)| c > *b) {
             best = Some((p.clone(), t, c));
         }
@@ -167,7 +183,7 @@ mod tests {
         let t = knowing(&[1, 2, 3]);
         fs.write(Path::new("/t/parks.json"), &serde_json::to_vec(&t).unwrap()).unwrap();
         let disc = seen(&[(7, 100), (8, 100), (1, 2)]);
-        assert!(best(&fs, &[PathBuf::from("/t/parks.json")], &disc).is_none());
+        assert!(best(&fs, &[PathBuf::from("/t/parks.json")], &[disc]).is_none());
     }
 
     #[test]
@@ -179,7 +195,7 @@ mod tests {
         }
         let disc = seen(&[(1, 10), (2, 10), (3, 10), (4, 10)]);
         let paths = vec![PathBuf::from("/t/a.json"), PathBuf::from("/t/b.json")];
-        let (p, _, c) = best(&fs, &paths, &disc).expect("b covers all of it");
+        let (p, _, c) = best(&fs, &paths, &[disc]).expect("b covers all of it");
         assert_eq!(p, PathBuf::from("/t/b.json"));
         assert!((c - 1.0).abs() < f32::EPSILON);
     }
@@ -203,8 +219,38 @@ mod tests {
         let good = knowing(&[1]);
         fs.write(Path::new("/t/good.json"), &serde_json::to_vec(&good).unwrap()).unwrap();
         let paths = vec![PathBuf::from("/t/broken.json"), PathBuf::from("/t/good.json")];
-        let (p, _, _) = best(&fs, &paths, &seen(&[(1, 5)])).expect("the good one still fits");
+        let (p, _, _) = best(&fs, &paths, &[seen(&[(1, 5)])]).expect("the good one still fits");
         assert_eq!(p, PathBuf::from("/t/good.json"));
+    }
+
+    #[test]
+    fn a_language_the_table_cannot_read_sinks_it_however_well_the_rest_does() {
+        // The Lion King's table on Frozen: the English 95% covered, the
+        // Swedish not at all. Averaged over the disc that reads as 95% and the
+        // table is accepted, and the Swedish subtitles come out as pictures.
+        let fs = FakeFs::new();
+        let t = knowing(&[1, 2, 3]);
+        fs.write(Path::new("/t/lk.json"), &serde_json::to_vec(&t).unwrap()).unwrap();
+        let english = seen(&[(1, 500), (2, 500), (3, 500)]);
+        let swedish = seen(&[(7, 60), (8, 40)]);
+        let paths = vec![PathBuf::from("/t/lk.json")];
+
+        // asked as one disc, it looks like a fit
+        let together: BTreeMap<String, u64> =
+            english.iter().chain(swedish.iter()).map(|(k, n)| (k.clone(), *n)).collect();
+        assert!(best(&fs, &paths, &[together]).is_some(), "which is the bug");
+
+        // asked language by language, it is not
+        assert!(best(&fs, &paths, &[english, swedish]).is_none());
+    }
+
+    #[test]
+    fn a_language_nothing_was_sampled_for_does_not_count_against_a_table() {
+        // A track that would not open leaves an empty sample, and calling that
+        // nought per cent would send every disc off to be read again.
+        let t = knowing(&[1, 2]);
+        let empty = BTreeMap::new();
+        assert_eq!(worst(&t, &[seen(&[(1, 10), (2, 10)]), empty]), 1.0);
     }
 
     #[test]
@@ -218,8 +264,8 @@ mod tests {
         fs.write(Path::new("/t/lk.json"), &serde_json::to_vec(&t).unwrap()).unwrap();
         let disc = seen(&[(1, 100), (2, 100), (3, 100), (9, 40)]);
         let paths = vec![PathBuf::from("/t/lk.json")];
-        assert!(best(&fs, &paths, &disc).is_none(), "it does not fit");
-        let (_, _, covered) = closest(&fs, &paths, &disc).expect("but it is still the closest");
+        assert!(best(&fs, &paths, std::slice::from_ref(&disc)).is_none(), "it does not fit");
+        let (_, _, covered) = closest(&fs, &paths, &[disc]).expect("but it is still the closest");
         assert!(covered > 0.8 && covered < FITS, "covered {covered}");
     }
 
