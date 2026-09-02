@@ -170,6 +170,10 @@ Han vill vara smart, men det är töntigt.   (sv)
 Two things to set for a non-English language:
 
 - **`--lang`.** English-only rules, such as a lone ambiguous bar being the pronoun `I`, are wrong elsewhere. Swedish `i` is a lowercase preposition, so the English rule would capitalise every one. Any `--lang` other than `en` turns those rules off.
+**The desktop's own dictionaries are used where nothing else is installed.** The GNOME runtime this is packaged against carries hunspell dictionaries for a hundred languages, so a Flatpak that shipped its own would be carrying a second copy of something already in the sandbox - and every language it did not think to bundle would be one whose ambiguous glyphs fall back to structural rules. Of the ten languages whose Tesseract data is bundled, nine have a dictionary there; Finnish does not. Matching is on the language, never the region: `sv` takes `sv.dic`, `sv_SE` and `sv_FI` together, since the only question ever asked is whether something is a word and a dialect that lacks one is not evidence against it.
+
+A wordlist named by hand still wins, and the search order is: the file given, then `<code>.txt` in the folder given, then the desktop's.
+
 - **`--words`.** On Arch: `pacman -S aspell-sv`, then `aspell -d sv dump master | aspell -l sv expand | tr ' ' '\n' | sort -u > sv.txt`. Without one, ambiguous glyphs fall back to structural rules, which is fine - but a *mismatched* wordlist is worse than none, so the English default is only loaded for `--lang en`. (`vii` and `alia` are English words while `vil` and `alla` are not, which turned Icelandic `ég vil` into `ég viI` until the fallback was removed.)
 
 ## Umlauts need both dots

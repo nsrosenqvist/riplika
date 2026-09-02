@@ -12,6 +12,15 @@ use std::path::{Path, PathBuf};
 
 pub const DEFAULT_WORDLIST: &str = "/usr/share/dict/cracklib-small";
 
+/// Where a desktop keeps its spelling dictionaries.
+///
+/// Worth looking in rather than shipping our own: the GNOME runtime this is
+/// packaged against carries them for a hundred languages already, so a Flatpak
+/// that bundled wordlists would be carrying a second copy of something in the
+/// sandbox with it - and every one it did not think to bundle would be a
+/// language whose ambiguous glyphs fall back to structural rules.
+const DICTIONARIES: [&str; 2] = ["/usr/share/hunspell", "/usr/share/myspell"];
+
 /// One output position: either settled, or a set of candidates in descending
 /// order of how often each was seen.
 #[derive(Debug, Clone)]
@@ -35,6 +44,64 @@ impl Resolver {
         Resolver::load_lang(path, "en")
     }
 
+    /// Every wordlist worth reading for this language.
+    ///
+    /// A file if one was named, else the one for this language in the folder
+    /// that was named, else whatever the desktop has. All the variants of a
+    /// language together, because the only question ever asked of these is
+    /// whether something is a word: `colour` and `color` are both answers we
+    /// want yes to, and a dialect that lacks one is not evidence against it.
+    pub fn wordlists(path: Option<&Path>, code: &str) -> Vec<PathBuf> {
+        if let Some(p) = path {
+            if p.is_dir() {
+                let named = p.join(format!("{code}.txt"));
+                if named.exists() {
+                    return vec![named];
+                }
+            } else if p.exists() {
+                return vec![p.to_path_buf()];
+            }
+        }
+        Self::installed_for(&DICTIONARIES, code)
+    }
+
+    /// The desktop's own dictionaries for this language, if it has any.
+    ///
+    /// Matched on the two-letter code, so `sv` finds sv.dic, sv_SE and sv_FI
+    /// and nothing else - a mismatched wordlist is worse than none, and it is
+    /// the language that must match, not the region.
+    pub fn installed_for(dirs: &[&str], code: &str) -> Vec<PathBuf> {
+        let language = crate::lang::parse(code);
+        let Some(short) = language.short().map(str::to_ascii_lowercase) else {
+            return Vec::new();
+        };
+        let mut found: Vec<PathBuf> = Vec::new();
+        for dir in dirs {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                continue;
+            };
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.extension().is_none_or(|x| x != "dic") {
+                    continue;
+                }
+                let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                let base = stem.split('_').next().unwrap_or(stem).to_ascii_lowercase();
+                if base == short {
+                    found.push(p);
+                }
+            }
+            if !found.is_empty() {
+                // One directory's worth. The two are usually the same files.
+                break;
+            }
+        }
+        found.sort();
+        found
+    }
+
     /// The wordlist for this language, given either the file or the folder
     /// they live in.
     ///
@@ -44,9 +111,7 @@ impl Resolver {
     /// thing they had passed - while every ambiguous glyph on the disc fell
     /// back to structural rules in silence.
     pub fn wordlist(path: Option<&Path>, code: &str) -> Option<PathBuf> {
-        let p = path?;
-        let file = if p.is_dir() { p.join(format!("{code}.txt")) } else { p.to_path_buf() };
-        file.exists().then_some(file)
+        Self::wordlists(path, code).into_iter().next()
     }
 
     pub fn load_lang(path: Option<&Path>, lang: &str) -> Resolver {
@@ -55,15 +120,26 @@ impl Resolver {
         // is worse than none: "vii" and "alia" are English words while "vil" and
         // "alla" are not, so scoring Icelandic against English turns "ég vil"
         // into "ég viI".
-        let p = match (path, english) {
-            (Some(p), _) => Some(p.to_path_buf()),
-            (None, true) => Some(DEFAULT_WORDLIST.into()),
-            (None, false) => None,
-        };
+        let code = crate::lang::parse(lang).code;
+        let mut files = Self::wordlists(path, &code);
+        if files.is_empty() && english {
+            files.push(DEFAULT_WORDLIST.into());
+        }
+        Resolver::load_from(&files, english)
+    }
+
+    /// Read a set of wordlists into one.
+    pub fn load_from(files: &[PathBuf], english: bool) -> Resolver {
         let mut words = HashSet::new();
-        if let Some(s) = p.and_then(|p| std::fs::read_to_string(&p).ok()) {
+        for file in files {
+            let Ok(s) = std::fs::read_to_string(file) else {
+                continue;
+            };
             for line in s.lines() {
-                let w = line.trim().to_lowercase();
+                // A hunspell .dic writes "word/FLAGS" and opens with a count.
+                // Taking the part before the slash reads both that and a plain
+                // list, and the count falls out for not being letters.
+                let w = line.split('/').next().unwrap_or("").trim().to_lowercase();
                 // keep accented forms - they matter for every language but English
                 if w.chars().count() > 1 && w.chars().all(|c| c.is_alphabetic()) {
                     words.insert(w);
@@ -365,9 +441,57 @@ mod wordlist_tests {
         // A mismatched wordlist is worse than none: "vil" and "alla" are not
         // English words, so scoring Icelandic against English turns "ég vil"
         // into "ég viI".
+        //
+        // Asked of a folder this test wrote, not of the machine's own: what a
+        // developer happens to have installed must not decide whether a test
+        // passes.
+        let dir = crate::subs::source::temp_dir("hunspell").expect("a temp dir");
+        std::fs::write(dir.0.join("en_GB.dic"), "1\nthe\n").unwrap();
+        let d = dir.0.to_string_lossy().into_owned();
+        assert!(Resolver::installed_for(&[&d], "isl").is_empty());
+        assert!(!Resolver::installed_for(&[&d], "eng").is_empty());
+    }
+
+    #[test]
+    fn the_desktops_own_dictionaries_stand_in_when_nothing_was_installed() {
+        // The Flatpak ships no wordlists, and the runtime it is built against
+        // carries them for a hundred languages. Without this every ambiguous
+        // glyph on every disc fell back to structural rules on a fresh
+        // install, including English.
+        let dir = crate::subs::source::temp_dir("hunspell").expect("a temp dir");
+        for name in ["sv.dic", "sv_SE.dic", "sv_FI.dic", "en_GB.dic", "svenska.dic"] {
+            std::fs::write(dir.0.join(name), "1\ninte/AB\n").unwrap();
+        }
+        let d = dir.0.to_string_lossy().into_owned();
+        let found = Resolver::installed_for(&[&d], "swe");
+        let names: Vec<String> =
+            found.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        // every variant of Swedish, and nothing that merely starts with sv
+        assert_eq!(names, ["sv.dic", "sv_FI.dic", "sv_SE.dic"]);
+    }
+
+    #[test]
+    fn a_dictionary_is_read_past_its_affix_flags_and_its_count() {
+        // A hunspell .dic opens with the number of entries and writes each as
+        // "word/FLAGS". Read as a plain list, the flags make every line a
+        // non-word and the dictionary comes out empty.
+        let dir = crate::subs::source::temp_dir("hunspell").expect("a temp dir");
+        std::fs::write(dir.0.join("sv.dic"), "153714\ninte/AB\nchans\n-/-06XY\n").unwrap();
+        let d = dir.0.to_string_lossy().into_owned();
+        let r = Resolver::load_from(&Resolver::installed_for(&[&d], "swe"), false);
+        assert!(r.is_word("inte"), "the flags were taken as part of the word");
+        assert!(r.is_word("chans"));
+        assert!(!r.is_word("153714"), "the count is not a word");
+    }
+
+    #[test]
+    fn a_named_wordlist_still_wins_over_the_desktops() {
+        // Somebody who built a list for this disc means it to be used.
         let dir = crate::subs::source::temp_dir("words").expect("a temp dir");
-        std::fs::write(dir.0.join("eng.txt"), "the\nand\n").unwrap();
-        assert_eq!(Resolver::wordlist(Some(&dir.0), "isl"), None);
+        std::fs::write(dir.0.join("swe.txt"), "inte\n").unwrap();
+        let got = Resolver::wordlists(Some(&dir.0), "swe");
+        assert_eq!(got.len(), 1);
+        assert!(got[0].ends_with("swe.txt"));
     }
 
     #[test]

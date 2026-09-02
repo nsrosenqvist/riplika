@@ -20,6 +20,15 @@ pub struct Language {
 }
 
 impl Language {
+    /// The two-letter code this language also goes by, if it has one.
+    ///
+    /// Spelling dictionaries are filed under it - `sv_SE.dic`, `en_GB.dic` -
+    /// while every code written into an output file here is the three-letter
+    /// one, so something has to bridge them.
+    pub fn short(&self) -> Option<&str> {
+        self.aliases.iter().find(|a| a.chars().count() == 2).map(String::as_str)
+    }
+
     /// Does a stream tagged `tag` hold this language?
     pub fn matches(&self, tag: &str) -> bool {
         let t = tag.trim().trim_end_matches(',').to_ascii_lowercase();
