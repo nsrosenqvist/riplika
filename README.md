@@ -38,7 +38,7 @@ flatpak install https://flatpak.nsrosenqvist.com/riplika.flatpakref
 
 One command on any distribution that has flatpak. It adds the remote it comes from, and fetches the GNOME runtime from Flathub if the machine has neither. Everything the three pipelines need is inside: ffmpeg with libdvdcss, cdparanoia, and Tesseract with language data for eighteen languages.
 
-Riplika is not on Flathub. [Flathub does not accept applications written with AI assistance](https://docs.flathub.org/docs/for-app-authors/requirements), and this one is, which every commit says.
+Riplika is not on Flathub. [Flathub does not accept applications written with AI assistance](https://docs.flathub.org/docs/for-app-authors/requirements), and this one is.
 
 To build that flatpak rather than install it:
 
