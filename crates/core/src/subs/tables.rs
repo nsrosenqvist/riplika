@@ -21,11 +21,24 @@ use std::path::{Path, PathBuf};
 
 /// How much of a disc a table has to explain to be worth using.
 ///
-/// Not 100%: a table that covers the alphabet and misses a bullet and a
-/// trademark sign is the right table, and the two shapes it lacks come out as
-/// placeholders rather than sending the whole disc to be read again. Well
-/// clear of the 1% a table for the wrong release manages.
-pub const FITS: f32 = 0.90;
+/// Ninety per cent sounded generous and was far too kind. The hand-labelled
+/// Parks and Recreation table knows one Spanish accent - `é`, which turns up
+/// in English loanwords - and none of `á í ó ú ñ ¿ ¡`. That is 1.4% of the
+/// Spanish on the disc, so it scored 98.6%, passed comfortably, and left about
+/// 180 placeholders in every episode.
+///
+/// Not 100%, because of the rule below: a shape the table has already been
+/// read for and could not settle counts as covered, so the bar is about what a
+/// second reading could still fix.
+pub const FITS: f32 = 0.995;
+
+/// Votes that mean a shape has already had its chance.
+///
+/// Matches what the reader demands before it stops asking about a shape. One
+/// it has read this often and still cannot put a character to will not be
+/// settled by reading the disc again, so it must not hold a table below the
+/// bar for ever and send every disc of a season off to be re-read.
+const TRIED: u64 = 24;
 
 /// How many instances of each shape a sample of the disc holds.
 pub fn shapes(lines: &[Line], into: &mut BTreeMap<String, u64>) {
@@ -46,7 +59,11 @@ pub fn coverage(table: &Table, shapes: &BTreeMap<String, u64>) -> f32 {
     }
     let known: u64 = shapes
         .iter()
-        .filter(|(key, _)| table.get(key).is_some_and(|e| e.text.is_some()))
+        .filter(|(key, _)| {
+            table
+                .get(key)
+                .is_some_and(|e| e.text.is_some() || e.votes.values().sum::<u64>() >= TRIED)
+        })
         .map(|(_, n)| n)
         .sum();
     known as f32 / total as f32
@@ -231,8 +248,11 @@ mod tests {
         let fs = FakeFs::new();
         let t = knowing(&[1, 2, 3]);
         fs.write(Path::new("/t/lk.json"), &serde_json::to_vec(&t).unwrap()).unwrap();
-        let english = seen(&[(1, 500), (2, 500), (3, 500)]);
-        let swedish = seen(&[(7, 60), (8, 40)]);
+        // The proportions that make averaging dangerous: the language that
+        // fails is a small share of the disc, which is exactly the Spanish
+        // case - its accents are 1.4% of the characters on the disc.
+        let english = seen(&[(1, 4000), (2, 4000), (3, 4000)]);
+        let swedish = seen(&[(7, 30), (8, 25)]);
         let paths = vec![PathBuf::from("/t/lk.json")];
 
         // asked as one disc, it looks like a fit
@@ -251,6 +271,37 @@ mod tests {
         let t = knowing(&[1, 2]);
         let empty = BTreeMap::new();
         assert_eq!(worst(&t, &[seen(&[(1, 10), (2, 10)]), empty]), 1.0);
+    }
+
+    #[test]
+    fn a_language_the_table_lacks_the_accents_for_is_not_a_fit() {
+        // The shipped table knows one Spanish accent, é, which turns up in
+        // English loanwords. Missing á í ó ú ñ ¿ ¡ is 1.4% of the Spanish on
+        // the disc, and at the old bar of ninety per cent that passed - so
+        // every episode carried about 180 placeholders.
+        let fs = FakeFs::new();
+        let t = knowing(&[1, 2, 3]);
+        fs.write(Path::new("/t/parks.json"), &serde_json::to_vec(&t).unwrap()).unwrap();
+        let spanish = seen(&[(1, 400), (2, 400), (3, 186), (9, 14)]);
+        let paths = vec![PathBuf::from("/t/parks.json")];
+        let (_, _, covered) = closest(&fs, &paths, &[spanish]).expect("it is close");
+        assert!(covered > 0.98 && covered < FITS, "covered {covered}");
+    }
+
+    #[test]
+    fn a_shape_already_read_for_and_unsettled_does_not_hold_a_table_down_for_ever() {
+        // Otherwise one shape nothing can put a character to sends every disc
+        // of a season off to be read again,every time, to learn what was already
+        // known: that it cannot be read.
+        let mut t = Table::default();
+        let i = t.observe(&glyph(1));
+        for _ in 0..TRIED {
+            t.vote(i, "?");
+        }
+        t.observe(&glyph(2));
+        // the first was read and could not be settled; the second never read
+        assert_eq!(coverage(&t, &seen(&[(1, 10)])), 1.0);
+        assert_eq!(coverage(&t, &seen(&[(2, 10)])), 0.0);
     }
 
     #[test]

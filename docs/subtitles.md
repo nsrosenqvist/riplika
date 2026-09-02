@@ -92,7 +92,11 @@ The shapes are sampled from **one track per language, not one per disc**, and fr
 
 A table that nearly fits is what the reading starts from rather than being thrown away, so a disc whose earlier run wanted fewer languages only reads for the letters it is missing, and any label corrected by hand survives.
 
-"Fits" is 90% of glyph *instances*, not of distinct shapes - a table missing one shape that happens to be `e` is useless, and one missing a symbol that appears twice in a film is not. A table for the wrong release manages about 1%, so there is no ambiguity in practice.
+"Fits" is 99.5% of glyph *instances*, not of distinct shapes - a table missing one shape that happens to be `e` is useless, and one missing a symbol that appears twice in a film is not. A table for the wrong release manages about 1%, so there is no ambiguity in practice.
+
+Ninety per cent, which is where that bar started, sounded generous and was far too kind. The hand-labelled Parks and Recreation table knows exactly one Spanish accent - `é`, which turns up in English loanwords - and none of `á í ó ú ñ ¿ ¡`. Those are 1.4% of the Spanish on the disc, so it scored 98.6%, passed comfortably, and left about 180 placeholders in every episode.
+
+A shape the table has already been read for and could not settle counts as covered. It will not be settled by reading the disc again, and without that rule one unreadable shape would send every disc of a season off to be re-read, every time, to learn what was already known.
 
 ## Building a table by hand
 
